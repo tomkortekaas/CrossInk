@@ -120,3 +120,10 @@ TEST(DashboardBleProtocol, RejectsStatusBufferThatIsTooSmall) {
   char value[8] = {};
   EXPECT_FALSE(probe::formatStatus(probe::Status::RenderFailed, true, 7, value, sizeof(value)));
 }
+
+TEST(DashboardBleProtocol, MatchesCanonicalBleManifestIdentifiers) {
+  EXPECT_STREQ(probe::kAdvertisingName, "X3 Dashboard Probe");
+  EXPECT_STREQ(probe::kServiceUuid, "78334442-4c45-5052-4f42-450000000001");
+  EXPECT_STREQ(probe::kWriteUuid, "78334442-4c45-5052-4f42-450000000002");
+  EXPECT_STREQ(probe::kStatusUuid, "78334442-4c45-5052-4f42-450000000003");
+}

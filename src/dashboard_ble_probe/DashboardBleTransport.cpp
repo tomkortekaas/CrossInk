@@ -5,18 +5,10 @@
 #include <cstring>
 
 namespace probe {
-namespace {
-
-constexpr char kDeviceName[] = "X3-Dashboard-Probe";
-constexpr char kServiceUuid[] = "6f01f8c0-7d64-4f2b-a6b4-d8f132bdaf10";
-constexpr char kWriteUuid[] = "6f01f8c1-7d64-4f2b-a6b4-d8f132bdaf10";
-constexpr char kStatusUuid[] = "6f01f8c2-7d64-4f2b-a6b4-d8f132bdaf10";
-
-}  // namespace
 
 bool DashboardBleTransport::begin(DashboardBleProbe& probe) {
   probe_ = &probe;
-  if (!NimBLEDevice::init(kDeviceName)) return false;
+  if (!NimBLEDevice::init(kAdvertisingName)) return false;
 
   NimBLEDevice::setSecurityAuth(false, false, false);
   NimBLEServer* server = NimBLEDevice::createServer();
@@ -35,7 +27,7 @@ bool DashboardBleTransport::begin(DashboardBleProbe& probe) {
 
   if (!service->start()) return false;
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
-  advertising->setName(kDeviceName);
+  advertising->setName(kAdvertisingName);
   advertising->addServiceUUID(kServiceUuid);
   advertising->enableScanResponse(true);
   return advertising->start();

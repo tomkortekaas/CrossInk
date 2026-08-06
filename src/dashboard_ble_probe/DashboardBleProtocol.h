@@ -6,6 +6,11 @@
 
 namespace probe {
 
+inline constexpr char kAdvertisingName[] = "X3 Dashboard Probe";
+inline constexpr char kServiceUuid[] = "78334442-4c45-5052-4f42-450000000001";
+inline constexpr char kWriteUuid[] = "78334442-4c45-5052-4f42-450000000002";
+inline constexpr char kStatusUuid[] = "78334442-4c45-5052-4f42-450000000003";
+
 constexpr size_t kHeaderBytes = 11;
 constexpr size_t kCrcBytes = 4;
 constexpr size_t kMinFrameBytes = kHeaderBytes + kCrcBytes;
