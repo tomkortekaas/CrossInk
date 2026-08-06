@@ -107,3 +107,16 @@ TEST(DashboardBleProtocol, MapsEveryStatusToWireName) {
   EXPECT_STREQ(probe::statusName(probe::Status::BadCrc), "bad_crc");
   EXPECT_STREQ(probe::statusName(probe::Status::RenderFailed), "render_failed");
 }
+
+TEST(DashboardBleProtocol, FormatsBoundedStatusValues) {
+  char value[32];
+  ASSERT_TRUE(probe::formatStatus(probe::Status::Ready, false, 0, value, sizeof(value)));
+  EXPECT_STREQ(value, "ready");
+  ASSERT_TRUE(probe::formatStatus(probe::Status::Accepted, true, 4294967295u, value, sizeof(value)));
+  EXPECT_STREQ(value, "accepted:4294967295");
+}
+
+TEST(DashboardBleProtocol, RejectsStatusBufferThatIsTooSmall) {
+  char value[8] = {};
+  EXPECT_FALSE(probe::formatStatus(probe::Status::RenderFailed, true, 7, value, sizeof(value)));
+}

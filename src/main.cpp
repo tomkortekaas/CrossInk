@@ -76,6 +76,11 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "AppVersion.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+#include "dashboard_ble_probe/DashboardBleProbe.h"
+#include "dashboard_ble_probe/DashboardBleProbeRenderer.h"
+#include "dashboard_ble_probe/DashboardBleTransport.h"
+#endif
 #include "GlobalActions.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
@@ -114,6 +119,11 @@ FontDecompressor fontDecompressor;
 SdCardFontSystem sdFontSystem;
 DictionaryRegistry dictionaryRegistry;
 FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts());
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+probe::DashboardBleProbeRenderer dashboardBleProbeRenderer(renderer);
+probe::DashboardBleTransport dashboardBleTransport;
+probe::DashboardBleProbe dashboardBleProbe(dashboardBleProbeRenderer, dashboardBleTransport);
+#endif
 static unsigned long allowSleepAt = 0;
 static unsigned long lastX4ProPowerClickAt = 0;
 
@@ -938,6 +948,14 @@ void setup() {
   setupDisplayAndFonts(resume != BootResume::Splash, resume != BootResume::Network);
   logBootHeap("display and selected fonts ready");
 
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+  if (dashboardBleTransport.begin(dashboardBleProbe)) {
+    dashboardBleProbe.begin();
+  } else {
+    LOG_ERR("BLE", "Dashboard BLE probe failed to initialize");
+  }
+#endif
+
   switch (resume) {
     case BootResume::Silent:
       // Splash skipped: the routing block below picks the target activity; the
@@ -1177,6 +1195,9 @@ void loop() {
   }
 
   const unsigned long activityStartTime = millis();
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+  dashboardBleProbe.loop();
+#endif
   activityManager.loop();
   const unsigned long activityDuration = millis() - activityStartTime;
 

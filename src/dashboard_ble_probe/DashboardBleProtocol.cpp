@@ -1,6 +1,7 @@
 #include "DashboardBleProtocol.h"
 
 #include <algorithm>
+#include <cstdio>
 
 namespace probe {
 namespace {
@@ -124,6 +125,16 @@ const char* statusName(const Status status) {
       return "render_failed";
   }
   return "invalid_length";
+}
+
+bool formatStatus(const Status status, const bool hasMessageId, const uint32_t messageId, char* output,
+                  const size_t outputSize) {
+  if (output == nullptr || outputSize == 0) return false;
+  const int written = hasMessageId
+                          ? std::snprintf(output, outputSize, "%s:%lu", statusName(status),
+                                          static_cast<unsigned long>(messageId))
+                          : std::snprintf(output, outputSize, "%s", statusName(status));
+  return written >= 0 && static_cast<size_t>(written) < outputSize;
 }
 
 }  // namespace probe

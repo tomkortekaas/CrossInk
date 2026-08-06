@@ -34,5 +34,6 @@ uint32_t crc32(const uint8_t* bytes, size_t length);
 bool isValidUtf8(const uint8_t* bytes, size_t length);
 DecodeResult decodeFrame(const uint8_t* frame, size_t length);
 const char* statusName(Status status);
+bool formatStatus(Status status, bool hasMessageId, uint32_t messageId, char* output, size_t outputSize);
 
 }  // namespace probe
