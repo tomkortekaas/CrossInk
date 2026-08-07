@@ -4,35 +4,63 @@
 
 #include <cstring>
 
+#include "Logging.h"
+
 namespace probe {
 
 bool DashboardBleTransport::begin(DashboardBleProbe& probe) {
   probe_ = &probe;
-  if (!NimBLEDevice::init(kAdvertisingName)) return false;
+  if (!NimBLEDevice::init(kAdvertisingName)) {
+    LOG_ERR("BLE", "Dashboard probe: NimBLE init failed");
+    return false;
+  }
 
   NimBLEDevice::setSecurityAuth(false, false, false);
   NimBLEServer* server = NimBLEDevice::createServer();
-  if (server == nullptr) return false;
+  if (server == nullptr) {
+    LOG_ERR("BLE", "Dashboard probe: server creation failed");
+    return false;
+  }
   server->setCallbacks(this);
 
   NimBLEService* service = server->createService(kServiceUuid);
-  if (service == nullptr) return false;
+  if (service == nullptr) {
+    LOG_ERR("BLE", "Dashboard probe: service creation failed");
+    return false;
+  }
 
   NimBLECharacteristic* writeCharacteristic =
       service->createCharacteristic(kWriteUuid, NIMBLE_PROPERTY::WRITE, kMaxFrameBytes);
   statusCharacteristic_ =
       service->createCharacteristic(kStatusUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY, sizeof(statusValue_));
-  if (writeCharacteristic == nullptr || statusCharacteristic_ == nullptr) return false;
+  if (writeCharacteristic == nullptr || statusCharacteristic_ == nullptr) {
+    LOG_ERR("BLE", "Dashboard probe: characteristic creation failed");
+    return false;
+  }
   writeCharacteristic->setCallbacks(this);
 
-  if (!service->start()) return false;
+  if (!service->start()) {
+    LOG_ERR("BLE", "Dashboard probe: service start failed");
+    return false;
+  }
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
   // Enable the secondary payload before setting the name so NimBLE places the
   // name in the scan response and leaves room for the 128-bit service UUID.
   advertising->enableScanResponse(true);
-  advertising->setName(kAdvertisingName);
-  advertising->addServiceUUID(kServiceUuid);
-  return advertising->start();
+  if (!advertising->setName(kAdvertisingName)) {
+    LOG_ERR("BLE", "Dashboard probe: advertising name rejected");
+    return false;
+  }
+  if (!advertising->addServiceUUID(kServiceUuid)) {
+    LOG_ERR("BLE", "Dashboard probe: advertising UUID rejected");
+    return false;
+  }
+  if (!advertising->start() || !advertising->isAdvertising()) {
+    LOG_ERR("BLE", "Dashboard probe: advertising start failed");
+    return false;
+  }
+  LOG_INF("BLE", "Dashboard probe advertising active: %s", NimBLEDevice::getAddress().toString().c_str());
+  return true;
 }
 
 void DashboardBleTransport::publish(const Status status, const bool hasMessageId, const uint32_t messageId) {
