@@ -23,6 +23,7 @@ struct portMUX_TYPE {};
 
 class Activity;    // forward declaration
 class RenderLock;  // forward declaration
+class DashboardSleepScreen;
 
 enum class RequestUpdateResult { Rendered, Rejected };
 enum class HomeMenuItem { NONE, FILE_BROWSER, RECENTS, OPDS_BROWSER, FILE_TRANSFER, SETTINGS_MENU };
@@ -49,6 +50,7 @@ class ActivityManager {
   MappedInputManager& mappedInput;
   std::vector<std::unique_ptr<Activity>> stackActivities;
   std::unique_ptr<Activity> currentActivity;
+  DashboardSleepScreen* dashboardSleepScreen = nullptr;  // Non-owning; registered provider has static lifetime.
 
   void exitActivity(const RenderLock& lock);
 
@@ -109,6 +111,7 @@ class ActivityManager {
   void goToReader(std::string path, bool suppressBackRelease = false, bool allowFastInitialRefresh = false,
                   bool cleanImageBaseOnEntry = false);
   void goToSleep(bool fromTimeout = false);
+  void setDashboardSleepScreen(DashboardSleepScreen* screen) { dashboardSleepScreen = screen; }
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
   void goToCrashReport();

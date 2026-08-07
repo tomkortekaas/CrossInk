@@ -21,6 +21,7 @@ add_executable(DashboardBleProbeTest
 )
 
 target_include_directories(DashboardBleProbeTest PRIVATE
+  ${REPO_ROOT}/src
   ${REPO_ROOT}/src/dashboard_ble_probe
 )
 

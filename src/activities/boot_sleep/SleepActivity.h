@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "activities/Activity.h"
+#include "DashboardSleepScreen.h"
 
 class Bitmap;
 
@@ -10,12 +11,14 @@ class SleepActivity final : public Activity {
  public:
   explicit SleepActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool canSnapshotOverlayBackground,
                          std::string currentBookPath = {}, bool fromTimeout = false,
-                         GfxRenderer::Orientation sleepPopupOrientation = GfxRenderer::Orientation::Portrait)
+                         GfxRenderer::Orientation sleepPopupOrientation = GfxRenderer::Orientation::Portrait,
+                         DashboardSleepScreen* dashboardSleepScreen = nullptr)
       : Activity("Sleep", renderer, mappedInput),
         canSnapshotOverlayBackground(canSnapshotOverlayBackground),
         currentBookPath(std::move(currentBookPath)),
         fromTimeout(fromTimeout),
-        sleepPopupOrientation(sleepPopupOrientation) {}
+        sleepPopupOrientation(sleepPopupOrientation),
+        dashboardSleepScreen(dashboardSleepScreen) {}
   void onEnter() override;
 
  private:
@@ -35,4 +38,5 @@ class SleepActivity final : public Activity {
   std::string currentBookPath;
   bool fromTimeout = false;
   GfxRenderer::Orientation sleepPopupOrientation = GfxRenderer::Orientation::Portrait;
+  DashboardSleepScreen* dashboardSleepScreen = nullptr;
 };

@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "DashboardBleProbe.h"
+#include "activities/boot_sleep/DashboardSleepScreen.h"
 
 namespace {
 
@@ -52,6 +53,27 @@ std::vector<uint8_t> makeFrame(const uint32_t messageId, const std::vector<uint8
 }
 
 }  // namespace
+
+TEST(DashboardSleepScreen, UsesProviderOnlyWhenPersonalDashboardIsSelected) {
+  class FakeDashboard final : public DashboardSleepScreen {
+   public:
+    bool renderForSleep() override {
+      ++calls;
+      return result;
+    }
+
+    bool result = true;
+    int calls = 0;
+  } dashboard;
+
+  EXPECT_FALSE(tryRenderDashboardSleepScreen(false, &dashboard));
+  EXPECT_EQ(dashboard.calls, 0);
+  EXPECT_FALSE(tryRenderDashboardSleepScreen(true, nullptr));
+  EXPECT_TRUE(tryRenderDashboardSleepScreen(true, &dashboard));
+  EXPECT_EQ(dashboard.calls, 1);
+  dashboard.result = false;
+  EXPECT_FALSE(tryRenderDashboardSleepScreen(true, &dashboard));
+}
 
 TEST(DashboardBleProbe, BeginPublishesReady) {
   FakeScreen screen;

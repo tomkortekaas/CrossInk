@@ -438,6 +438,13 @@ void SleepActivity::onEnter() {
     return renderLastScreenSleepScreen();
   }
 
+  if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::PERSONAL_DASHBOARD_SLEEP) {
+    if (tryRenderDashboardSleepScreen(true, dashboardSleepScreen)) {
+      return;
+    }
+    return renderCoverSleepScreen();
+  }
+
   overlayBackgroundBufferStored =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::OVERLAY && renderer.storeBwBuffer();
 

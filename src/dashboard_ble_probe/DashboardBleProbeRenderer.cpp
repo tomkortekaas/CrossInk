@@ -12,6 +12,20 @@ namespace probe {
 DashboardBleProbeRenderer::DashboardBleProbeRenderer(GfxRenderer& renderer) : renderer_(renderer) {}
 
 bool DashboardBleProbeRenderer::renderAccepted(const uint32_t messageId, const uint8_t payloadLength) {
+  if (!drawAccepted(messageId, payloadLength)) {
+    return false;
+  }
+  lastMessageId_ = messageId;
+  lastPayloadLength_ = payloadLength;
+  hasAcceptedFrame_ = true;
+  return true;
+}
+
+bool DashboardBleProbeRenderer::renderForSleep() {
+  return hasAcceptedFrame_ && drawAccepted(lastMessageId_, lastPayloadLength_);
+}
+
+bool DashboardBleProbeRenderer::drawAccepted(const uint32_t messageId, const uint8_t payloadLength) {
   char messageLine[32];
   char bytesLine[32];
   std::snprintf(messageLine, sizeof(messageLine), "Message: %lu", static_cast<unsigned long>(messageId));

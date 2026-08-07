@@ -351,6 +351,10 @@ inline SettingInfo buildSleepScreenSetting() {
       static_cast<uint8_t>(CrossPointSettings::DASHBOARD_SLEEP),
       static_cast<uint8_t>(CrossPointSettings::QUICK_RESUME),
   });
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+  s.enumValues.push_back(StrId::STR_PERSONAL_DASHBOARD);
+  s.enumRawValues.push_back(static_cast<uint8_t>(CrossPointSettings::PERSONAL_DASHBOARD_SLEEP));
+#endif
   return s;
 }
 

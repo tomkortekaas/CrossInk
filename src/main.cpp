@@ -949,6 +949,7 @@ void setup() {
   logBootHeap("display and selected fonts ready");
 
 #if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+  activityManager.setDashboardSleepScreen(&dashboardBleProbeRenderer);
   if (dashboardBleTransport.begin(dashboardBleProbe)) {
     dashboardBleProbe.begin();
   } else {
