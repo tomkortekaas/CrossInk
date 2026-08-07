@@ -27,9 +27,11 @@ bool DashboardBleTransport::begin(DashboardBleProbe& probe) {
 
   if (!service->start()) return false;
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+  // Enable the secondary payload before setting the name so NimBLE places the
+  // name in the scan response and leaves room for the 128-bit service UUID.
+  advertising->enableScanResponse(true);
   advertising->setName(kAdvertisingName);
   advertising->addServiceUUID(kServiceUuid);
-  advertising->enableScanResponse(true);
   return advertising->start();
 }
 
