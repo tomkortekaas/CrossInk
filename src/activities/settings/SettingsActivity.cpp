@@ -34,6 +34,7 @@
 #include "activities/util/IntervalSelectionActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "activities/util/OptionSelectionActivity.h"
+#include "SleepScreenSelectionPolicy.h"
 #include "components/CompactHeader.h"
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
@@ -473,7 +474,9 @@ void SettingsActivity::openEnumOptionPicker(const SettingInfo& setting) {
     const bool quickResumeTimeoutChanged = selectedSetting.valuePtr == &CrossPointSettings::quickResumeSleepScreen;
     syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
     SETTINGS.saveToFile();
-    rebuildSettingsLists();
+    if (shouldRebuildSettingsListsAfterOptionSelection(sleepScreenChanged)) {
+      rebuildSettingsLists();
+    }
     requestUpdate();
   });
   requestUpdate();

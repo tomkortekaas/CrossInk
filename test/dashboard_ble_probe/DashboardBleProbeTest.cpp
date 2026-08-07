@@ -5,6 +5,7 @@
 
 #include "DashboardBleProbe.h"
 #include "activities/boot_sleep/DashboardSleepScreen.h"
+#include "activities/settings/SleepScreenSelectionPolicy.h"
 
 namespace {
 
@@ -73,6 +74,11 @@ TEST(DashboardSleepScreen, UsesProviderOnlyWhenPersonalDashboardIsSelected) {
   EXPECT_EQ(dashboard.calls, 1);
   dashboard.result = false;
   EXPECT_FALSE(tryRenderDashboardSleepScreen(true, &dashboard));
+}
+
+TEST(SleepScreenSelectionPolicy, AvoidsHeapHeavySettingsRebuild) {
+  EXPECT_FALSE(shouldRebuildSettingsListsAfterOptionSelection(true));
+  EXPECT_TRUE(shouldRebuildSettingsListsAfterOptionSelection(false));
 }
 
 TEST(DashboardBleProbe, BeginPublishesReady) {
