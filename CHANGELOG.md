@@ -49,6 +49,7 @@
 
 ### Fixed
 
+- Reopening an EPUB after sleep now returns to the first page at the saved text position instead of jumping back one page when adjacent pages share that position.
 - KOReader Sync now resolves saved text offsets from completed EPUB caches instead of falling back to less precise page estimates.
 - Power-button wake hold timing no longer varies with SD-card initialization time.
 - EPUB reflows no longer reject a chapter before parsing when heap fragmentation leaves the general background-build threshold only slightly short; genuinely large table, font-prewarm, and image allocations remain protected by their own memory checks.

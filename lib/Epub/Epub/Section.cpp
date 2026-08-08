@@ -11,6 +11,7 @@
 
 #include "Epub/css/CssParser.h"
 #include "Page.h"
+#include "VisibleTextPageLocator.h"
 #include "hyphenation/Hyphenator.h"
 #include "parsers/ChapterHtmlSlimParser.h"
 
@@ -1693,14 +1694,13 @@ std::optional<uint32_t> Section::getVisibleTextOffsetForPage(const uint16_t page
 std::optional<uint16_t> Section::getPageForVisibleTextOffset(const uint32_t offset,
                                                              const bool preferFirstAtOffset) const {
   if (build_ && build_->lutCount > 0) {
-    uint16_t result = 0;
+    VisibleTextPageLocator locator(offset, preferFirstAtOffset);
     for (uint16_t i = 0; i < build_->lutCount; i++) {
       const uint32_t start = build_->lut[i].visibleTextOffset;
-      if (start > offset || (preferFirstAtOffset && start == offset && i > 0)) break;
-      result = i;
+      if (!locator.accept(i, start)) break;
     }
     const uint32_t last = build_->lut[build_->lutCount - 1].visibleTextOffset;
-    if (offset <= last) return result;
+    if (offset <= last) return locator.result();
     // An extension build starts from page zero while its previously committed
     // partial remains readable.  Its shorter live prefix must not hide a page
     // that the committed cache already knows how to resolve.
@@ -1725,7 +1725,7 @@ std::optional<uint16_t> Section::getPageForVisibleTextOffset(const uint32_t offs
       lutOffset + static_cast<uint32_t>(count) * sizeof(uint32_t) > fileSize) {
     return std::nullopt;
   }
-  uint16_t result = 0;
+  VisibleTextPageLocator locator(offset, preferFirstAtOffset);
   uint32_t last = 0;
   for (uint16_t i = 0; i < count; i++) {
     uint32_t start = 0;
@@ -1733,9 +1733,8 @@ std::optional<uint16_t> Section::getPageForVisibleTextOffset(const uint32_t offs
       return std::nullopt;
     }
     last = start;
-    if (start > offset || (preferFirstAtOffset && start == offset && i > 0)) break;
-    result = i;
+    if (!locator.accept(i, start)) break;
   }
   if (version == SECTION_FILE_PARTIAL_VERSION && offset > last) return std::nullopt;
-  return result;
+  return locator.result();
 }
