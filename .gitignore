@@ -13,6 +13,7 @@ build
 /compile_commands.json
 /.cache
 .history/
+/.worktrees/
 /.venv
 *.local*
 fs_/
