@@ -26,6 +26,16 @@ bool DashboardBleProbeRenderer::renderForSleep() {
 }
 
 void DashboardBleProbeRenderer::showPasskey(const uint32_t passkey) {
+  // NimBLE invokes this on its host task. Keep that callback non-blocking;
+  // an e-ink refresh here stalls the pairing handshake.
+  pendingPasskey_.request(passkey);
+}
+
+bool DashboardBleProbeRenderer::renderPendingPasskey() {
+  uint32_t passkey = 0;
+  if (!pendingPasskey_.take(passkey)) {
+    return false;
+  }
   char passkeyLine[16];
   std::snprintf(passkeyLine, sizeof(passkeyLine), "%06lu", static_cast<unsigned long>(passkey));
   RenderLock lock;
@@ -35,6 +45,7 @@ void DashboardBleProbeRenderer::showPasskey(const uint32_t passkey) {
   renderer_.drawText(UI_12_FONT_ID, 32, 96, "Koppelcode", true, EpdFontFamily::BOLD);
   renderer_.drawText(UI_12_FONT_ID, 32, 148, passkeyLine);
   renderer_.displayBuffer(HalDisplay::HALF_REFRESH);
+  return true;
 }
 
 bool DashboardBleProbeRenderer::drawAccepted(const uint32_t messageId, const uint8_t payloadLength) {

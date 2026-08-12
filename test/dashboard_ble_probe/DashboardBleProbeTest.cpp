@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "DashboardBleProbe.h"
+#include "PendingPasskey.h"
 #include "activities/boot_sleep/DashboardSleepScreen.h"
 #include "activities/settings/SleepScreenSelectionPolicy.h"
 
@@ -54,6 +55,17 @@ std::vector<uint8_t> makeFrame(const uint32_t messageId, const std::vector<uint8
 }
 
 }  // namespace
+
+TEST(PendingPasskey, DefersPasskeyUntilMainLoopConsumesIt) {
+  probe::PendingPasskey pending;
+  uint32_t passkey = 0;
+
+  pending.request(482731);
+
+  EXPECT_TRUE(pending.take(passkey));
+  EXPECT_EQ(passkey, 482731u);
+  EXPECT_FALSE(pending.take(passkey));
+}
 
 TEST(DashboardSleepScreen, UsesProviderOnlyWhenPersonalDashboardIsSelected) {
   class FakeDashboard final : public DashboardSleepScreen {

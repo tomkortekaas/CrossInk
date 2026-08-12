@@ -1238,6 +1238,7 @@ void loop() {
     LOG_ERR("BLE", "Dashboard BLE deinit failed after receive window");
   }
   if (dashboardBleWindow.isActive()) {
+    dashboardBleProbeRenderer.renderPendingPasskey();
     dashboardBleProbe.loop();
   }
 #endif
