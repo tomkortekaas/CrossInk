@@ -51,6 +51,8 @@ class ActivityManager {
   std::vector<std::unique_ptr<Activity>> stackActivities;
   std::unique_ptr<Activity> currentActivity;
   DashboardSleepScreen* dashboardSleepScreen = nullptr;  // Non-owning; registered provider has static lifetime.
+  void (*beforeReaderEnterCallback)(void*) = nullptr;
+  void* beforeReaderEnterContext = nullptr;
 
   void exitActivity(const RenderLock& lock);
 
@@ -112,6 +114,10 @@ class ActivityManager {
                   bool cleanImageBaseOnEntry = false);
   void goToSleep(bool fromTimeout = false);
   void setDashboardSleepScreen(DashboardSleepScreen* screen) { dashboardSleepScreen = screen; }
+  void setBeforeReaderEnterCallback(void (*callback)(void*), void* context) {
+    beforeReaderEnterCallback = callback;
+    beforeReaderEnterContext = context;
+  }
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
   void goToCrashReport();

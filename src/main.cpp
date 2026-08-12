@@ -82,6 +82,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "dashboard_ble_probe/DashboardBleTransport.h"
 #include "dashboard_sync/DashboardSyncGate.h"
 #include "dashboard_sync/DashboardSyncWakePolicy.h"
+#include "dashboard_sync/DashboardBleWindow.h"
 #endif
 #include "GlobalActions.h"
 #include "KOReaderCredentialStore.h"
@@ -125,6 +126,7 @@ FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts
 probe::DashboardBleProbeRenderer dashboardBleProbeRenderer(renderer);
 probe::DashboardBleTransport dashboardBleTransport;
 probe::DashboardBleProbe dashboardBleProbe(dashboardBleProbeRenderer, dashboardBleTransport);
+dashboard_sync::DashboardBleWindow dashboardBleWindow(dashboardBleTransport);
 #endif
 static unsigned long allowSleepAt = 0;
 static unsigned long lastX4ProPowerClickAt = 0;
@@ -132,6 +134,15 @@ static unsigned long lastX4ProPowerClickAt = 0;
 namespace {
 constexpr unsigned long X4PRO_POWER_DOUBLE_CLICK_MS = 500;
 constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 400;
+
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+void stopDashboardBleBeforeReader(void* context) {
+  auto* window = static_cast<dashboard_sync::DashboardBleWindow*>(context);
+  if (!window->beforeReaderEnter()) {
+    LOG_ERR("BLE", "Dashboard BLE deinit failed before reader entry");
+  }
+}
+#endif
 
 constexpr uint64_t dashboardSleepTimerWakeUs() {
 #if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
@@ -974,8 +985,10 @@ void setup() {
 
 #if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
   activityManager.setDashboardSleepScreen(&dashboardBleProbeRenderer);
+  activityManager.setBeforeReaderEnterCallback(stopDashboardBleBeforeReader, &dashboardBleWindow);
   if (dashboardBleTransport.begin(dashboardBleProbe, probe::PairingMode::Onboarding, &dashboardBleProbeRenderer)) {
     dashboardBleProbe.begin();
+    dashboardBleWindow.startedAt(millis());
   } else {
     LOG_ERR("BLE", "Dashboard BLE probe failed to initialize");
   }
@@ -1221,7 +1234,12 @@ void loop() {
 
   const unsigned long activityStartTime = millis();
 #if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
-  dashboardBleProbe.loop();
+  if (!dashboardBleWindow.tick(millis())) {
+    LOG_ERR("BLE", "Dashboard BLE deinit failed after receive window");
+  }
+  if (dashboardBleWindow.isActive()) {
+    dashboardBleProbe.loop();
+  }
 #endif
   activityManager.loop();
   const unsigned long activityDuration = millis() - activityStartTime;

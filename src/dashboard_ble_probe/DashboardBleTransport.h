@@ -3,6 +3,7 @@
 #include <atomic>
 
 #include "DashboardBleProbe.h"
+#include "dashboard_sync/DashboardBleWindow.h"
 
 #if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
 #include <NimBLEDevice.h>
@@ -18,12 +19,13 @@ class PasskeyDisplay {
 };
 
 class DashboardBleTransport final : public ProbeStatusSink,
+                                    public dashboard_sync::BleWindowTransport,
                                     public NimBLECharacteristicCallbacks,
                                     public NimBLEServerCallbacks {
  public:
   bool begin(DashboardBleProbe& probe, PairingMode pairingMode = PairingMode::Disabled,
              PasskeyDisplay* passkeyDisplay = nullptr);
-  bool end();
+  bool end() override;
   bool hasConnected() const { return hasConnected_.load(); }
   uint32_t connectionCount() const { return connectionCount_.load(); }
   void publish(Status status, bool hasMessageId, uint32_t messageId) override;

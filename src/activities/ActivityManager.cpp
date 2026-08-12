@@ -181,6 +181,9 @@ void ActivityManager::loop() {
       currentActivity = std::move(pendingActivity);
 
       lock.unlock();  // onEnter may acquire its own lock
+      if (currentActivity->isReaderActivity() && beforeReaderEnterCallback != nullptr) {
+        beforeReaderEnterCallback(beforeReaderEnterContext);
+      }
       currentActivity->onEnter();
 
       // onEnter may request another pending action, we will handle it in the next loop iteration
@@ -260,6 +263,9 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
     // No current activity, safe to launch immediately
     TouchRegistry::getInstance().clear();
     currentActivity = std::move(newActivity);
+    if (currentActivity->isReaderActivity() && beforeReaderEnterCallback != nullptr) {
+      beforeReaderEnterCallback(beforeReaderEnterContext);
+    }
     currentActivity->onEnter();
   }
 }
