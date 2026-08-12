@@ -14,6 +14,7 @@ bool DashboardBleTransport::begin(DashboardBleProbe& probe, const PairingMode pa
   pairingMode_ = pairingMode;
   connectionCount_.store(0);
   hasConnected_.store(false);
+  acceptedFrame_.reset();
   if (!NimBLEDevice::init(kAdvertisingName)) {
     LOG_ERR("BLE", "Dashboard probe: NimBLE init failed");
     return false;
@@ -36,14 +37,20 @@ bool DashboardBleTransport::begin(DashboardBleProbe& probe, const PairingMode pa
     return false;
   }
 
+  uint32_t writeProperties = NIMBLE_PROPERTY::WRITE;
+  uint32_t statusProperties = NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY;
+  if (kDashboardBleSecurity.encryptedCharacteristics) {
+    writeProperties |= NIMBLE_PROPERTY::WRITE_ENC;
+    statusProperties |= NIMBLE_PROPERTY::READ_ENC;
+  }
+  if (kDashboardBleSecurity.authenticatedCharacteristics) {
+    writeProperties |= NIMBLE_PROPERTY::WRITE_AUTHEN;
+    statusProperties |= NIMBLE_PROPERTY::READ_AUTHEN;
+  }
   NimBLECharacteristic* writeCharacteristic =
-      service->createCharacteristic(kWriteUuid,
-                                    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC,
-                                    kMaxFrameBytes);
-  statusCharacteristic_ = service->createCharacteristic(
-      kStatusUuid,
-      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ_ENC,
-      sizeof(statusValue_));
+      service->createCharacteristic(kWriteUuid, writeProperties, kMaxFrameBytes);
+  statusCharacteristic_ =
+      service->createCharacteristic(kStatusUuid, statusProperties, sizeof(statusValue_));
   if (writeCharacteristic == nullptr || statusCharacteristic_ == nullptr) {
     LOG_ERR("BLE", "Dashboard probe: characteristic creation failed");
     return false;
@@ -55,7 +62,7 @@ bool DashboardBleTransport::begin(DashboardBleProbe& probe, const PairingMode pa
     return false;
   }
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
-  if (pairingMode == PairingMode::Disabled) {
+  if (pairingMode == PairingMode::Disabled && kDashboardBleSecurity.bonding) {
     const int bondCount = NimBLEDevice::getNumBonds();
     for (int index = 0; index < bondCount; ++index) {
       NimBLEDevice::whiteListAdd(NimBLEDevice::getBondedAddress(index));
@@ -122,7 +129,8 @@ void DashboardBleTransport::publish(const Status status, const bool hasMessageId
     return;
   }
   statusCharacteristic_->setValue(reinterpret_cast<const uint8_t*>(statusValue_), strlen(statusValue_));
-  statusCharacteristic_->notify();
+  const bool notified = statusCharacteristic_->notify();
+  if (status == Status::Accepted && notified) acceptedFrame_.mark();
 }
 
 void DashboardBleTransport::onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) {
@@ -150,7 +158,7 @@ void DashboardBleTransport::onAuthenticationComplete(NimBLEConnInfo& connection)
   LOG_INF("BLE", "Dashboard probe: authentication complete encrypted=%u authenticated=%u bonded=%u",
           static_cast<unsigned>(connection.isEncrypted()), static_cast<unsigned>(connection.isAuthenticated()),
           static_cast<unsigned>(connection.isBonded()));
-  if (!connection.isEncrypted()) {
+  if (kDashboardBleSecurity.encryptedCharacteristics && !connection.isEncrypted()) {
     if (server_ != nullptr) {
       server_->disconnect(connection.getConnHandle());
     }

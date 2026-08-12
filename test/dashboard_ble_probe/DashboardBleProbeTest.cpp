@@ -5,6 +5,7 @@
 
 #include "DashboardBleProbe.h"
 #include "DashboardBleSecurityPolicy.h"
+#include "DashboardBleTransport.h"
 #include "activities/boot_sleep/DashboardSleepScreen.h"
 #include "activities/settings/SleepScreenSelectionPolicy.h"
 
@@ -56,11 +57,30 @@ std::vector<uint8_t> makeFrame(const uint32_t messageId, const std::vector<uint8
 
 }  // namespace
 
-TEST(DashboardBleSecurityPolicy, UsesEncryptedBondingWithoutInteractivePairing) {
-  EXPECT_TRUE(probe::kDashboardBleSecurity.bonding);
+TEST(DashboardBleSecurityPolicy, UsesTemporaryUnsecuredValidationLink) {
+  EXPECT_FALSE(probe::kDashboardBleSecurity.bonding);
   EXPECT_FALSE(probe::kDashboardBleSecurity.mitm);
   EXPECT_FALSE(probe::kDashboardBleSecurity.secureConnections);
+  EXPECT_FALSE(probe::kDashboardBleSecurity.encryptedCharacteristics);
   EXPECT_FALSE(probe::kDashboardBleSecurity.authenticatedCharacteristics);
+}
+
+TEST(DashboardBleAcceptedFrameSignal, ConsumesEachAcceptanceOnce) {
+  probe::AcceptedFrameSignal signal;
+
+  EXPECT_FALSE(signal.take());
+  signal.mark();
+  EXPECT_TRUE(signal.take());
+  EXPECT_FALSE(signal.take());
+}
+
+TEST(DashboardBleAcceptedFrameSignal, ResetDropsStaleAcceptance) {
+  probe::AcceptedFrameSignal signal;
+  signal.mark();
+
+  signal.reset();
+
+  EXPECT_FALSE(signal.take());
 }
 
 TEST(DashboardSleepScreen, UsesProviderOnlyWhenPersonalDashboardIsSelected) {

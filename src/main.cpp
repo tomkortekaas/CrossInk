@@ -126,7 +126,7 @@ FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts
 probe::DashboardBleProbeRenderer dashboardBleProbeRenderer(renderer);
 probe::DashboardBleTransport dashboardBleTransport;
 probe::DashboardBleProbe dashboardBleProbe(dashboardBleProbeRenderer, dashboardBleTransport);
-dashboard_sync::DashboardBleWindow dashboardBleWindow(dashboardBleTransport);
+dashboard_sync::DashboardBleWindow dashboardBleWindow;
 #endif
 static unsigned long allowSleepAt = 0;
 static unsigned long lastX4ProPowerClickAt = 0;
@@ -141,11 +141,9 @@ constexpr unsigned long X4PRO_POWER_DOUBLE_CLICK_MS = 500;
 constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 400;
 
 constexpr uint64_t dashboardSleepTimerWakeUs() {
-#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
-  return dashboard_sync::kGateTimerWakeUs;
-#else
+  // The fast validation milestone is foreground-only. Keep timer sync disabled
+  // until its still-unsafe live NimBLE teardown has a separately proven exit.
   return 0;
-#endif
 }
 }  // namespace
 
@@ -1262,6 +1260,9 @@ void loop() {
   dashboardBleWindow.tick(millis());
   if (dashboardBleWindow.isActive()) {
     dashboardBleProbe.loop();
+    if (dashboardBleTransport.takeAcceptedFrame()) {
+      dashboardBleWindow.acceptedAt(millis());
+    }
   }
 #endif
   activityManager.loop();
