@@ -89,7 +89,7 @@ void HalPowerManager::setPowerSaving(bool enabled) {
   // Otherwise, no change needed
 }
 
-void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
+void HalPowerManager::startDeepSleep(HalGPIO& gpio, const uint64_t timerWakeUs) const {
   disableWiFiBeforeDeepSleep();
 
 #ifdef ENABLE_SERIAL_LOG
@@ -128,6 +128,9 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
   // and arm the board-configured power pin immediately before sleeping.
   freeink::PowerManager::waitForPowerButtonRelease();
   esp_sleep_config_gpio_isolate();
+  if (timerWakeUs > 0) {
+    ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup(timerWakeUs));
+  }
   freeink::PowerManager::armPowerButtonWakeup();
   gpio_deep_sleep_hold_en();
   esp_deep_sleep_start();
