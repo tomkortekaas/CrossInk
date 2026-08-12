@@ -86,16 +86,29 @@ bool DashboardBleTransport::end() {
     return true;
   }
   NimBLEAdvertising* const advertising = NimBLEDevice::getAdvertising();
+  LOG_INF("BLE", "Dashboard probe shutdown: stopping advertising");
   if (advertising != nullptr && advertising->isAdvertising()) {
-    advertising->stop();
+    if (!advertising->stop()) {
+      LOG_ERR("BLE", "Dashboard probe shutdown: advertising stop failed");
+      return false;
+    }
   }
+  // ble_gap_adv_stop updates host state synchronously, but the ESP32-C3
+  // controller completes the HCI disable asynchronously. Deinitializing while
+  // that command is still in flight can wedge btdm_controller_task in an
+  // interrupt-disabled section and trip the interrupt watchdog.
+  delay(500);
+  LOG_INF("BLE", "Dashboard probe shutdown: advertising settled");
   if (server_ != nullptr) {
     for (const uint16_t handle : server_->getPeerDevices()) {
+      LOG_INF("BLE", "Dashboard probe shutdown: disconnecting handle=%u", static_cast<unsigned>(handle));
       server_->disconnect(handle);
     }
   }
-  delay(50);
+  delay(500);
+  LOG_INF("BLE", "Dashboard probe shutdown: deinitializing NimBLE");
   const bool result = NimBLEDevice::deinit(true);
+  LOG_INF("BLE", "Dashboard probe shutdown: NimBLE deinit result=%u", static_cast<unsigned>(result));
   initialized_ = false;
   probe_ = nullptr;
   server_ = nullptr;
@@ -123,15 +136,20 @@ void DashboardBleTransport::onWrite(NimBLECharacteristic* characteristic, NimBLE
 void DashboardBleTransport::onConnect(NimBLEServer*, NimBLEConnInfo&) {
   hasConnected_.store(true);
   connectionCount_.fetch_add(1);
+  LOG_INF("BLE", "Dashboard probe: peer connected");
 }
 
 void DashboardBleTransport::onDisconnect(NimBLEServer*, NimBLEConnInfo&, int) {
+  LOG_INF("BLE", "Dashboard probe: peer disconnected");
   if (initialized_) {
     NimBLEDevice::startAdvertising();
   }
 }
 
 void DashboardBleTransport::onAuthenticationComplete(NimBLEConnInfo& connection) {
+  LOG_INF("BLE", "Dashboard probe: authentication complete encrypted=%u authenticated=%u bonded=%u",
+          static_cast<unsigned>(connection.isEncrypted()), static_cast<unsigned>(connection.isAuthenticated()),
+          static_cast<unsigned>(connection.isBonded()));
   if (!connection.isEncrypted()) {
     if (server_ != nullptr) {
       server_->disconnect(connection.getConnHandle());
