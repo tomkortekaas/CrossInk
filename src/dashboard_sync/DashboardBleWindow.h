@@ -4,40 +4,36 @@
 
 namespace dashboard_sync {
 
-// Normal boot allows enough time for manual AccessorySetupKit onboarding. This
-// is separate from the fixed 10-second timer-wake connection gate. Entering a
-// reader always closes this window early.
 constexpr uint32_t kNormalBleWindowMs = 60000;
-
-class BleWindowTransport {
- public:
-  virtual ~BleWindowTransport() = default;
-  virtual bool end() = 0;
-};
+constexpr uint32_t kAcceptedSettleMs = 750;
 
 class DashboardBleWindow {
  public:
   using ExpiryCallback = void (*)(void* context);
 
-  explicit DashboardBleWindow(BleWindowTransport& transport, uint32_t windowMs = kNormalBleWindowMs)
-      : transport_(transport), windowMs_(windowMs) {}
+  explicit DashboardBleWindow(uint32_t windowMs = kNormalBleWindowMs,
+                              uint32_t acceptedSettleMs = kAcceptedSettleMs)
+      : windowMs_(windowMs), acceptedSettleMs_(acceptedSettleMs) {}
 
   void setExpiryCallback(ExpiryCallback callback, void* context) {
     expiryCallback_ = callback;
     expiryContext_ = context;
   }
   void startedAt(uint32_t nowMs);
+  void acceptedAt(uint32_t nowMs);
   bool tick(uint32_t nowMs);
-  bool beforeReaderEnter();
+  void beforeReaderEnter();
   bool isActive() const { return active_; }
 
  private:
-  bool stop();
+  void requestRestart();
 
-  BleWindowTransport& transport_;
   uint32_t windowMs_;
+  uint32_t acceptedSettleMs_;
   uint32_t startedAtMs_ = 0;
+  uint32_t acceptedAtMs_ = 0;
   bool active_ = false;
+  bool accepted_ = false;
   ExpiryCallback expiryCallback_ = nullptr;
   void* expiryContext_ = nullptr;
 };

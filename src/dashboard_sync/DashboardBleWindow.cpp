@@ -4,30 +4,32 @@ namespace dashboard_sync {
 
 void DashboardBleWindow::startedAt(const uint32_t nowMs) {
   startedAtMs_ = nowMs;
+  acceptedAtMs_ = 0;
+  accepted_ = false;
   active_ = true;
 }
 
+void DashboardBleWindow::acceptedAt(const uint32_t nowMs) {
+  if (!active_ || accepted_) return;
+  acceptedAtMs_ = nowMs;
+  accepted_ = true;
+}
+
 bool DashboardBleWindow::tick(const uint32_t nowMs) {
-  if (active_ && nowMs - startedAtMs_ >= windowMs_) {
-    // ESP32-C3 can wedge inside NimBLEAdvertising::stop(). The caller handles
-    // expiry by performing a controlled restart into a one-shot BLE-free boot.
-    active_ = false;
-    if (expiryCallback_ != nullptr) {
-      expiryCallback_(expiryContext_);
-    }
+  if (!active_) return true;
+  if (nowMs - startedAtMs_ >= windowMs_ || (accepted_ && nowMs - acceptedAtMs_ >= acceptedSettleMs_)) {
+    requestRestart();
     return false;
   }
   return true;
 }
 
-bool DashboardBleWindow::beforeReaderEnter() { return stop(); }
+void DashboardBleWindow::beforeReaderEnter() { requestRestart(); }
 
-bool DashboardBleWindow::stop() {
-  if (!active_) {
-    return true;
-  }
+void DashboardBleWindow::requestRestart() {
+  if (!active_) return;
   active_ = false;
-  return transport_.end();
+  if (expiryCallback_ != nullptr) expiryCallback_(expiryContext_);
 }
 
 }  // namespace dashboard_sync

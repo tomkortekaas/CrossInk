@@ -5,117 +5,131 @@
 namespace dashboard_sync {
 namespace {
 
-class FakeTransport final : public BleWindowTransport {
- public:
-  bool end() override {
-    ++endCalls;
-    return endResult;
-  }
-
-  int endCalls = 0;
-  bool endResult = true;
-};
-
 struct ExpirySink {
   int calls = 0;
 };
 
 void recordExpiry(void* context) { static_cast<ExpirySink*>(context)->calls++; }
 
-TEST(DashboardBleWindow, ExpiryRequestsRestartWithoutEndingTransport) {
-  FakeTransport transport;
+TEST(DashboardBleWindow, ExpiryRequestsRestart) {
   ExpirySink expiry;
-  DashboardBleWindow window(transport, 10000);
+  DashboardBleWindow window(10000, 750);
   window.setExpiryCallback(recordExpiry, &expiry);
-
   window.startedAt(100);
+
   EXPECT_TRUE(window.tick(10099));
   EXPECT_TRUE(window.isActive());
   EXPECT_EQ(expiry.calls, 0);
-  EXPECT_EQ(transport.endCalls, 0);
 
   EXPECT_FALSE(window.tick(10100));
   EXPECT_FALSE(window.isActive());
   EXPECT_EQ(expiry.calls, 1);
-  EXPECT_EQ(transport.endCalls, 0);
 }
 
-TEST(DashboardBleWindow, StopsBeforeEarlyReaderEntry) {
-  FakeTransport transport;
+TEST(DashboardBleWindow, ReaderEntryRequestsRestartWithoutTransportTeardown) {
   ExpirySink expiry;
-  DashboardBleWindow window(transport, 10000);
+  DashboardBleWindow window(10000, 750);
   window.setExpiryCallback(recordExpiry, &expiry);
-
   window.startedAt(100);
+
   window.beforeReaderEnter();
 
   EXPECT_FALSE(window.isActive());
-  EXPECT_EQ(expiry.calls, 0);
-  EXPECT_EQ(transport.endCalls, 1);
+  EXPECT_EQ(expiry.calls, 1);
 }
 
-TEST(DashboardBleWindow, ShutdownIsIdempotent) {
-  FakeTransport transport;
+TEST(DashboardBleWindow, AcceptedFrameSettlesBeforeRestart) {
   ExpirySink expiry;
-  DashboardBleWindow window(transport, 10000);
+  DashboardBleWindow window(10000, 750);
   window.setExpiryCallback(recordExpiry, &expiry);
-
   window.startedAt(100);
-  window.beforeReaderEnter();
-  window.beforeReaderEnter();
-  window.tick(20000);
+  window.acceptedAt(600);
 
+  EXPECT_TRUE(window.tick(1349));
+  EXPECT_TRUE(window.isActive());
   EXPECT_EQ(expiry.calls, 0);
-  EXPECT_EQ(transport.endCalls, 1);
+
+  EXPECT_FALSE(window.tick(1350));
+  EXPECT_FALSE(window.isActive());
+  EXPECT_EQ(expiry.calls, 1);
 }
 
-TEST(DashboardBleWindow, DisabledWindowDoesNotTouchTransport) {
-  FakeTransport transport;
+TEST(DashboardBleWindow, AcceptedFrameDoesNotExtendOriginalDeadline) {
   ExpirySink expiry;
-  DashboardBleWindow window(transport, 10000);
+  DashboardBleWindow window(10000, 750);
+  window.setExpiryCallback(recordExpiry, &expiry);
+  window.startedAt(100);
+  window.acceptedAt(10000);
+
+  EXPECT_FALSE(window.tick(10100));
+  EXPECT_FALSE(window.isActive());
+  EXPECT_EQ(expiry.calls, 1);
+}
+
+TEST(DashboardBleWindow, FirstAcceptedFrameOwnsSettleDeadline) {
+  ExpirySink expiry;
+  DashboardBleWindow window(10000, 750);
+  window.setExpiryCallback(recordExpiry, &expiry);
+  window.startedAt(100);
+  window.acceptedAt(600);
+  window.acceptedAt(900);
+
+  EXPECT_FALSE(window.tick(1350));
+  EXPECT_EQ(expiry.calls, 1);
+}
+
+TEST(DashboardBleWindow, DisabledWindowIsIdempotent) {
+  ExpirySink expiry;
+  DashboardBleWindow window(10000, 750);
   window.setExpiryCallback(recordExpiry, &expiry);
 
   window.beforeReaderEnter();
-  window.tick(20000);
+  EXPECT_TRUE(window.tick(20000));
 
   EXPECT_FALSE(window.isActive());
   EXPECT_EQ(expiry.calls, 0);
-  EXPECT_EQ(transport.endCalls, 0);
 }
 
-TEST(DashboardBleWindow, FailedDeinitStillDoesNotRetryInMainLoop) {
-  FakeTransport transport;
+TEST(DashboardBleWindow, RestartRequestIsIdempotent) {
   ExpirySink expiry;
-  transport.endResult = false;
-  DashboardBleWindow window(transport, 10000);
+  DashboardBleWindow window(10000, 750);
   window.setExpiryCallback(recordExpiry, &expiry);
-
   window.startedAt(100);
-  EXPECT_FALSE(window.beforeReaderEnter());
-  EXPECT_FALSE(window.isActive());
-  window.tick(20000);
 
-  EXPECT_EQ(expiry.calls, 0);
-  EXPECT_EQ(transport.endCalls, 1);
+  window.beforeReaderEnter();
+  window.beforeReaderEnter();
+  EXPECT_TRUE(window.tick(20000));
+
+  EXPECT_EQ(expiry.calls, 1);
 }
 
 TEST(DashboardBleWindow, WrapSafeNearUint32Rollover) {
-  FakeTransport transport;
   ExpirySink expiry;
-  DashboardBleWindow window(transport, 10000);
+  DashboardBleWindow window(10000, 750);
   window.setExpiryCallback(recordExpiry, &expiry);
 
-  constexpr uint32_t kStart = 0xFFFFFFF0u;              // 4,294,967,280
-  window.startedAt(kStart);                              // deadline wraps to 9984
-  EXPECT_TRUE(window.tick(kStart + 9999u));              // 1 ms before the deadline
+  constexpr uint32_t kStart = 0xFFFFFFF0u;
+  window.startedAt(kStart);
+  EXPECT_TRUE(window.tick(kStart + 9999u));
   EXPECT_TRUE(window.isActive());
   EXPECT_EQ(expiry.calls, 0);
-  EXPECT_EQ(transport.endCalls, 0);
 
   EXPECT_FALSE(window.tick(kStart + 10000u));
   EXPECT_FALSE(window.isActive());
   EXPECT_EQ(expiry.calls, 1);
-  EXPECT_EQ(transport.endCalls, 0);
+}
+
+TEST(DashboardBleWindow, AcceptedSettleIsWrapSafeNearUint32Rollover) {
+  ExpirySink expiry;
+  DashboardBleWindow window(10000, 750);
+  window.setExpiryCallback(recordExpiry, &expiry);
+
+  constexpr uint32_t kAccepted = 0xFFFFFFF0u;
+  window.startedAt(kAccepted - 100u);
+  window.acceptedAt(kAccepted);
+  EXPECT_TRUE(window.tick(kAccepted + 749u));
+  EXPECT_FALSE(window.tick(kAccepted + 750u));
+  EXPECT_EQ(expiry.calls, 1);
 }
 
 }  // namespace
