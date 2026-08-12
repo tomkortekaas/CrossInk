@@ -80,6 +80,8 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "dashboard_ble_probe/DashboardBleProbe.h"
 #include "dashboard_ble_probe/DashboardBleProbeRenderer.h"
 #include "dashboard_ble_probe/DashboardBleTransport.h"
+#include "dashboard_sync/DashboardSyncGate.h"
+#include "dashboard_sync/DashboardSyncWakePolicy.h"
 #endif
 #include "GlobalActions.h"
 #include "KOReaderCredentialStore.h"
@@ -130,6 +132,14 @@ static unsigned long lastX4ProPowerClickAt = 0;
 namespace {
 constexpr unsigned long X4PRO_POWER_DOUBLE_CLICK_MS = 500;
 constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 400;
+
+constexpr uint64_t dashboardSleepTimerWakeUs() {
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+  return dashboard_sync::kGateTimerWakeUs;
+#else
+  return 0;
+#endif
+}
 }  // namespace
 
 static void logBootHeap(const char* stage) {
@@ -276,6 +286,8 @@ const char* wakeupRouteName(const HalGPIO::WakeupReason reason) {
   switch (reason) {
     case HalGPIO::WakeupReason::PowerButton:
       return "PowerButton";
+    case HalGPIO::WakeupReason::Timer:
+      return "Timer";
     case HalGPIO::WakeupReason::AfterFlash:
       return "AfterFlash";
     case HalGPIO::WakeupReason::AfterUSBPower:
@@ -704,7 +716,7 @@ void enterDeepSleep(bool fromTimeout) {
   mirrorWakeShortPressToNvs();  // next boot's wake-hold check reads this pre-SD
   LOG_DBG("MAIN", "Entering deep sleep");
 
-  powerManager.startDeepSleep(gpio);
+  powerManager.startDeepSleep(gpio, dashboardSleepTimerWakeUs());
 }
 
 void setupDisplayAndFonts(const bool seamless = false, const bool loadReaderResources = true) {
@@ -813,6 +825,16 @@ void setup() {
   // only on screens that explicitly allow the fallback.
   gpio.setSharedConfirmPowerShortPressEmitsPower(true);
   powerManager.begin();
+
+  const auto wakeupReason = gpio.getWakeupReason();
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+  const bool timerWake = wakeupReason == HalGPIO::WakeupReason::Timer;
+  gpio.update();
+  const bool powerPressed = gpio.isPressed(HalGPIO::BTN_POWER);
+  if (dashboard_sync::selectBootRoute(timerWake, powerPressed) == dashboard_sync::BootRoute::DashboardSync) {
+    dashboard_sync::runConnectionGate(dashboardBleTransport, dashboardBleProbe, powerManager, gpio);
+  }
+#endif
   halTiltSensor.begin();
   halClock.begin();
 
@@ -837,7 +859,6 @@ void setup() {
   // powerManager; the one setting involved ("short press = sleep" makes any
   // tap a valid wake) comes from its NVS mirror since SETTINGS lives on the
   // not-yet-mounted SD card.
-  const auto wakeupReason = gpio.getWakeupReason();
   LOG_INF("BOOT", "Wake route: %s", wakeupRouteName(wakeupReason));
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton: {
@@ -847,7 +868,7 @@ void setup() {
       LOG_INF("BOOT", "Power-button wake: verifying duration required=%u shortAllowed=%d", requiredDuration,
               shortPressWakes);
       if (!gpio.verifyPowerButtonWakeup(requiredDuration, shortPressWakes)) {
-        powerManager.startDeepSleep(gpio);
+        powerManager.startDeepSleep(gpio, dashboardSleepTimerWakeUs());
       }
       break;
     }
@@ -859,6 +880,9 @@ void setup() {
     case HalGPIO::WakeupReason::AfterFlash:
       // After flashing, just proceed to boot
       LOG_INF("BOOT", "AfterFlash route: continuing boot");
+      break;
+    case HalGPIO::WakeupReason::Timer:
+      LOG_INF("BOOT", "Timer wake route interrupted by power button: continuing normal boot");
       break;
     case HalGPIO::WakeupReason::Other:
     default:
@@ -950,7 +974,7 @@ void setup() {
 
 #if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
   activityManager.setDashboardSleepScreen(&dashboardBleProbeRenderer);
-  if (dashboardBleTransport.begin(dashboardBleProbe)) {
+  if (dashboardBleTransport.begin(dashboardBleProbe, probe::PairingMode::Onboarding, &dashboardBleProbeRenderer)) {
     dashboardBleProbe.begin();
   } else {
     LOG_ERR("BLE", "Dashboard BLE probe failed to initialize");

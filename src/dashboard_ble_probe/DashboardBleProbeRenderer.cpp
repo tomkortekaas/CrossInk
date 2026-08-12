@@ -25,6 +25,18 @@ bool DashboardBleProbeRenderer::renderForSleep() {
   return hasAcceptedFrame_ && drawAccepted(lastMessageId_, lastPayloadLength_);
 }
 
+void DashboardBleProbeRenderer::showPasskey(const uint32_t passkey) {
+  char passkeyLine[16];
+  std::snprintf(passkeyLine, sizeof(passkeyLine), "%06lu", static_cast<unsigned long>(passkey));
+  RenderLock lock;
+  renderer_.setOrientation(GfxRenderer::Portrait);
+  renderer_.setRenderMode(GfxRenderer::BW);
+  renderer_.clearScreen();
+  renderer_.drawText(UI_12_FONT_ID, 32, 96, "Koppelcode", true, EpdFontFamily::BOLD);
+  renderer_.drawText(UI_12_FONT_ID, 32, 148, passkeyLine);
+  renderer_.displayBuffer(HalDisplay::HALF_REFRESH);
+}
+
 bool DashboardBleProbeRenderer::drawAccepted(const uint32_t messageId, const uint8_t payloadLength) {
   char messageLine[32];
   char bytesLine[32];
