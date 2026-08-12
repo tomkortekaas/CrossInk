@@ -9,7 +9,13 @@ void DashboardBleWindow::startedAt(const uint32_t nowMs) {
 
 bool DashboardBleWindow::tick(const uint32_t nowMs) {
   if (active_ && nowMs - startedAtMs_ >= windowMs_) {
-    return stop();
+    // ESP32-C3 can wedge inside NimBLEAdvertising::stop(). The caller handles
+    // expiry by performing a controlled restart into a one-shot BLE-free boot.
+    active_ = false;
+    if (expiryCallback_ != nullptr) {
+      expiryCallback_(expiryContext_);
+    }
+    return false;
   }
   return true;
 }

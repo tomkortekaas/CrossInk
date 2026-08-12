@@ -17,9 +17,15 @@ class BleWindowTransport {
 
 class DashboardBleWindow {
  public:
+  using ExpiryCallback = void (*)(void* context);
+
   explicit DashboardBleWindow(BleWindowTransport& transport, uint32_t windowMs = kNormalBleWindowMs)
       : transport_(transport), windowMs_(windowMs) {}
 
+  void setExpiryCallback(ExpiryCallback callback, void* context) {
+    expiryCallback_ = callback;
+    expiryContext_ = context;
+  }
   void startedAt(uint32_t nowMs);
   bool tick(uint32_t nowMs);
   bool beforeReaderEnter();
@@ -32,6 +38,8 @@ class DashboardBleWindow {
   uint32_t windowMs_;
   uint32_t startedAtMs_ = 0;
   bool active_ = false;
+  ExpiryCallback expiryCallback_ = nullptr;
+  void* expiryContext_ = nullptr;
 };
 
 }  // namespace dashboard_sync

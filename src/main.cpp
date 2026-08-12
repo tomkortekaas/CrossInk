@@ -131,18 +131,14 @@ dashboard_sync::DashboardBleWindow dashboardBleWindow(dashboardBleTransport);
 static unsigned long allowSleepAt = 0;
 static unsigned long lastX4ProPowerClickAt = 0;
 
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+void restartDashboardBleFreeToHome(void* context);
+void restartDashboardBleFreeToReader(void* context);
+#endif
+
 namespace {
 constexpr unsigned long X4PRO_POWER_DOUBLE_CLICK_MS = 500;
 constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 400;
-
-#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
-void stopDashboardBleBeforeReader(void* context) {
-  auto* window = static_cast<dashboard_sync::DashboardBleWindow*>(context);
-  if (!window->beforeReaderEnter()) {
-    LOG_ERR("BLE", "Dashboard BLE deinit failed before reader entry");
-  }
-}
-#endif
 
 constexpr uint64_t dashboardSleepTimerWakeUs() {
 #if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
@@ -328,11 +324,17 @@ RTC_NOINIT_ATTR uint32_t silentReaderPageBuildMagic;
 RTC_NOINIT_ATTR uint32_t silentReaderPageBuildBookHash;
 RTC_NOINIT_ATTR uint32_t silentReaderPageBuildPackedTarget;
 RTC_NOINIT_ATTR uint32_t silentReaderPageBuildFlags;
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+RTC_NOINIT_ATTR uint32_t dashboardBleSkipOnceMagic;
+#endif
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
 constexpr uint32_t SILENT_READER_PAGE_BUILD_MAGIC = 0xC1EAB017;
 constexpr uint32_t SILENT_READER_PAGE_BUILD_AUTO_TURN = 1U << 0;
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+constexpr uint32_t DASHBOARD_BLE_SKIP_ONCE_MAGIC = 0xC1EAB1E0;
+#endif
 constexpr uint32_t NETWORK_RENDER_TASK_STACK_BYTES = 8192;
 constexpr uint32_t READER_RENDER_TASK_STACK_BYTES = 16384;
 
@@ -424,6 +426,20 @@ void silentRestartToReader() {
   delay(50);
   restartWithSilentToken();
 }
+
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+void restartDashboardBleFreeToHome(void*) {
+  dashboardBleSkipOnceMagic = DASHBOARD_BLE_SKIP_ONCE_MAGIC;
+  LOG_INF("BLE", "Dashboard receive window expired; restarting without BLE");
+  silentRestart();
+}
+
+void restartDashboardBleFreeToReader(void*) {
+  dashboardBleSkipOnceMagic = DASHBOARD_BLE_SKIP_ONCE_MAGIC;
+  LOG_INF("BLE", "Reader requested while BLE is active; restarting into reader without BLE");
+  silentRestartToReader();
+}
+#endif
 
 void silentRestartToNetwork(const NetworkBootTarget target, const uint32_t payload) {
   if (deepSleepInProgress) return;
@@ -823,6 +839,10 @@ void setup() {
   const uint32_t snapshotTarget = (isSilentReboot && isValidSilentTarget) ? silentRebootTarget : 0;
   const uint32_t snapshotPayload = isSilentReboot ? silentRebootPayload : 0;
   const bool isNetworkResume = snapshotTarget >= static_cast<uint32_t>(NetworkBootTarget::OTA);
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+  const bool skipDashboardBleOnce = dashboardBleSkipOnceMagic == DASHBOARD_BLE_SKIP_ONCE_MAGIC;
+  dashboardBleSkipOnceMagic = 0;
+#endif
   silentRebootMagic = 0;
   silentRebootTarget = 0;
   silentRebootPayload = 0;
@@ -985,12 +1005,17 @@ void setup() {
 
 #if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
   activityManager.setDashboardSleepScreen(&dashboardBleProbeRenderer);
-  activityManager.setBeforeReaderEnterCallback(stopDashboardBleBeforeReader, &dashboardBleWindow);
-  if (dashboardBleTransport.begin(dashboardBleProbe, probe::PairingMode::Onboarding)) {
-    dashboardBleProbe.begin();
-    dashboardBleWindow.startedAt(millis());
+  if (skipDashboardBleOnce) {
+    LOG_INF("BLE", "Skipping dashboard BLE after controlled restart");
   } else {
-    LOG_ERR("BLE", "Dashboard BLE probe failed to initialize");
+    dashboardBleWindow.setExpiryCallback(restartDashboardBleFreeToHome, nullptr);
+    activityManager.setBeforeReaderEnterCallback(restartDashboardBleFreeToReader, nullptr);
+    if (dashboardBleTransport.begin(dashboardBleProbe, probe::PairingMode::Onboarding)) {
+      dashboardBleProbe.begin();
+      dashboardBleWindow.startedAt(millis());
+    } else {
+      LOG_ERR("BLE", "Dashboard BLE probe failed to initialize");
+    }
   }
 #endif
 
@@ -1234,9 +1259,7 @@ void loop() {
 
   const unsigned long activityStartTime = millis();
 #if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
-  if (!dashboardBleWindow.tick(millis())) {
-    LOG_ERR("BLE", "Dashboard BLE deinit failed after receive window");
-  }
+  dashboardBleWindow.tick(millis());
   if (dashboardBleWindow.isActive()) {
     dashboardBleProbe.loop();
   }
