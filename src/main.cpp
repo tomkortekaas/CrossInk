@@ -986,7 +986,7 @@ void setup() {
 #if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
   activityManager.setDashboardSleepScreen(&dashboardBleProbeRenderer);
   activityManager.setBeforeReaderEnterCallback(stopDashboardBleBeforeReader, &dashboardBleWindow);
-  if (dashboardBleTransport.begin(dashboardBleProbe, probe::PairingMode::Onboarding, &dashboardBleProbeRenderer)) {
+  if (dashboardBleTransport.begin(dashboardBleProbe, probe::PairingMode::Onboarding)) {
     dashboardBleProbe.begin();
     dashboardBleWindow.startedAt(millis());
   } else {
@@ -1238,7 +1238,6 @@ void loop() {
     LOG_ERR("BLE", "Dashboard BLE deinit failed after receive window");
   }
   if (dashboardBleWindow.isActive()) {
-    dashboardBleProbeRenderer.renderPendingPasskey();
     dashboardBleProbe.loop();
   }
 #endif

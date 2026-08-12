@@ -3,18 +3,15 @@
 #if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
 
 #include <cstring>
-#include <esp_random.h>
 
 #include "Logging.h"
+#include "DashboardBleSecurityPolicy.h"
 
 namespace probe {
 
-bool DashboardBleTransport::begin(DashboardBleProbe& probe, const PairingMode pairingMode,
-                                  PasskeyDisplay* const passkeyDisplay) {
+bool DashboardBleTransport::begin(DashboardBleProbe& probe, const PairingMode pairingMode) {
   probe_ = &probe;
   pairingMode_ = pairingMode;
-  passkeyDisplay_ = passkeyDisplay;
-  passkey_ = pairingMode == PairingMode::Onboarding ? 100000U + (esp_random() % 900000U) : 0;
   connectionCount_.store(0);
   hasConnected_.store(false);
   if (!NimBLEDevice::init(kAdvertisingName)) {
@@ -23,13 +20,9 @@ bool DashboardBleTransport::begin(DashboardBleProbe& probe, const PairingMode pa
   }
 
   initialized_ = true;
-  NimBLEDevice::setSecurityAuth(true, true, true);
-  NimBLEDevice::setSecurityIOCap(pairingMode == PairingMode::Onboarding ? BLE_HS_IO_DISPLAY_ONLY
-                                                                        : BLE_HS_IO_NO_INPUT_OUTPUT);
-  // NimBLE-Arduino 2.3.8 invokes onPassKeyDisplay() only while this static
-  // value remains its default placeholder. The callback supplies the actual
-  // per-onboarding random passkey, or rejects pairing in the timer route.
-  NimBLEDevice::setSecurityPasskey(123456);
+  NimBLEDevice::setSecurityAuth(kDashboardBleSecurity.bonding, kDashboardBleSecurity.mitm,
+                                kDashboardBleSecurity.secureConnections);
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
   server_ = NimBLEDevice::createServer();
   if (server_ == nullptr) {
     LOG_ERR("BLE", "Dashboard probe: server creation failed");
@@ -45,12 +38,11 @@ bool DashboardBleTransport::begin(DashboardBleProbe& probe, const PairingMode pa
 
   NimBLECharacteristic* writeCharacteristic =
       service->createCharacteristic(kWriteUuid,
-                                    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC |
-                                        NIMBLE_PROPERTY::WRITE_AUTHEN,
+                                    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC,
                                     kMaxFrameBytes);
   statusCharacteristic_ = service->createCharacteristic(
       kStatusUuid,
-      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ_ENC | NIMBLE_PROPERTY::READ_AUTHEN,
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ_ENC,
       sizeof(statusValue_));
   if (writeCharacteristic == nullptr || statusCharacteristic_ == nullptr) {
     LOG_ERR("BLE", "Dashboard probe: characteristic creation failed");
@@ -63,6 +55,13 @@ bool DashboardBleTransport::begin(DashboardBleProbe& probe, const PairingMode pa
     return false;
   }
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+  if (pairingMode == PairingMode::Disabled) {
+    const int bondCount = NimBLEDevice::getNumBonds();
+    for (int index = 0; index < bondCount; ++index) {
+      NimBLEDevice::whiteListAdd(NimBLEDevice::getBondedAddress(index));
+    }
+    advertising->setScanFilter(false, true);
+  }
   // Enable the secondary payload before setting the name so NimBLE places the
   // name in the scan response and leaves room for the 128-bit service UUID.
   advertising->enableScanResponse(true);
@@ -101,8 +100,6 @@ bool DashboardBleTransport::end() {
   probe_ = nullptr;
   server_ = nullptr;
   statusCharacteristic_ = nullptr;
-  passkeyDisplay_ = nullptr;
-  passkey_ = 0;
   return result;
 }
 
@@ -134,24 +131,8 @@ void DashboardBleTransport::onDisconnect(NimBLEServer*, NimBLEConnInfo&, int) {
   }
 }
 
-uint32_t DashboardBleTransport::onPassKeyDisplay() {
-  if (pairingMode_ != PairingMode::Onboarding) {
-    if (server_ != nullptr) {
-      for (const uint16_t handle : server_->getPeerDevices()) {
-        server_->disconnect(handle);
-      }
-    }
-    LOG_ERR("BLE", "Dashboard probe: pairing request rejected outside onboarding");
-    return 0;
-  }
-  if (passkeyDisplay_ != nullptr) {
-    passkeyDisplay_->showPasskey(passkey_);
-  }
-  return passkey_;
-}
-
 void DashboardBleTransport::onAuthenticationComplete(NimBLEConnInfo& connection) {
-  if (!connection.isEncrypted() || !connection.isAuthenticated()) {
+  if (!connection.isEncrypted()) {
     if (server_ != nullptr) {
       server_->disconnect(connection.getConnHandle());
     }
