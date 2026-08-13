@@ -1,97 +1,130 @@
 #include "BleHandoffNvs.h"
 
-#include <algorithm>
-
 #include <nvs.h>
 
-namespace ble_handoff {
+#include <algorithm>
+
+#include "DashboardSlotSelection.h"
+
+namespace dashboard {
 namespace {
 
-constexpr char NVS_NAMESPACE[] = "blehandoff";
-constexpr char NVS_KEY[] = "payload";
+constexpr char NVS_NAMESPACE[] = "x3dashboard";
+constexpr char SLOT_KEYS[][6] = {"slot0", "slot1"};
+constexpr char SELECTED_KEY[] = "selected";
+constexpr uint32_t SLOT_MAGIC = 0x44503358U;
+constexpr uint8_t STORAGE_VERSION = 1;
 
-bool isMissingOrInvalid(const Status status) {
-  switch (status) {
-    case Status::NotFound:
-    case Status::InvalidSize:
-    case Status::InvalidMagic:
-    case Status::InvalidVersion:
-    case Status::InvalidLength:
-    case Status::InvalidCrc:
-      return true;
-    default:
-      return false;
+struct SlotRecord {
+  uint32_t magic = SLOT_MAGIC;
+  uint8_t version = STORAGE_VERSION;
+  uint8_t reserved = 0;
+  uint16_t length = 0;
+  PackageBytes bytes{};
+  uint32_t crc = 0;
+};
+
+static SlotRecord slotWorkspace[2];
+static Package decodeWorkspace;
+
+bool readSlot(nvs_handle_t handle, int index, SlotState& state) {
+  state = {};
+  size_t size = sizeof(SlotRecord);
+  if (nvs_get_blob(handle, SLOT_KEYS[index], &slotWorkspace[index], &size) != ESP_OK || size != sizeof(SlotRecord)) {
+    return false;
   }
+  const SlotRecord& record = slotWorkspace[index];
+  if (record.magic != SLOT_MAGIC || record.version != STORAGE_VERSION || record.length > MAX_PACKAGE_SIZE ||
+      crc32(reinterpret_cast<const uint8_t*>(&record), sizeof(SlotRecord) - sizeof(uint32_t)) != record.crc ||
+      decodePackage(record.bytes.data(), record.length, decodeWorkspace) != Status::Ok) {
+    return false;
+  }
+  state = {true, decodeWorkspace.packageId};
+  return true;
+}
+
+PersistStatus load(nvs_handle_t handle, PersistedPackage& output, SlotDecision* decisionOut = nullptr) {
+  SlotState states[2]{};
+  readSlot(handle, 0, states[0]);
+  readSlot(handle, 1, states[1]);
+  uint8_t selectedRaw = 0xFF;
+  const int8_t recorded = nvs_get_u8(handle, SELECTED_KEY, &selectedRaw) == ESP_OK && selectedRaw < 2
+                              ? static_cast<int8_t>(selectedRaw)
+                              : static_cast<int8_t>(-1);
+  const SlotDecision decision = chooseSlots(states[0], states[1], recorded);
+  if (decisionOut != nullptr) *decisionOut = decision;
+  if (decision.selected < 0) return PersistStatus::NotFound;
+
+  const SlotRecord& record = slotWorkspace[decision.selected];
+  output.bytes = record.bytes;
+  output.length = record.length;
+  output.slot = decision.selected;
+  if (decodePackage(output.bytes.data(), output.length, output.package) != Status::Ok) return PersistStatus::ReadFailed;
+  return PersistStatus::Ok;
 }
 
 }  // namespace
 
-Status readPersisted(DecodedRecord& decoded, RecordBytes* rawBytes) {
+PersistStatus readLastKnownGood(PersistedPackage& output) {
   nvs_handle_t handle = 0;
-  const esp_err_t openResult = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
-  if (openResult == ESP_ERR_NVS_NOT_FOUND) return Status::NotFound;
-  if (openResult != ESP_OK) return Status::OpenFailed;
-
-  size_t storedSize = 0;
-  const esp_err_t sizeResult = nvs_get_blob(handle, NVS_KEY, nullptr, &storedSize);
-  if (sizeResult == ESP_ERR_NVS_NOT_FOUND) {
-    nvs_close(handle);
-    return Status::NotFound;
-  }
-  if (sizeResult != ESP_OK) {
-    nvs_close(handle);
-    return Status::ReadFailed;
-  }
-  if (storedSize != RECORD_SIZE) {
-    nvs_close(handle);
-    return Status::InvalidSize;
-  }
-
-  RecordBytes stored{};
-  const esp_err_t readResult = nvs_get_blob(handle, NVS_KEY, stored.data(), &storedSize);
+  const esp_err_t opened = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+  if (opened == ESP_ERR_NVS_NOT_FOUND) return PersistStatus::NotFound;
+  if (opened != ESP_OK) return PersistStatus::OpenFailed;
+  const PersistStatus status = load(handle, output);
   nvs_close(handle);
-  if (readResult != ESP_OK || storedSize != stored.size()) return Status::ReadFailed;
-
-  const Status validation = validateRecord(stored.data(), stored.size(), decoded);
-  if (validation == Status::Ok && rawBytes != nullptr) *rawBytes = stored;
-  return validation;
+  return status;
 }
 
-Status persistAndVerify(const uint8_t* payload, const size_t length, DecodedRecord& decoded) {
-  DecodedRecord current{};
-  const Status currentStatus = readPersisted(current);
-  if (currentStatus != Status::Ok && !isMissingOrInvalid(currentStatus)) return currentStatus;
-
-  uint32_t sequence = 0;
-  const Status sequenceStatus = nextSequence(currentStatus == Status::Ok, current.sequence, sequence);
-  if (sequenceStatus != Status::Ok) return sequenceStatus;
-
-  RecordBytes candidate{};
-  const Status buildStatus = buildRecord(payload, length, sequence, candidate);
-  if (buildStatus != Status::Ok) return buildStatus;
+PersistStatus persistIfNewer(const uint8_t* bytes, const size_t length, PersistedPackage& output) {
+  Package candidate{};
+  if (decodePackage(bytes, length, candidate) != Status::Ok) return PersistStatus::InvalidPackage;
 
   nvs_handle_t handle = 0;
-  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) return Status::OpenFailed;
-
-  if (nvs_set_blob(handle, NVS_KEY, candidate.data(), candidate.size()) != ESP_OK) {
+  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) return PersistStatus::OpenFailed;
+  PersistedPackage current{};
+  SlotDecision decision{};
+  const PersistStatus currentStatus = load(handle, current, &decision);
+  if (currentStatus != PersistStatus::Ok && currentStatus != PersistStatus::NotFound) {
     nvs_close(handle);
-    return Status::WriteFailed;
+    return currentStatus;
+  }
+  if (!isNewerPackage(currentStatus == PersistStatus::Ok && current.slot == 0 ? SlotState{true, current.package.packageId}
+                                                                             : SlotState{},
+                      currentStatus == PersistStatus::Ok && current.slot == 1 ? SlotState{true, current.package.packageId}
+                                                                             : SlotState{},
+                      candidate.packageId)) {
+    nvs_close(handle);
+    return PersistStatus::Stale;
+  }
+
+  SlotRecord& record = slotWorkspace[decision.writeTarget];
+  record = {};
+  record.magic = SLOT_MAGIC;
+  record.version = STORAGE_VERSION;
+  record.length = static_cast<uint16_t>(length);
+  std::copy_n(bytes, length, record.bytes.begin());
+  record.crc = crc32(reinterpret_cast<const uint8_t*>(&record), sizeof(SlotRecord) - sizeof(uint32_t));
+  if (nvs_set_blob(handle, SLOT_KEYS[decision.writeTarget], &record, sizeof(record)) != ESP_OK) {
+    nvs_close(handle);
+    return PersistStatus::WriteFailed;
   }
   if (nvs_commit(handle) != ESP_OK) {
     nvs_close(handle);
-    return Status::CommitFailed;
+    return PersistStatus::CommitFailed;
   }
+  SlotState verified{};
+  if (!readSlot(handle, decision.writeTarget, verified) || verified.packageId != candidate.packageId) {
+    nvs_close(handle);
+    return PersistStatus::VerifyFailed;
+  }
+  if (nvs_set_u8(handle, SELECTED_KEY, static_cast<uint8_t>(decision.writeTarget)) != ESP_OK || nvs_commit(handle) != ESP_OK) {
+    nvs_close(handle);
+    return PersistStatus::CommitFailed;
+  }
+  const PersistStatus finalStatus = load(handle, output);
   nvs_close(handle);
-
-  DecodedRecord verified{};
-  const Status verifyStatus = readPersisted(verified);
-  if (verifyStatus != Status::Ok || verified.sequence != sequence || verified.length != length ||
-      !std::equal(payload, payload + length, verified.payload.begin())) {
-    return Status::VerifyFailed;
-  }
-
-  decoded = verified;
-  return Status::Ok;
+  return finalStatus == PersistStatus::Ok && output.package.packageId == candidate.packageId ? PersistStatus::Ok
+                                                                                             : PersistStatus::VerifyFailed;
 }
 
-}  // namespace ble_handoff
+}  // namespace dashboard

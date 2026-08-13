@@ -10,60 +10,41 @@
 #include <freertos/FreeRTOS.h>
 
 #include "BleHandoffNvs.h"
+#include "DashboardBootSwitch.h"
+#include "DashboardTransfer.h"
 
 namespace {
 
 constexpr char DEVICE_NAME[] = "XTEINK-X3-RX";
 constexpr char SERVICE_UUID[] = "8c9f9d10-7c6d-4c8e-a2cb-49586da45d10";
 constexpr char WRITE_UUID[] = "8c9f9d11-7c6d-4c8e-a2cb-49586da45d10";
+constexpr char STATUS_UUID[] = "8c9f9d12-7c6d-4c8e-a2cb-49586da45d10";
+constexpr size_t MAX_FRAME_SIZE = dashboard::MAX_PACKAGE_SIZE + 7;
 
 portMUX_TYPE pendingMux = portMUX_INITIALIZER_UNLOCKED;
-std::array<uint8_t, ble_handoff::MAX_PAYLOAD_SIZE> pendingPayload{};
+std::array<uint8_t, MAX_FRAME_SIZE> pendingFrame{};
 size_t pendingLength = 0;
-volatile bool payloadPending = false;
-size_t rejectedLength = 0;
-volatile bool rejectionPending = false;
+volatile bool framePending = false;
+BLECharacteristic* statusCharacteristic = nullptr;
+dashboard::TransferAssembler assembler;
 
-const char* statusName(const ble_handoff::Status status) {
-  switch (status) {
-    case ble_handoff::Status::Ok:
-      return "ok";
-    case ble_handoff::Status::InvalidArgument:
-      return "invalid-argument";
-    case ble_handoff::Status::InvalidSize:
-      return "invalid-size";
-    case ble_handoff::Status::InvalidMagic:
-      return "invalid-magic";
-    case ble_handoff::Status::InvalidVersion:
-      return "invalid-version";
-    case ble_handoff::Status::InvalidLength:
-      return "invalid-length";
-    case ble_handoff::Status::InvalidCrc:
-      return "invalid-crc";
-    case ble_handoff::Status::SequenceOverflow:
-      return "sequence-overflow";
-    case ble_handoff::Status::NotFound:
-      return "not-found";
-    case ble_handoff::Status::OpenFailed:
-      return "open-failed";
-    case ble_handoff::Status::ReadFailed:
-      return "read-failed";
-    case ble_handoff::Status::WriteFailed:
-      return "write-failed";
-    case ble_handoff::Status::CommitFailed:
-      return "commit-failed";
-    case ble_handoff::Status::VerifyFailed:
-      return "verify-failed";
-  }
-  return "unknown";
+void writeU32(uint8_t* out, uint32_t value) {
+  for (uint8_t index = 0; index < 4; ++index) out[index] = static_cast<uint8_t>(value >> (index * 8U));
 }
 
-void logHeap(const char* phase) {
-  Serial.printf("BLE-RX %s free=%u maxAlloc=%u\n", phase, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+void notify(uint8_t code, uint32_t packageId, uint16_t received) {
+  if (statusCharacteristic == nullptr) return;
+  uint8_t value[7] = {code};
+  writeU32(value + 1, packageId);
+  value[5] = static_cast<uint8_t>(received);
+  value[6] = static_cast<uint8_t>(received >> 8U);
+  statusCharacteristic->setValue(value, sizeof(value));
+  statusCharacteristic->notify();
 }
 
 class ServerCallbacks final : public BLEServerCallbacks {
  public:
+  void onConnect(BLEServer*) override { notify(0x01, 0, 0); }
   void onDisconnect(BLEServer*) override { BLEDevice::startAdvertising(); }
 };
 
@@ -72,18 +53,13 @@ class WriteCallbacks final : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* characteristic) override {
     const size_t length = characteristic->getLength();
     const uint8_t* data = characteristic->getData();
-    if (length == 0 || length > pendingPayload.size() || data == nullptr) {
-      portENTER_CRITICAL(&pendingMux);
-      rejectedLength = length;
-      rejectionPending = true;
-      portEXIT_CRITICAL(&pendingMux);
-      return;
-    }
-
+    if (length == 0 || length > pendingFrame.size() || data == nullptr) return;
     portENTER_CRITICAL(&pendingMux);
-    std::memcpy(pendingPayload.data(), data, length);
-    pendingLength = length;
-    payloadPending = true;
+    if (!framePending) {
+      std::memcpy(pendingFrame.data(), data, length);
+      pendingLength = length;
+      framePending = true;
+    }
     portEXIT_CRITICAL(&pendingMux);
   }
 };
@@ -96,73 +72,54 @@ WriteCallbacks writeCallbacks;
 void setup() {
   delay(250);
   Serial.begin(115200);
-  logHeap("before-ble");
-
-  if (!BLEDevice::init(DEVICE_NAME)) {
-    Serial.println("BLE-RX init failed");
-    return;
-  }
-
+  if (!BLEDevice::init(DEVICE_NAME)) return;
   BLEServer* server = BLEDevice::createServer();
-  if (server == nullptr) {
-    Serial.println("BLE-RX server allocation failed");
-    return;
-  }
+  if (server == nullptr) return;
   server->setCallbacks(&serverCallbacks);
-
   BLEService* service = server->createService(SERVICE_UUID);
   BLECharacteristic* writable = service->createCharacteristic(WRITE_UUID, BLECharacteristic::PROPERTY_WRITE);
+  statusCharacteristic = service->createCharacteristic(
+      STATUS_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
   writable->setCallbacks(&writeCallbacks);
   service->start();
-
   BLEAdvertising* advertising = server->getAdvertising();
   advertising->addServiceUUID(SERVICE_UUID);
   advertising->setScanResponse(false);
   advertising->start();
-  logHeap("advertising");
-  Serial.printf("BLE-RX advertising name=%s\n", DEVICE_NAME);
+  Serial.printf("BLE-RX ready free=%u maxAlloc=%u\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 }
 
 void loop() {
-  std::array<uint8_t, ble_handoff::MAX_PAYLOAD_SIZE> payload{};
+  std::array<uint8_t, MAX_FRAME_SIZE> frame{};
   size_t length = 0;
-  size_t rejected = 0;
-  bool hadRejection = false;
-
   portENTER_CRITICAL(&pendingMux);
-  if (payloadPending) {
+  if (framePending) {
     length = pendingLength;
-    std::memcpy(payload.data(), pendingPayload.data(), length);
-    payloadPending = false;
-  }
-  if (rejectionPending) {
-    rejected = rejectedLength;
-    rejectionPending = false;
-    hadRejection = true;
+    std::memcpy(frame.data(), pendingFrame.data(), length);
+    framePending = false;
   }
   portEXIT_CRITICAL(&pendingMux);
-
-  if (hadRejection) {
-    Serial.printf("BLE-RX rejected length=%u\n", static_cast<unsigned>(rejected));
-  }
-
   if (length == 0) {
-    delay(10);
+    delay(5);
     return;
   }
 
-  ble_handoff::DecodedRecord persisted{};
-  const ble_handoff::Status status = ble_handoff::persistAndVerify(payload.data(), length, persisted);
-  if (status != ble_handoff::Status::Ok) {
-    Serial.printf("BLE-RX persist failed status=%s\n", statusName(status));
-    return;
-  }
+  const dashboard::TransferResult result = assembler.accept(frame.data(), length);
+  if (result.status == dashboard::TransferStatus::Ready) return notify(0x01, result.packageId, result.received);
+  if (result.status == dashboard::TransferStatus::Progress) return notify(0x02, result.packageId, result.received);
+  if (result.status != dashboard::TransferStatus::Complete) return notify(0x11, result.packageId, result.received);
 
-  Serial.printf("PERSISTED sequence=%u length=%u crc=%08x free=%u maxAlloc=%u payload=", persisted.sequence,
-                static_cast<unsigned>(persisted.length), persisted.crc, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-  Serial.write(persisted.payload.data(), persisted.length);
-  Serial.println();
-  delay(100);
+  static dashboard::PersistedPackage persisted;
+  const dashboard::PersistStatus persistedStatus =
+      dashboard::persistIfNewer(assembler.bytes().data(), assembler.length(), persisted);
+  if (persistedStatus == dashboard::PersistStatus::Stale) return notify(0x10, result.packageId, result.received);
+  if (persistedStatus == dashboard::PersistStatus::InvalidPackage) return notify(0x12, result.packageId, result.received);
+  if (persistedStatus != dashboard::PersistStatus::Ok) return notify(0x13, result.packageId, result.received);
+  if (!dashboard_boot::switchToReader()) return notify(0x14, result.packageId, result.received);
+  notify(0x03, result.packageId, result.received);
+  Serial.printf("PERSISTED package=%u length=%u crc=%08x\n", persisted.package.packageId, persisted.length,
+                persisted.package.crc);
+  delay(150);
   ESP.restart();
 }
 

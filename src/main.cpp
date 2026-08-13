@@ -109,6 +109,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "util/ScreenshotUtil.h"
 #ifdef CROSSINK_BLE_HANDOFF_READER
 #include "spikes/ble_handoff/BleHandoffReaderProbe.h"
+#include "spikes/ble_handoff/DashboardBootSwitch.h"
 #endif
 
 GfxRenderer renderer(display);
@@ -868,6 +869,24 @@ void setup() {
       LOG_INF("BOOT", "Other wake route: continuing boot");
       break;
   }
+
+#ifdef CROSSINK_BLE_HANDOFF_READER
+  if (wakeupReason == HalGPIO::WakeupReason::PowerButton) {
+    const unsigned long dashboardSettleStart = millis();
+    while (millis() - dashboardSettleStart < 500) {
+      gpio.update();
+      delay(10);
+    }
+    if (gpio.isPressed(HalGPIO::BTN_BACK)) {
+      LOG_INF("BLEPAY", "Back + Power held; switching to isolated dashboard receiver");
+      if (dashboard_boot::switchToReceiver()) {
+        delay(50);
+        ESP.restart();
+      }
+      LOG_ERR("BLEPAY", "Receiver slot unavailable; continuing reader boot");
+    }
+  }
+#endif
 
   // SD Card Initialization
   // We need 6 open files concurrently when parsing a new chapter

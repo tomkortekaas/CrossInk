@@ -2,9 +2,18 @@
 
 #include "BleHandoffRecord.h"
 
-namespace ble_handoff {
+namespace dashboard {
 
-Status readPersisted(DecodedRecord& decoded, RecordBytes* rawBytes = nullptr);
-Status persistAndVerify(const uint8_t* payload, size_t length, DecodedRecord& decoded);
+enum class PersistStatus : uint8_t { Ok, NotFound, Stale, InvalidPackage, OpenFailed, ReadFailed, WriteFailed, CommitFailed, VerifyFailed };
 
-}  // namespace ble_handoff
+struct PersistedPackage {
+  PackageBytes bytes{};
+  uint16_t length = 0;
+  Package package{};
+  int8_t slot = -1;
+};
+
+PersistStatus readLastKnownGood(PersistedPackage& output);
+PersistStatus persistIfNewer(const uint8_t* bytes, size_t length, PersistedPackage& output);
+
+}  // namespace dashboard

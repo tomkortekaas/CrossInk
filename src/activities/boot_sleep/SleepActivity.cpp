@@ -33,6 +33,9 @@
 #include "fontIds.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
+#ifdef CROSSINK_BLE_HANDOFF_READER
+#include "spikes/ble_handoff/BleHandoffReaderProbe.h"
+#endif
 
 namespace {
 
@@ -777,6 +780,9 @@ void SleepActivity::renderMinimalStatsSleepScreen() const {
 }
 
 void SleepActivity::renderDashboardSleepScreen() const {
+#ifdef CROSSINK_BLE_HANDOFF_READER
+  if (BleHandoffReaderProbe::renderAgendaCard(renderer)) return;
+#endif
   const std::string& path = currentBookPath.empty() ? APP_STATE.openEpubPath : currentBookPath;
   if (path.empty()) {
     return renderDefaultSleepScreen();

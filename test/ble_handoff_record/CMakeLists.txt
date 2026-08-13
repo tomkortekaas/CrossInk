@@ -1,8 +1,10 @@
 add_executable(BleHandoffRecordTest
   BleHandoffRecordTest.cpp
   DashboardTransferTest.cpp
+  DashboardSlotSelectionTest.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/BleHandoffRecord.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/DashboardTransfer.cpp
+  ${REPO_ROOT}/src/spikes/ble_handoff/DashboardSlotSelection.cpp
 )
 
 target_include_directories(BleHandoffRecordTest PRIVATE
