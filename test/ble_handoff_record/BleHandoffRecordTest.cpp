@@ -34,6 +34,7 @@ TEST(BleHandoffRecord, RoundTripsHelloX3) {
   EXPECT_EQ(decoded.sequence, 7U);
   EXPECT_EQ(decoded.length, HELLO_X3.size());
   EXPECT_TRUE(std::equal(HELLO_X3.begin(), HELLO_X3.end(), decoded.payload.begin()));
+  EXPECT_EQ(decoded.crc, 0x52C9C233U);
 }
 
 TEST(BleHandoffRecord, UsesSpecifiedPersistedByteLayout) {

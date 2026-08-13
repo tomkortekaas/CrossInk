@@ -86,6 +86,7 @@ Status validateRecord(const uint8_t* bytes, const size_t size, DecodedRecord& ou
   out.length = length;
   out.payload.fill(0);
   std::copy_n(bytes + PAYLOAD_OFFSET, length, out.payload.begin());
+  out.crc = readU32(bytes + CRC_OFFSET);
   return Status::Ok;
 }
 

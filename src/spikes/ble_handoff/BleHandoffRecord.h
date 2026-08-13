@@ -32,6 +32,7 @@ struct DecodedRecord {
   uint32_t sequence = 0;
   uint8_t length = 0;
   std::array<uint8_t, MAX_PAYLOAD_SIZE> payload{};
+  uint32_t crc = 0;
 };
 
 uint32_t crc32(const uint8_t* data, size_t length);
