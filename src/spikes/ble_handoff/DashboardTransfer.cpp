@@ -46,7 +46,9 @@ TransferResult TransferAssembler::accept(const uint8_t* frame, const size_t fram
     return result(TransferStatus::Progress, id, received_);
   }
   if (type == 3) {
-    if (frameLength != 5 || received_ != expectedLength_ || crc32(bytes_.data(), received_) != expectedCrc_) {
+    if (frameLength != 5 || received_ != expectedLength_ || received_ < sizeof(uint32_t) ||
+        readU32(bytes_.data() + received_ - sizeof(uint32_t)) != expectedCrc_ ||
+        crc32(bytes_.data(), received_ - sizeof(uint32_t)) != expectedCrc_) {
       return result(TransferStatus::InvalidFrame, id, received_);
     }
     started_ = false;

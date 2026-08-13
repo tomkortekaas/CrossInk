@@ -44,8 +44,14 @@ void notify(uint8_t code, uint32_t packageId, uint16_t received) {
 
 class ServerCallbacks final : public BLEServerCallbacks {
  public:
-  void onConnect(BLEServer*) override { notify(0x01, 0, 0); }
-  void onDisconnect(BLEServer*) override { BLEDevice::startAdvertising(); }
+  void onConnect(BLEServer*) override {
+    Serial.println("BLE-RX connected");
+    notify(0x01, 0, 0);
+  }
+  void onDisconnect(BLEServer*) override {
+    Serial.println("BLE-RX disconnected");
+    BLEDevice::startAdvertising();
+  }
 };
 
 class WriteCallbacks final : public BLECharacteristicCallbacks {
@@ -54,13 +60,17 @@ class WriteCallbacks final : public BLECharacteristicCallbacks {
     const size_t length = characteristic->getLength();
     const uint8_t* data = characteristic->getData();
     if (length == 0 || length > pendingFrame.size() || data == nullptr) return;
+    bool dropped = false;
     portENTER_CRITICAL(&pendingMux);
     if (!framePending) {
       std::memcpy(pendingFrame.data(), data, length);
       pendingLength = length;
       framePending = true;
+    } else {
+      dropped = true;
     }
     portEXIT_CRITICAL(&pendingMux);
+    if (dropped) Serial.println("BLE-RX frame dropped: pending buffer occupied");
   }
 };
 
@@ -105,6 +115,8 @@ void loop() {
   }
 
   const dashboard::TransferResult result = assembler.accept(frame.data(), length);
+  Serial.printf("BLE-RX frame type=%u length=%u status=%u package=%u received=%u\n", frame[0], length,
+                static_cast<unsigned>(result.status), result.packageId, result.received);
   if (result.status == dashboard::TransferStatus::Ready) return notify(0x01, result.packageId, result.received);
   if (result.status == dashboard::TransferStatus::Progress) return notify(0x02, result.packageId, result.received);
   if (result.status != dashboard::TransferStatus::Complete) return notify(0x11, result.packageId, result.received);

@@ -15,15 +15,33 @@ std::array<uint8_t, 11> startFrame(uint32_t id, uint16_t length, uint32_t crc) {
 
 TEST(DashboardTransfer, AssemblesContiguousChunksAndCommits) {
   dashboard::TransferAssembler assembler;
-  const auto start = startFrame(7, 4, 0xB63CFBCDU);  // CRC32 of {1,2,3,4}.
+  const auto start = startFrame(7, 8, 0xB63CFBCDU);  // CRC32 of {1,2,3,4}, followed by that CRC.
   EXPECT_EQ(assembler.accept(start.data(), start.size()).status, dashboard::TransferStatus::Ready);
   const std::array<uint8_t, 9> first = {2, 7, 0, 0, 0, 0, 0, 1, 2};
   EXPECT_EQ(assembler.accept(first.data(), first.size()).status, dashboard::TransferStatus::Progress);
-  const std::array<uint8_t, 9> second = {2, 7, 0, 0, 0, 2, 0, 3, 4};
-  EXPECT_EQ(assembler.accept(second.data(), second.size()).received, 4U);
+  const std::array<uint8_t, 13> second = {2, 7, 0, 0, 0, 2, 0, 3, 4, 0xCD, 0xFB, 0x3C, 0xB6};
+  EXPECT_EQ(assembler.accept(second.data(), second.size()).received, 8U);
   const std::array<uint8_t, 5> commit = {3, 7, 0, 0, 0};
   EXPECT_EQ(assembler.accept(commit.data(), commit.size()).status, dashboard::TransferStatus::Complete);
-  EXPECT_EQ(assembler.length(), 4U);
+  EXPECT_EQ(assembler.length(), 8U);
+}
+
+TEST(DashboardTransfer, CommitsPackageUsingItsEmbeddedCrc) {
+  dashboard::TransferAssembler assembler;
+  const std::array<uint8_t, 48> package = {
+      0x58, 0x33, 0x44, 0x50, 0x01, 0x01, 0x30, 0x00, 0x2A, 0x00, 0x00, 0x00,
+      0xE8, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD0, 0x07, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x04, 0x05, 0x00, 0x03, 0x4D, 0x65, 0x65, 0x74,
+      0x31, 0x30, 0x3A, 0x30, 0x30, 0x4F, 0x6C, 0x64, 0xBC, 0xD5, 0x11, 0x06};
+  const auto start = startFrame(42, package.size(), 0x0611D5BCU);
+  ASSERT_EQ(assembler.accept(start.data(), start.size()).status, dashboard::TransferStatus::Ready);
+  std::array<uint8_t, 55> chunk{};
+  chunk[0] = 2;
+  chunk[1] = 42;
+  std::copy(package.begin(), package.end(), chunk.begin() + 7);
+  ASSERT_EQ(assembler.accept(chunk.data(), chunk.size()).status, dashboard::TransferStatus::Progress);
+  const std::array<uint8_t, 5> commit = {3, 42, 0, 0, 0};
+  EXPECT_EQ(assembler.accept(commit.data(), commit.size()).status, dashboard::TransferStatus::Complete);
 }
 
 TEST(DashboardTransfer, RejectsCommitBeforeCompleteAndBadOffsets) {

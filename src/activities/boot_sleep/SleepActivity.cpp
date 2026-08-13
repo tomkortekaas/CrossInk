@@ -511,6 +511,8 @@ void SleepActivity::onEnter() {
       return renderMinimalStatsSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::DASHBOARD_SLEEP):
       return renderDashboardSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::AGENDA_SLEEP):
+      return renderAgendaSleepScreen();
     default:
       return renderDefaultSleepScreen();
   }
@@ -780,9 +782,6 @@ void SleepActivity::renderMinimalStatsSleepScreen() const {
 }
 
 void SleepActivity::renderDashboardSleepScreen() const {
-#ifdef CROSSINK_BLE_HANDOFF_READER
-  if (BleHandoffReaderProbe::renderAgendaCard(renderer)) return;
-#endif
   const std::string& path = currentBookPath.empty() ? APP_STATE.openEpubPath : currentBookPath;
   if (path.empty()) {
     return renderDefaultSleepScreen();
@@ -806,6 +805,18 @@ void SleepActivity::renderDashboardSleepScreen() const {
   theme.drawSleepScreen(renderer, book, &bookStats, &globalStats, progressPercent, chapterTitle.c_str(),
                         sleepCoverFilterInvertsGeneratedScreen());
   renderer.displayBuffer(HalDisplay::HALF_REFRESH, TURN_OFF_SCREEN_AFTER_SLEEP_REFRESH);
+}
+
+void SleepActivity::renderAgendaSleepScreen() const {
+#ifdef CROSSINK_BLE_HANDOFF_READER
+  if (BleHandoffReaderProbe::renderAgendaCard(renderer)) return;
+#endif
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+  renderer.clearScreen();
+  const int centerY = renderer.getScreenHeight() / 2;
+  renderer.drawCenteredText(UI_10_FONT_ID, centerY - 80, "AGENDA", true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(UI_10_FONT_ID, centerY + 40, "No appointments");
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH, true);
 }
 
 void SleepActivity::renderLastScreenSleepScreen() const {
