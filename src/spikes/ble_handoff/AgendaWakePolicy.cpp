@@ -3,7 +3,11 @@
 namespace dashboard {
 namespace {
 
-constexpr uint64_t AGENDA_WAKE_INTERVAL_US = 15ULL * 60ULL * 1000000ULL;
+#ifndef CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES
+#define CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES 15
+#endif
+constexpr uint64_t AGENDA_WAKE_INTERVAL_US =
+    static_cast<uint64_t>(CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES) * 60ULL * 1000000ULL;
 constexpr uint32_t RECEIVER_RESULT_WORD_MAGIC = 0xA63E4D00U;
 
 bool isPersistableResult(const ReceiverResult result) {

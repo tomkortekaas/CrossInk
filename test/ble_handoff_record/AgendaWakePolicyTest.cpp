@@ -2,8 +2,13 @@
 
 #include "AgendaWakePolicy.h"
 
+#ifndef CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES
+#define CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES 15
+#endif
+
 TEST(AgendaWakePolicy, ArmsRelativeTimerOnlyForAgendaSleep) {
-  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true), 15ULL * 60ULL * 1000000ULL);
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true),
+            static_cast<uint64_t>(CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES) * 60ULL * 1000000ULL);
   EXPECT_EQ(dashboard::sleepTimerIntervalUs(false), 0ULL);
 }
 
