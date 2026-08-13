@@ -108,6 +108,8 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "util/DictionaryRegistry.h"
 #include "util/ScreenshotUtil.h"
 #ifdef CROSSINK_BLE_HANDOFF_READER
+#include "spikes/ble_handoff/AgendaWakePolicy.h"
+#include "spikes/ble_handoff/AgendaWakeRetention.h"
 #include "spikes/ble_handoff/BleHandoffReaderProbe.h"
 #include "spikes/ble_handoff/DashboardBootSwitch.h"
 #endif
@@ -274,6 +276,8 @@ const char* wakeupRouteName(const HalGPIO::WakeupReason reason) {
   switch (reason) {
     case HalGPIO::WakeupReason::PowerButton:
       return "PowerButton";
+    case HalGPIO::WakeupReason::Timer:
+      return "Timer";
     case HalGPIO::WakeupReason::AfterFlash:
       return "AfterFlash";
     case HalGPIO::WakeupReason::AfterUSBPower:
@@ -669,9 +673,9 @@ void mirrorWakeShortPressToNvs() {
 }
 
 // Enter deep sleep mode
-void enterDeepSleep(bool fromTimeout) {
+void enterDeepSleepInternal(const bool fromTimeout, const bool preserveLastReader) {
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
-  APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
+  if (!preserveLastReader) APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
 
   const bool isQuickResumeSleep =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
@@ -704,8 +708,17 @@ void enterDeepSleep(bool fromTimeout) {
   mirrorWakeShortPressToNvs();  // next boot's wake-hold check reads this pre-SD
   LOG_DBG("MAIN", "Entering deep sleep");
 
-  powerManager.startDeepSleep(gpio);
+  uint64_t timerWakeUs = 0;
+#ifdef CROSSINK_BLE_HANDOFF_READER
+  const bool agendaSleep = SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::AGENDA_SLEEP;
+  timerWakeUs = dashboard::sleepTimerIntervalUs(agendaSleep);
+  dashboard::retainReceiverResult(agendaSleep ? dashboard::ReceiverResult::AwaitingWindow
+                                              : dashboard::ReceiverResult::None);
+#endif
+  powerManager.startDeepSleep(gpio, timerWakeUs);
 }
+
+void enterDeepSleep(const bool fromTimeout) { enterDeepSleepInternal(fromTimeout, false); }
 
 void setupDisplayAndFonts(const bool seamless = false, const bool loadReaderResources = true) {
 #if !defined(SIMULATOR) && !FREEINK_MCU_C3
@@ -769,6 +782,7 @@ void setup() {
 
   const esp_reset_reason_t rawResetReason = esp_reset_reason();
   const esp_sleep_wakeup_cause_t rawWakeupCause = esp_sleep_get_wakeup_cause();
+  bool resumeAgendaAfterAccepted = false;
 
 #ifdef ENABLE_SERIAL_LOG
   // Earliest possible Serial setup. The 250 ms stall before begin() lets the
@@ -843,6 +857,21 @@ void setup() {
   // not-yet-mounted SD card.
   const auto wakeupReason = gpio.getWakeupReason();
   LOG_INF("BOOT", "Wake route: %s", wakeupRouteName(wakeupReason));
+#ifdef CROSSINK_BLE_HANDOFF_READER
+  const dashboard::ReceiverResult retainedResult = dashboard::retainedReceiverResult();
+  const bool returnedFromReceiver = rawResetReason == ESP_RST_SW && dashboard_boot::isRunningReader();
+  if (returnedFromReceiver && retainedResult == dashboard::ReceiverResult::TimedOut) {
+    LOG_INF("BLEPAY", "Receiver window timed out; returning directly to Agenda sleep");
+    dashboard::retainReceiverResult(dashboard::ReceiverResult::AwaitingWindow);
+    powerManager.startDeepSleep(gpio, dashboard::sleepTimerIntervalUs(true));
+  }
+  if (returnedFromReceiver && retainedResult == dashboard::ReceiverResult::Accepted) {
+    resumeAgendaAfterAccepted = true;
+    dashboard::retainReceiverResult(dashboard::ReceiverResult::None);
+  } else if (wakeupReason != HalGPIO::WakeupReason::Timer) {
+    dashboard::retainReceiverResult(dashboard::ReceiverResult::None);
+  }
+#endif
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton: {
       const bool shortPressWakes = readWakeShortPressFromNvs();
@@ -860,6 +889,8 @@ void setup() {
       // Normal behavior is to go back to sleep when USB power causes a cold boot.
       LOG_INF("BOOT", "AfterUSBPower route: TEMP continuing boot instead of deep sleep");
       break;
+    case HalGPIO::WakeupReason::Timer:
+      break;
     case HalGPIO::WakeupReason::AfterFlash:
       // After flashing, just proceed to boot
       LOG_INF("BOOT", "AfterFlash route: continuing boot");
@@ -871,21 +902,19 @@ void setup() {
   }
 
 #ifdef CROSSINK_BLE_HANDOFF_READER
-  if (wakeupReason == HalGPIO::WakeupReason::PowerButton) {
-    const unsigned long dashboardSettleStart = millis();
-    while (millis() - dashboardSettleStart < 500) {
-      gpio.update();
-      delay(10);
+  if (dashboard::chooseAgendaBootRoute(
+          retainedResult == dashboard::ReceiverResult::AwaitingWindow,
+          wakeupReason == HalGPIO::WakeupReason::Timer ? dashboard::WakeSource::Timer : dashboard::WakeSource::Other) ==
+      dashboard::AgendaBootRoute::Receiver) {
+    LOG_INF("BLEPAY", "Agenda timer wake; switching to isolated dashboard receiver");
+    if (dashboard_boot::switchToReceiver()) {
+      delay(50);
+      ESP.restart();
     }
-    if (gpio.isPressed(HalGPIO::BTN_BACK)) {
-      LOG_INF("BLEPAY", "Back + Power held; switching to isolated dashboard receiver");
-      if (dashboard_boot::switchToReceiver()) {
-        delay(50);
-        ESP.restart();
-      }
-      LOG_ERR("BLEPAY", "Receiver slot unavailable; continuing reader boot");
-    }
+    dashboard::retainReceiverResult(dashboard::ReceiverResult::None);
+    LOG_ERR("BLEPAY", "Receiver slot unavailable; continuing reader boot");
   }
+
 #endif
 
   // SD Card Initialization
@@ -969,6 +998,14 @@ void setup() {
 
   setupDisplayAndFonts(resume != BootResume::Splash, resume != BootResume::Network);
   logBootHeap("display and selected fonts ready");
+
+#ifdef CROSSINK_BLE_HANDOFF_READER
+  if (resumeAgendaAfterAccepted && SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::AGENDA_SLEEP) {
+    LOG_INF("BLEPAY", "Accepted Agenda package; rendering updated sleep card");
+    enterDeepSleepInternal(false, true);
+    return;
+  }
+#endif
 
   switch (resume) {
     case BootResume::Silent:

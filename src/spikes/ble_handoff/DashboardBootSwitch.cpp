@@ -1,5 +1,6 @@
 #include "DashboardBootSwitch.h"
 
+#include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_rom_crc.h>
 #include <spi_flash_mmap.h>
@@ -68,5 +69,15 @@ bool switchToSubtype(const esp_partition_subtype_t subtype) {
 
 bool switchToReader() { return switchToSubtype(ESP_PARTITION_SUBTYPE_APP_OTA_0); }
 bool switchToReceiver() { return switchToSubtype(ESP_PARTITION_SUBTYPE_APP_OTA_1); }
+
+bool isRunningReader() {
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  return running != nullptr && running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0;
+}
+
+bool isRunningReceiver() {
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  return running != nullptr && running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1;
+}
 
 }  // namespace dashboard_boot

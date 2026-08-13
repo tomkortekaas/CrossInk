@@ -6,12 +6,15 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEService.h>
-#include <cstring>
 #include <freertos/FreeRTOS.h>
 
+#include <cstring>
+
+#include "AgendaWakeRetention.h"
 #include "BleHandoffNvs.h"
 #include "DashboardBootSwitch.h"
 #include "DashboardTransfer.h"
+#include "ReceiverWindow.h"
 
 namespace {
 
@@ -27,6 +30,10 @@ size_t pendingLength = 0;
 volatile bool framePending = false;
 BLECharacteristic* statusCharacteristic = nullptr;
 dashboard::TransferAssembler assembler;
+dashboard::ReceiverWindow receiverWindow(0);
+bool packageAccepted = false;
+uint32_t acceptedPackageId = 0;
+uint16_t acceptedByteCount = 0;
 
 void writeU32(uint8_t* out, uint32_t value) {
   for (uint8_t index = 0; index < 4; ++index) out[index] = static_cast<uint8_t>(value >> (index * 8U));
@@ -77,19 +84,44 @@ class WriteCallbacks final : public BLECharacteristicCallbacks {
 ServerCallbacks serverCallbacks;
 WriteCallbacks writeCallbacks;
 
+bool returnToReader(const dashboard::ReceiverResult result) {
+  dashboard::retainReceiverResult(result);
+  if (!dashboard_boot::switchToReader()) {
+    dashboard::retainReceiverResult(dashboard::ReceiverResult::AwaitingWindow);
+    notify(0x14, acceptedPackageId, acceptedByteCount);
+    return false;
+  }
+  if (result == dashboard::ReceiverResult::Accepted) {
+    notify(0x03, acceptedPackageId, acceptedByteCount);
+  }
+  delay(150);
+  ESP.restart();
+  return true;
+}
+
 }  // namespace
 
 void setup() {
   delay(250);
   Serial.begin(115200);
+  if (!dashboard_boot::isRunningReceiver() ||
+      dashboard::retainedReceiverResult() != dashboard::ReceiverResult::AwaitingWindow) {
+    Serial.println("BLE-RX invalid launch route; returning to reader");
+    if (dashboard_boot::switchToReader()) {
+      dashboard::retainReceiverResult(dashboard::ReceiverResult::None);
+      delay(50);
+      ESP.restart();
+    }
+    return;
+  }
   if (!BLEDevice::init(DEVICE_NAME)) return;
   BLEServer* server = BLEDevice::createServer();
   if (server == nullptr) return;
   server->setCallbacks(&serverCallbacks);
   BLEService* service = server->createService(SERVICE_UUID);
   BLECharacteristic* writable = service->createCharacteristic(WRITE_UUID, BLECharacteristic::PROPERTY_WRITE);
-  statusCharacteristic = service->createCharacteristic(
-      STATUS_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+  statusCharacteristic =
+      service->createCharacteristic(STATUS_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
   writable->setCallbacks(&writeCallbacks);
   service->start();
   BLEAdvertising* advertising = server->getAdvertising();
@@ -100,6 +132,17 @@ void setup() {
 }
 
 void loop() {
+  const dashboard::ReceiverWindowAction windowAction = receiverWindow.actionAt(millis(), packageAccepted);
+  if (windowAction == dashboard::ReceiverWindowAction::ReturnAccepted) {
+    if (!returnToReader(dashboard::ReceiverResult::Accepted)) delay(100);
+    return;
+  }
+  if (windowAction == dashboard::ReceiverWindowAction::ReturnTimedOut) {
+    Serial.println("BLE-RX window timed out; returning to reader");
+    if (!returnToReader(dashboard::ReceiverResult::TimedOut)) delay(100);
+    return;
+  }
+
   std::array<uint8_t, MAX_FRAME_SIZE> frame{};
   size_t length = 0;
   portENTER_CRITICAL(&pendingMux);
@@ -125,14 +168,14 @@ void loop() {
   const dashboard::PersistStatus persistedStatus =
       dashboard::persistIfNewer(assembler.bytes().data(), assembler.length(), persisted);
   if (persistedStatus == dashboard::PersistStatus::Stale) return notify(0x10, result.packageId, result.received);
-  if (persistedStatus == dashboard::PersistStatus::InvalidPackage) return notify(0x12, result.packageId, result.received);
+  if (persistedStatus == dashboard::PersistStatus::InvalidPackage)
+    return notify(0x12, result.packageId, result.received);
   if (persistedStatus != dashboard::PersistStatus::Ok) return notify(0x13, result.packageId, result.received);
-  if (!dashboard_boot::switchToReader()) return notify(0x14, result.packageId, result.received);
-  notify(0x03, result.packageId, result.received);
+  packageAccepted = true;
+  acceptedPackageId = result.packageId;
+  acceptedByteCount = result.received;
   Serial.printf("PERSISTED package=%u length=%u crc=%08x\n", persisted.package.packageId, persisted.length,
                 persisted.package.crc);
-  delay(150);
-  ESP.restart();
 }
 
 #endif
