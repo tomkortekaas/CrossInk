@@ -4,40 +4,58 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ble_handoff {
+namespace dashboard {
 
-constexpr size_t MAX_PAYLOAD_SIZE = 64;
-constexpr size_t RECORD_SIZE = 4 + 2 + 4 + 1 + MAX_PAYLOAD_SIZE + 4;
+constexpr size_t MAX_PACKAGE_SIZE = 256;
+constexpr size_t FIXED_HEADER_SIZE = 32;
+constexpr size_t CRC_SIZE = 4;
+constexpr size_t MIN_PACKAGE_SIZE = FIXED_HEADER_SIZE + CRC_SIZE;
+constexpr size_t MAX_TITLE_SIZE = 96;
+constexpr size_t MAX_TIME_LINE_SIZE = 48;
+constexpr size_t MAX_FOOTER_SIZE = 40;
+constexpr size_t MAX_STALE_LINE_SIZE = 48;
+constexpr uint8_t SCHEMA_V1 = 1;
+constexpr uint8_t TEMPLATE_AGENDA = 1;
 
 enum class Status : uint8_t {
   Ok,
   InvalidArgument,
   InvalidSize,
   InvalidMagic,
-  InvalidVersion,
+  InvalidSchema,
+  UnsupportedSchema,
+  UnsupportedTemplate,
   InvalidLength,
+  InvalidTimestamp,
+  InvalidText,
+  InvalidUtf8,
   InvalidCrc,
-  SequenceOverflow,
-  NotFound,
-  OpenFailed,
-  ReadFailed,
-  WriteFailed,
-  CommitFailed,
-  VerifyFailed,
+  StalePackage,
 };
 
-using RecordBytes = std::array<uint8_t, RECORD_SIZE>;
+using PackageBytes = std::array<uint8_t, MAX_PACKAGE_SIZE>;
 
-struct DecodedRecord {
-  uint32_t sequence = 0;
+struct TextField {
+  std::array<uint8_t, MAX_TITLE_SIZE> bytes{};
   uint8_t length = 0;
-  std::array<uint8_t, MAX_PAYLOAD_SIZE> payload{};
+};
+
+struct Package {
+  uint8_t schema = SCHEMA_V1;
+  uint8_t templateId = TEMPLATE_AGENDA;
+  uint32_t packageId = 0;
+  uint64_t generatedAt = 0;
+  uint64_t validUntil = 0;
+  TextField title{};
+  TextField timeLine{};
+  TextField footer{};
+  TextField staleLine{};
   uint32_t crc = 0;
 };
 
 uint32_t crc32(const uint8_t* data, size_t length);
-Status buildRecord(const uint8_t* payload, size_t length, uint32_t sequence, RecordBytes& out);
-Status validateRecord(const uint8_t* bytes, size_t size, DecodedRecord& out);
-Status nextSequence(bool haveCurrent, uint32_t current, uint32_t& out);
+Status encodePackage(const Package& package, PackageBytes& output, size_t& outputLength);
+Status decodePackage(const uint8_t* bytes, size_t size, Package& output);
+Status comparePackageId(bool haveCurrent, uint32_t currentId, uint32_t candidateId);
 
-}  // namespace ble_handoff
+}  // namespace dashboard

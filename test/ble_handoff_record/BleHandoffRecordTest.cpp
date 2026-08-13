@@ -3,118 +3,124 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <limits>
+#include <cstring>
 
 #include "BleHandoffRecord.h"
 
 namespace {
 
-using ble_handoff::DecodedRecord;
-using ble_handoff::RecordBytes;
-using ble_handoff::Status;
-
-constexpr std::array<uint8_t, 8> HELLO_X3 = {'h', 'e', 'l', 'l', 'o', ' ', 'x', '3'};
-
-RecordBytes validRecord() {
-  RecordBytes bytes{};
-  EXPECT_EQ(ble_handoff::buildRecord(HELLO_X3.data(), HELLO_X3.size(), 7, bytes), Status::Ok);
-  return bytes;
+dashboard::TextField text(const char* value) {
+  dashboard::TextField field{};
+  field.length = static_cast<uint8_t>(std::strlen(value));
+  std::copy_n(reinterpret_cast<const uint8_t*>(value), field.length, field.bytes.begin());
+  return field;
 }
 
-TEST(BleHandoffRecord, UsesStandardCrc32) {
+dashboard::Package validPackage() {
+  dashboard::Package package{};
+  package.packageId = 42;
+  package.generatedAt = 1000;
+  package.validUntil = 2000;
+  package.title = text("Meet");
+  package.timeLine = text("10:00");
+  package.footer = text("");
+  package.staleLine = text("Old");
+  return package;
+}
+
+TEST(DashboardPackage, UsesStandardCrc32) {
   constexpr std::array<uint8_t, 9> input = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
-  EXPECT_EQ(ble_handoff::crc32(input.data(), input.size()), 0xCBF43926U);
+  EXPECT_EQ(dashboard::crc32(input.data(), input.size()), 0xCBF43926U);
 }
 
-TEST(BleHandoffRecord, RoundTripsHelloX3) {
-  const RecordBytes bytes = validRecord();
-  DecodedRecord decoded{};
+TEST(DashboardPackage, EncodesSpecifiedLittleEndianLayoutAndRoundTrips) {
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::encodePackage(validPackage(), bytes, length), dashboard::Status::Ok);
+  ASSERT_EQ(length, 48U);
+  const std::array<uint8_t, 44> expectedPrefix = {
+      'X', '3', 'D', 'P', 1, 1, 48, 0, 42, 0, 0, 0, 0xE8, 3, 0, 0, 0, 0, 0, 0,
+      0xD0, 7, 0, 0, 0, 0, 0, 0, 4, 5, 0, 3, 'M', 'e', 'e', 't', '1', '0', ':', '0', '0', 'O', 'l', 'd'};
+  EXPECT_TRUE(std::equal(expectedPrefix.begin(), expectedPrefix.end(), bytes.begin()));
 
-  ASSERT_EQ(ble_handoff::validateRecord(bytes.data(), bytes.size(), decoded), Status::Ok);
-  EXPECT_EQ(decoded.sequence, 7U);
-  EXPECT_EQ(decoded.length, HELLO_X3.size());
-  EXPECT_TRUE(std::equal(HELLO_X3.begin(), HELLO_X3.end(), decoded.payload.begin()));
-  EXPECT_EQ(decoded.crc, 0x52C9C233U);
+  dashboard::Package decoded{};
+  ASSERT_EQ(dashboard::decodePackage(bytes.data(), length, decoded), dashboard::Status::Ok);
+  EXPECT_EQ(decoded.packageId, 42U);
+  EXPECT_EQ(decoded.generatedAt, 1000U);
+  EXPECT_EQ(decoded.validUntil, 2000U);
+  EXPECT_EQ(decoded.title.length, 4U);
+  EXPECT_TRUE(std::equal(decoded.title.bytes.begin(), decoded.title.bytes.begin() + 4,
+                        reinterpret_cast<const uint8_t*>("Meet")));
 }
 
-TEST(BleHandoffRecord, UsesSpecifiedPersistedByteLayout) {
-  RecordBytes expected{};
-  expected[0] = 0x45;
-  expected[1] = 0x4C;
-  expected[2] = 0x42;
-  expected[3] = 0x58;
-  expected[4] = 0x01;
-  expected[5] = 0x00;
-  expected[6] = 0x07;
-  expected[10] = 0x08;
-  std::copy(HELLO_X3.begin(), HELLO_X3.end(), expected.begin() + 11);
-  expected[75] = 0x33;
-  expected[76] = 0xC2;
-  expected[77] = 0xC9;
-  expected[78] = 0x52;
-
-  RecordBytes actual{};
-  ASSERT_EQ(ble_handoff::buildRecord(HELLO_X3.data(), HELLO_X3.size(), 7, actual), Status::Ok);
-  EXPECT_EQ(actual, expected);
+TEST(DashboardPackage, RejectsCorruptionAndInconsistentSize) {
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::encodePackage(validPackage(), bytes, length), dashboard::Status::Ok);
+  bytes[32] ^= 1;
+  dashboard::Package decoded{};
+  EXPECT_EQ(dashboard::decodePackage(bytes.data(), length, decoded), dashboard::Status::InvalidCrc);
+  EXPECT_EQ(dashboard::decodePackage(bytes.data(), length - 1, decoded), dashboard::Status::InvalidSize);
 }
 
-TEST(BleHandoffRecord, RejectsChangedCoveredByte) {
-  RecordBytes bytes = validRecord();
-  bytes[11] ^= 0x01;
-  DecodedRecord decoded{};
-  EXPECT_EQ(ble_handoff::validateRecord(bytes.data(), bytes.size(), decoded), Status::InvalidCrc);
+TEST(DashboardPackage, RejectsInvalidFieldLengthsAndTimestamps) {
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  auto package = validPackage();
+  package.title.length = 0;
+  EXPECT_EQ(dashboard::encodePackage(package, bytes, length), dashboard::Status::InvalidLength);
+  package = validPackage();
+  package.generatedAt = 0;
+  EXPECT_EQ(dashboard::encodePackage(package, bytes, length), dashboard::Status::InvalidTimestamp);
+  package = validPackage();
+  package.validUntil = 999;
+  EXPECT_EQ(dashboard::encodePackage(package, bytes, length), dashboard::Status::InvalidTimestamp);
 }
 
-TEST(BleHandoffRecord, RejectsChangedSequenceOrLength) {
-  DecodedRecord decoded{};
-  RecordBytes changedSequence = validRecord();
-  changedSequence[6] ^= 0x01;
-  EXPECT_EQ(ble_handoff::validateRecord(changedSequence.data(), changedSequence.size(), decoded), Status::InvalidCrc);
+TEST(DashboardPackage, RejectsNulControlAndMalformedUtf8) {
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  auto package = validPackage();
+  package.title.bytes[1] = 0;
+  EXPECT_EQ(dashboard::encodePackage(package, bytes, length), dashboard::Status::InvalidText);
+  package = validPackage();
+  package.title.bytes[1] = '\n';
+  EXPECT_EQ(dashboard::encodePackage(package, bytes, length), dashboard::Status::InvalidText);
+  package = validPackage();
+  package.title.bytes[0] = 0xC3;
+  package.title.bytes[1] = 0x28;
+  EXPECT_EQ(dashboard::encodePackage(package, bytes, length), dashboard::Status::InvalidUtf8);
 
-  RecordBytes changedLength = validRecord();
-  changedLength[10] = 9;
-  EXPECT_EQ(ble_handoff::validateRecord(changedLength.data(), changedLength.size(), decoded), Status::InvalidCrc);
+  package = validPackage();
+  package.title.length = 2;
+  package.title.bytes[0] = 0xC0;
+  package.title.bytes[1] = 0xAF;
+  EXPECT_EQ(dashboard::encodePackage(package, bytes, length), dashboard::Status::InvalidUtf8);
+
+  package = validPackage();
+  package.title.length = 3;
+  package.title.bytes[0] = 0xED;
+  package.title.bytes[1] = 0xA0;
+  package.title.bytes[2] = 0x80;
+  EXPECT_EQ(dashboard::encodePackage(package, bytes, length), dashboard::Status::InvalidUtf8);
 }
 
-TEST(BleHandoffRecord, RejectsWrongRecordSize) {
-  const RecordBytes bytes = validRecord();
-  DecodedRecord decoded{};
-  EXPECT_EQ(ble_handoff::validateRecord(bytes.data(), bytes.size() - 1, decoded), Status::InvalidSize);
-  EXPECT_EQ(ble_handoff::validateRecord(bytes.data(), bytes.size() + 1, decoded), Status::InvalidSize);
+TEST(DashboardPackage, DistinguishesUnsupportedSchemaAndTemplate) {
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  auto package = validPackage();
+  package.schema = 2;
+  EXPECT_EQ(dashboard::encodePackage(package, bytes, length), dashboard::Status::UnsupportedSchema);
+  package = validPackage();
+  package.templateId = 2;
+  EXPECT_EQ(dashboard::encodePackage(package, bytes, length), dashboard::Status::UnsupportedTemplate);
 }
 
-TEST(BleHandoffRecord, RejectsWrongMagicAndVersion) {
-  DecodedRecord decoded{};
-  RecordBytes badMagic = validRecord();
-  badMagic[0] ^= 0x01;
-  EXPECT_EQ(ble_handoff::validateRecord(badMagic.data(), badMagic.size(), decoded), Status::InvalidMagic);
-
-  RecordBytes badVersion = validRecord();
-  badVersion[4] ^= 0x01;
-  EXPECT_EQ(ble_handoff::validateRecord(badVersion.data(), badVersion.size(), decoded), Status::InvalidVersion);
-}
-
-TEST(BleHandoffRecord, RejectsInvalidPayloadBounds) {
-  RecordBytes bytes{};
-  std::array<uint8_t, ble_handoff::MAX_PAYLOAD_SIZE + 1> oversized{};
-  EXPECT_EQ(ble_handoff::buildRecord(nullptr, 0, 1, bytes), Status::InvalidLength);
-  EXPECT_EQ(ble_handoff::buildRecord(oversized.data(), oversized.size(), 1, bytes), Status::InvalidLength);
-  EXPECT_EQ(ble_handoff::buildRecord(nullptr, 1, 1, bytes), Status::InvalidArgument);
-}
-
-TEST(BleHandoffRecord, GeneratesInitialAndIncrementedSequences) {
-  uint32_t next = 99;
-  EXPECT_EQ(ble_handoff::nextSequence(false, 99, next), Status::Ok);
-  EXPECT_EQ(next, 1U);
-  EXPECT_EQ(ble_handoff::nextSequence(true, 41, next), Status::Ok);
-  EXPECT_EQ(next, 42U);
-}
-
-TEST(BleHandoffRecord, RejectsSequenceOverflow) {
-  uint32_t next = 99;
-  EXPECT_EQ(ble_handoff::nextSequence(true, std::numeric_limits<uint32_t>::max(), next),
-            Status::SequenceOverflow);
-  EXPECT_EQ(next, 99U);
+TEST(DashboardPackage, RequiresStrictlyIncreasingPackageIds) {
+  EXPECT_EQ(dashboard::comparePackageId(false, 99, 1), dashboard::Status::Ok);
+  EXPECT_EQ(dashboard::comparePackageId(true, 41, 42), dashboard::Status::Ok);
+  EXPECT_EQ(dashboard::comparePackageId(true, 42, 42), dashboard::Status::StalePackage);
+  EXPECT_EQ(dashboard::comparePackageId(true, 42, 41), dashboard::Status::StalePackage);
 }
 
 }  // namespace
