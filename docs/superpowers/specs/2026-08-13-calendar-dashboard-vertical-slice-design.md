@@ -247,4 +247,5 @@ After this slice passes, a separate design will decide:
 - App Store, TestFlight, or personal-signing distribution;
 - authenticated BLE and replay protection;
 - background refresh and automatic receiver scheduling;
+- seamless EPUB quick-resume after a button wake from Agenda sleep, without a visible CrossInk splash, while retaining the existing crash-loop and fallback protections;
 - multiple data sources, card schemas, widgets, and layout selection.
