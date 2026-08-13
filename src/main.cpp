@@ -107,6 +107,9 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "util/Dictionary.h"
 #include "util/DictionaryRegistry.h"
 #include "util/ScreenshotUtil.h"
+#ifdef CROSSINK_BLE_HANDOFF_READER
+#include "spikes/ble_handoff/BleHandoffReaderProbe.h"
+#endif
 
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
@@ -787,6 +790,10 @@ void setup() {
   HalSystem::begin();
   LOG_INF("BOOT", "Reset diagnostic: reset=%d(%s) sleepWake=%d(%s)", static_cast<int>(rawResetReason),
           resetReasonName(rawResetReason), static_cast<int>(rawWakeupCause), wakeupCauseName(rawWakeupCause));
+
+#ifdef CROSSINK_BLE_HANDOFF_READER
+  BleHandoffReaderProbe::logPersistedPayload();
+#endif
 
   // Read-and-clear so a panic later in setup() doesn't loop into silent reboot.
   // Validate the target too — RTC_NOINIT memory is uninitialized on cold boot.

@@ -1,3 +1,5 @@
+#ifdef CROSSINK_BLE_HANDOFF_RECEIVER
+
 #include <Arduino.h>
 #include <BLEAdvertising.h>
 #include <BLECharacteristic.h>
@@ -163,3 +165,5 @@ void loop() {
   delay(100);
   ESP.restart();
 }
+
+#endif
