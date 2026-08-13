@@ -31,4 +31,8 @@ bool isNewerPackage(const SlotState& slot0, const SlotState& slot1, const uint32
   return !haveCurrent || candidateId > highest;
 }
 
+uint32_t receiverStatusPackageId(const bool stale, const uint32_t candidateId, const uint32_t highestStoredId) {
+  return stale ? highestStoredId : candidateId;
+}
+
 }  // namespace dashboard

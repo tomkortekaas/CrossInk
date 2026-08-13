@@ -17,5 +17,6 @@ struct SlotDecision {
 
 SlotDecision chooseSlots(const SlotState& slot0, const SlotState& slot1, int8_t recordedSelection);
 bool isNewerPackage(const SlotState& slot0, const SlotState& slot1, uint32_t candidateId);
+uint32_t receiverStatusPackageId(bool stale, uint32_t candidateId, uint32_t highestStoredId);
 
 }  // namespace dashboard

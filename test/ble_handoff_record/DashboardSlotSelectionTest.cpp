@@ -38,3 +38,8 @@ TEST(DashboardSlotSelection, RejectsDuplicateAndOlderCandidate) {
   EXPECT_FALSE(dashboard::isNewerPackage({true, 7}, {true, 9}, 9));
   EXPECT_FALSE(dashboard::isNewerPackage({true, 7}, {true, 9}, 8));
 }
+
+TEST(DashboardSlotSelection, StaleStatusReportsHighestStoredIdInsteadOfRejectedCandidate) {
+  EXPECT_EQ(dashboard::receiverStatusPackageId(true, 8, 9), 9U);
+  EXPECT_EQ(dashboard::receiverStatusPackageId(false, 10, 9), 10U);
+}

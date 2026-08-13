@@ -13,6 +13,7 @@
 #include "AgendaWakeRetention.h"
 #include "BleHandoffNvs.h"
 #include "DashboardBootSwitch.h"
+#include "DashboardSlotSelection.h"
 #include "DashboardTransfer.h"
 #include "ReceiverWindow.h"
 
@@ -167,7 +168,11 @@ void loop() {
   static dashboard::PersistedPackage persisted;
   const dashboard::PersistStatus persistedStatus =
       dashboard::persistIfNewer(assembler.bytes().data(), assembler.length(), persisted);
-  if (persistedStatus == dashboard::PersistStatus::Stale) return notify(0x10, result.packageId, result.received);
+  if (persistedStatus == dashboard::PersistStatus::Stale) {
+    return notify(0x10,
+                  dashboard::receiverStatusPackageId(true, result.packageId, persisted.package.packageId),
+                  result.received);
+  }
   if (persistedStatus == dashboard::PersistStatus::InvalidPackage)
     return notify(0x12, result.packageId, result.received);
   if (persistedStatus != dashboard::PersistStatus::Ok) return notify(0x13, result.packageId, result.received);

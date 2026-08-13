@@ -93,6 +93,7 @@ PersistStatus persistIfNewer(const uint8_t* bytes, const size_t length, Persiste
                       currentStatus == PersistStatus::Ok && current.slot == 1 ? SlotState{true, current.package.packageId}
                                                                              : SlotState{},
                       candidate.packageId)) {
+    output = current;
     nvs_close(handle);
     return PersistStatus::Stale;
   }
