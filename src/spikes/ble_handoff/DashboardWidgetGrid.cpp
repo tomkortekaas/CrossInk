@@ -1,0 +1,260 @@
+#include "DashboardWidgetGrid.h"
+
+#include <algorithm>
+
+namespace dashboard {
+namespace {
+
+constexpr size_t LENGTH_OFFSET = 6;
+constexpr size_t PACKAGE_ID_OFFSET = 8;
+constexpr size_t GENERATED_AT_OFFSET = 12;
+constexpr size_t VALID_UNTIL_OFFSET = 20;
+constexpr size_t GRID_COLUMNS_OFFSET = 28;
+constexpr size_t WIDGET_COUNT_OFFSET = 29;
+constexpr size_t CONTENT_OFFSET = 30;
+
+void writeU16(uint8_t* out, uint16_t value) {
+  out[0] = static_cast<uint8_t>(value);
+  out[1] = static_cast<uint8_t>(value >> 8U);
+}
+
+void writeU32(uint8_t* out, uint32_t value) {
+  for (uint8_t index = 0; index < 4; ++index) out[index] = static_cast<uint8_t>(value >> (index * 8U));
+}
+
+void writeU64(uint8_t* out, uint64_t value) {
+  for (uint8_t index = 0; index < 8; ++index) out[index] = static_cast<uint8_t>(value >> (index * 8U));
+}
+
+uint16_t readU16(const uint8_t* in) { return static_cast<uint16_t>(in[0]) | (static_cast<uint16_t>(in[1]) << 8U); }
+
+uint32_t readU32(const uint8_t* in) {
+  uint32_t value = 0;
+  for (uint8_t index = 0; index < 4; ++index) value |= static_cast<uint32_t>(in[index]) << (index * 8U);
+  return value;
+}
+
+uint64_t readU64(const uint8_t* in) {
+  uint64_t value = 0;
+  for (uint8_t index = 0; index < 8; ++index) value |= static_cast<uint64_t>(in[index]) << (index * 8U);
+  return value;
+}
+
+Status validateWidget(const Widget& widget) {
+  if (widget.columnSpan == 0 || widget.columnSpan > GRID_COLUMNS || widget.rowSpan == 0 ||
+      widget.rowSpan > MAX_ROW_SPAN) {
+    return Status::InvalidLength;
+  }
+  if (widget.type == WidgetType::Kpi) {
+    const KpiContent& kpi = widget.kpi;
+    if (kpi.labelLength == 0 || kpi.labelLength > MAX_KPI_LABEL_SIZE || kpi.valueLength == 0 ||
+        kpi.valueLength > MAX_KPI_VALUE_SIZE) {
+      return Status::InvalidLength;
+    }
+    Status status = validateUtf8(kpi.labelBytes.data(), kpi.labelLength);
+    if (status != Status::Ok) return status;
+    return validateUtf8(kpi.valueBytes.data(), kpi.valueLength);
+  }
+  if (widget.type == WidgetType::List) {
+    const ListContent& list = widget.list;
+    if (list.headingLength > MAX_LIST_HEADING_SIZE || list.rowCount > MAX_LIST_ROWS) return Status::InvalidLength;
+    if (list.headingLength > 0) {
+      const Status status = validateUtf8(list.headingBytes.data(), list.headingLength);
+      if (status != Status::Ok) return status;
+    }
+    for (uint8_t index = 0; index < list.rowCount; ++index) {
+      const ListRow& row = list.rows[index];
+      if (row.timeLength == 0 || row.timeLength > MAX_LIST_ROW_TIME_SIZE || row.labelLength == 0 ||
+          row.labelLength > MAX_LIST_ROW_LABEL_SIZE) {
+        return Status::InvalidLength;
+      }
+      Status status = validateUtf8(row.timeBytes.data(), row.timeLength);
+      if (status != Status::Ok) return status;
+      status = validateUtf8(row.labelBytes.data(), row.labelLength);
+      if (status != Status::Ok) return status;
+    }
+    return Status::Ok;
+  }
+  return Status::InvalidArgument;
+}
+
+size_t widgetContentLength(const Widget& widget) {
+  size_t total = 3;  // type + columnSpan + rowSpan, written by writeWidget for every widget.
+  if (widget.type == WidgetType::Kpi) return total + 2 + widget.kpi.labelLength + widget.kpi.valueLength;
+  total += 2 + widget.list.headingLength;
+  for (uint8_t index = 0; index < widget.list.rowCount; ++index) {
+    total += 2 + widget.list.rows[index].timeLength + widget.list.rows[index].labelLength;
+  }
+  return total;
+}
+
+size_t writeWidget(uint8_t* out, const Widget& widget) {
+  out[0] = static_cast<uint8_t>(widget.type);
+  out[1] = widget.columnSpan;
+  out[2] = widget.rowSpan;
+  size_t offset = 3;
+  if (widget.type == WidgetType::Kpi) {
+    out[offset] = widget.kpi.labelLength;
+    out[offset + 1] = widget.kpi.valueLength;
+    offset += 2;
+    std::copy_n(widget.kpi.labelBytes.begin(), widget.kpi.labelLength, out + offset);
+    offset += widget.kpi.labelLength;
+    std::copy_n(widget.kpi.valueBytes.begin(), widget.kpi.valueLength, out + offset);
+    offset += widget.kpi.valueLength;
+    return offset;
+  }
+  out[offset] = widget.list.headingLength;
+  out[offset + 1] = widget.list.rowCount;
+  offset += 2;
+  std::copy_n(widget.list.headingBytes.begin(), widget.list.headingLength, out + offset);
+  offset += widget.list.headingLength;
+  for (uint8_t index = 0; index < widget.list.rowCount; ++index) {
+    const ListRow& row = widget.list.rows[index];
+    out[offset] = row.timeLength;
+    out[offset + 1] = row.labelLength;
+    offset += 2;
+    std::copy_n(row.timeBytes.begin(), row.timeLength, out + offset);
+    offset += row.timeLength;
+    std::copy_n(row.labelBytes.begin(), row.labelLength, out + offset);
+    offset += row.labelLength;
+  }
+  return offset;
+}
+
+// Returns SIZE_MAX on malformed input instead of a Status so callers can
+// distinguish "ran out of bytes" from every specific field-validity error,
+// which the field-level validateWidget() pass reports precisely afterward.
+size_t readWidget(const uint8_t* bytes, size_t offset, size_t size, Widget& widget) {
+  if (offset + 3 > size) return SIZE_MAX;
+  const uint8_t rawType = bytes[offset];
+  if (rawType != static_cast<uint8_t>(WidgetType::Kpi) && rawType != static_cast<uint8_t>(WidgetType::List)) {
+    return SIZE_MAX;
+  }
+  widget.type = static_cast<WidgetType>(rawType);
+  widget.columnSpan = bytes[offset + 1];
+  widget.rowSpan = bytes[offset + 2];
+  offset += 3;
+
+  if (widget.type == WidgetType::Kpi) {
+    if (offset + 2 > size) return SIZE_MAX;
+    widget.kpi.labelLength = bytes[offset];
+    widget.kpi.valueLength = bytes[offset + 1];
+    offset += 2;
+    if (widget.kpi.labelLength > MAX_KPI_LABEL_SIZE || widget.kpi.valueLength > MAX_KPI_VALUE_SIZE ||
+        offset + widget.kpi.labelLength + widget.kpi.valueLength > size) {
+      return SIZE_MAX;
+    }
+    std::copy_n(bytes + offset, widget.kpi.labelLength, widget.kpi.labelBytes.begin());
+    offset += widget.kpi.labelLength;
+    std::copy_n(bytes + offset, widget.kpi.valueLength, widget.kpi.valueBytes.begin());
+    offset += widget.kpi.valueLength;
+    return offset;
+  }
+
+  if (offset + 2 > size) return SIZE_MAX;
+  widget.list.headingLength = bytes[offset];
+  widget.list.rowCount = bytes[offset + 1];
+  offset += 2;
+  if (widget.list.headingLength > MAX_LIST_HEADING_SIZE || widget.list.rowCount > MAX_LIST_ROWS ||
+      offset + widget.list.headingLength > size) {
+    return SIZE_MAX;
+  }
+  std::copy_n(bytes + offset, widget.list.headingLength, widget.list.headingBytes.begin());
+  offset += widget.list.headingLength;
+  for (uint8_t index = 0; index < widget.list.rowCount; ++index) {
+    if (offset + 2 > size) return SIZE_MAX;
+    ListRow& row = widget.list.rows[index];
+    row.timeLength = bytes[offset];
+    row.labelLength = bytes[offset + 1];
+    offset += 2;
+    if (row.timeLength > MAX_LIST_ROW_TIME_SIZE || row.labelLength > MAX_LIST_ROW_LABEL_SIZE ||
+        offset + row.timeLength + row.labelLength > size) {
+      return SIZE_MAX;
+    }
+    std::copy_n(bytes + offset, row.timeLength, row.timeBytes.begin());
+    offset += row.timeLength;
+    std::copy_n(bytes + offset, row.labelLength, row.labelBytes.begin());
+    offset += row.labelLength;
+  }
+  return offset;
+}
+
+}  // namespace
+
+Status encodeWidgetGridPackage(const WidgetGridPackage& package, PackageBytes& output, size_t& outputLength) {
+  outputLength = 0;
+  if (package.schema != SCHEMA_V1) return Status::UnsupportedSchema;
+  if (package.templateId != TEMPLATE_WIDGET_GRID) return Status::UnsupportedTemplate;
+  if (package.generatedAt == 0 || package.validUntil < package.generatedAt) return Status::InvalidTimestamp;
+  if (package.widgetCount > MAX_WIDGETS) return Status::InvalidLength;
+
+  size_t contentLength = 0;
+  for (uint8_t index = 0; index < package.widgetCount; ++index) {
+    const Status status = validateWidget(package.widgets[index]);
+    if (status != Status::Ok) return status;
+    contentLength += widgetContentLength(package.widgets[index]);
+  }
+
+  const size_t totalLength = CONTENT_OFFSET + contentLength + CRC_SIZE;
+  if (totalLength > MAX_PACKAGE_SIZE) return Status::InvalidLength;
+
+  output.fill(0);
+  output[0] = 'X';
+  output[1] = '3';
+  output[2] = 'D';
+  output[3] = 'P';
+  output[4] = package.schema;
+  output[5] = package.templateId;
+  writeU16(output.data() + LENGTH_OFFSET, static_cast<uint16_t>(totalLength));
+  writeU32(output.data() + PACKAGE_ID_OFFSET, package.packageId);
+  writeU64(output.data() + GENERATED_AT_OFFSET, package.generatedAt);
+  writeU64(output.data() + VALID_UNTIL_OFFSET, package.validUntil);
+  output[GRID_COLUMNS_OFFSET] = GRID_COLUMNS;
+  output[WIDGET_COUNT_OFFSET] = package.widgetCount;
+
+  size_t offset = CONTENT_OFFSET;
+  for (uint8_t index = 0; index < package.widgetCount; ++index) {
+    offset += writeWidget(output.data() + offset, package.widgets[index]);
+  }
+  writeU32(output.data() + offset, crc32(output.data(), offset));
+  outputLength = totalLength;
+  return Status::Ok;
+}
+
+Status decodeWidgetGridPackage(const uint8_t* bytes, const size_t size, WidgetGridPackage& output) {
+  if (bytes == nullptr) return Status::InvalidArgument;
+  if (size < CONTENT_OFFSET + CRC_SIZE || size > MAX_PACKAGE_SIZE) return Status::InvalidSize;
+  if (bytes[0] != 'X' || bytes[1] != '3' || bytes[2] != 'D' || bytes[3] != 'P') return Status::InvalidMagic;
+  if (readU16(bytes + LENGTH_OFFSET) != size) return Status::InvalidSize;
+  if (bytes[4] != SCHEMA_V1) return Status::UnsupportedSchema;
+  if (bytes[5] != TEMPLATE_WIDGET_GRID) return Status::UnsupportedTemplate;
+  if (crc32(bytes, size - CRC_SIZE) != readU32(bytes + size - CRC_SIZE)) return Status::InvalidCrc;
+  if (bytes[GRID_COLUMNS_OFFSET] != GRID_COLUMNS) return Status::UnsupportedTemplate;
+
+  WidgetGridPackage candidate{};
+  candidate.schema = bytes[4];
+  candidate.templateId = bytes[5];
+  candidate.packageId = readU32(bytes + PACKAGE_ID_OFFSET);
+  candidate.generatedAt = readU64(bytes + GENERATED_AT_OFFSET);
+  candidate.validUntil = readU64(bytes + VALID_UNTIL_OFFSET);
+  candidate.widgetCount = bytes[WIDGET_COUNT_OFFSET];
+  if (candidate.generatedAt == 0 || candidate.validUntil < candidate.generatedAt) return Status::InvalidTimestamp;
+  if (candidate.widgetCount > MAX_WIDGETS) return Status::InvalidLength;
+
+  size_t offset = CONTENT_OFFSET;
+  for (uint8_t index = 0; index < candidate.widgetCount; ++index) {
+    offset = readWidget(bytes, offset, size, candidate.widgets[index]);
+    if (offset == SIZE_MAX) return Status::InvalidLength;
+  }
+  if (offset + CRC_SIZE != size) return Status::InvalidLength;
+
+  for (uint8_t index = 0; index < candidate.widgetCount; ++index) {
+    const Status status = validateWidget(candidate.widgets[index]);
+    if (status != Status::Ok) return status;
+  }
+  candidate.crc = readU32(bytes + size - CRC_SIZE);
+  output = candidate;
+  return Status::Ok;
+}
+
+}  // namespace dashboard
