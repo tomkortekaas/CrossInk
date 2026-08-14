@@ -25,7 +25,7 @@ struct SlotRecord {
 };
 
 static SlotRecord slotWorkspace[2];
-static Package decodeWorkspace;
+static PackageHeader decodeWorkspace;
 
 bool readSlot(nvs_handle_t handle, int index, SlotState& state) {
   state = {};
@@ -34,9 +34,12 @@ bool readSlot(nvs_handle_t handle, int index, SlotState& state) {
     return false;
   }
   const SlotRecord& record = slotWorkspace[index];
+  // peekPackageHeader (not decodePackage/decodeWidgetGridPackage) so any
+  // current or future template's package can be validated and persisted
+  // without this storage layer knowing its content shape.
   if (record.magic != SLOT_MAGIC || record.version != STORAGE_VERSION || record.length > MAX_PACKAGE_SIZE ||
       crc32(reinterpret_cast<const uint8_t*>(&record), sizeof(SlotRecord) - sizeof(uint32_t)) != record.crc ||
-      decodePackage(record.bytes.data(), record.length, decodeWorkspace) != Status::Ok) {
+      peekPackageHeader(record.bytes.data(), record.length, decodeWorkspace) != Status::Ok) {
     return false;
   }
   state = {true, decodeWorkspace.packageId};
@@ -59,7 +62,9 @@ PersistStatus load(nvs_handle_t handle, PersistedPackage& output, SlotDecision* 
   output.bytes = record.bytes;
   output.length = record.length;
   output.slot = decision.selected;
-  if (decodePackage(output.bytes.data(), output.length, output.package) != Status::Ok) return PersistStatus::ReadFailed;
+  if (peekPackageHeader(output.bytes.data(), output.length, output.header) != Status::Ok) {
+    return PersistStatus::ReadFailed;
+  }
   return PersistStatus::Ok;
 }
 
@@ -76,8 +81,8 @@ PersistStatus readLastKnownGood(PersistedPackage& output) {
 }
 
 PersistStatus persistIfNewer(const uint8_t* bytes, const size_t length, PersistedPackage& output) {
-  Package candidate{};
-  if (decodePackage(bytes, length, candidate) != Status::Ok) return PersistStatus::InvalidPackage;
+  PackageHeader candidate{};
+  if (peekPackageHeader(bytes, length, candidate) != Status::Ok) return PersistStatus::InvalidPackage;
 
   nvs_handle_t handle = 0;
   if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) return PersistStatus::OpenFailed;
@@ -88,9 +93,9 @@ PersistStatus persistIfNewer(const uint8_t* bytes, const size_t length, Persiste
     nvs_close(handle);
     return currentStatus;
   }
-  if (!isNewerPackage(currentStatus == PersistStatus::Ok && current.slot == 0 ? SlotState{true, current.package.packageId}
+  if (!isNewerPackage(currentStatus == PersistStatus::Ok && current.slot == 0 ? SlotState{true, current.header.packageId}
                                                                              : SlotState{},
-                      currentStatus == PersistStatus::Ok && current.slot == 1 ? SlotState{true, current.package.packageId}
+                      currentStatus == PersistStatus::Ok && current.slot == 1 ? SlotState{true, current.header.packageId}
                                                                              : SlotState{},
                       candidate.packageId)) {
     output = current;
@@ -124,7 +129,7 @@ PersistStatus persistIfNewer(const uint8_t* bytes, const size_t length, Persiste
   }
   const PersistStatus finalStatus = load(handle, output);
   nvs_close(handle);
-  return finalStatus == PersistStatus::Ok && output.package.packageId == candidate.packageId ? PersistStatus::Ok
+  return finalStatus == PersistStatus::Ok && output.header.packageId == candidate.packageId ? PersistStatus::Ok
                                                                                              : PersistStatus::VerifyFailed;
 }
 

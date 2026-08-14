@@ -188,6 +188,26 @@ Status decodePackage(const uint8_t* bytes, const size_t size, Package& output) {
   return Status::Ok;
 }
 
+Status peekPackageHeader(const uint8_t* bytes, const size_t size, PackageHeader& output) {
+  if (bytes == nullptr) return Status::InvalidArgument;
+  if (size < MIN_PACKAGE_SIZE || size > MAX_PACKAGE_SIZE) return Status::InvalidSize;
+  if (bytes[0] != 'X' || bytes[1] != '3' || bytes[2] != 'D' || bytes[3] != 'P') return Status::InvalidMagic;
+  if (readU16(bytes + LENGTH_OFFSET) != size) return Status::InvalidSize;
+  if (bytes[4] != SCHEMA_V1) return Status::UnsupportedSchema;
+  if (crc32(bytes, size - CRC_SIZE) != readU32(bytes + size - CRC_SIZE)) return Status::InvalidCrc;
+
+  PackageHeader candidate{};
+  candidate.schema = bytes[4];
+  candidate.templateId = bytes[5];
+  candidate.packageId = readU32(bytes + PACKAGE_ID_OFFSET);
+  candidate.generatedAt = readU64(bytes + GENERATED_AT_OFFSET);
+  candidate.validUntil = readU64(bytes + VALID_UNTIL_OFFSET);
+  if (candidate.generatedAt == 0 || candidate.validUntil < candidate.generatedAt) return Status::InvalidTimestamp;
+  candidate.crc = readU32(bytes + size - CRC_SIZE);
+  output = candidate;
+  return Status::Ok;
+}
+
 Status comparePackageId(const bool haveCurrent, const uint32_t currentId, const uint32_t candidateId) {
   return !haveCurrent || candidateId > currentId ? Status::Ok : Status::StalePackage;
 }

@@ -53,12 +53,31 @@ struct Package {
   uint32_t crc = 0;
 };
 
+// The fields every template's 28-byte common prefix carries, independent of
+// which template-specific decoder (decodePackage, decodeWidgetGridPackage,
+// ...) would be needed to read the rest. Lets persistence validate, compare
+// package ids, and store any current or future template without knowing its
+// content shape.
+struct PackageHeader {
+  uint8_t schema = SCHEMA_V1;
+  uint8_t templateId = 0;
+  uint32_t packageId = 0;
+  uint64_t generatedAt = 0;
+  uint64_t validUntil = 0;
+  uint32_t crc = 0;
+};
+
 uint32_t crc32(const uint8_t* data, size_t length);
 // Rejects embedded NUL/control bytes, overlong or malformed UTF-8, and
 // surrogate code points. Shared by every package template's field validation.
 Status validateUtf8(const uint8_t* bytes, size_t length);
 Status encodePackage(const Package& package, PackageBytes& output, size_t& outputLength);
 Status decodePackage(const uint8_t* bytes, size_t size, Package& output);
+// Validates magic, declared length, schema, and CRC, and reads the common
+// prefix without decoding template-specific content. An unrecognized
+// templateId is not rejected here - only a caller that needs to render or
+// otherwise interpret the content decides whether it supports it.
+Status peekPackageHeader(const uint8_t* bytes, size_t size, PackageHeader& output);
 Status comparePackageId(bool haveCurrent, uint32_t currentId, uint32_t candidateId);
 
 }  // namespace dashboard

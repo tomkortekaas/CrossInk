@@ -809,7 +809,7 @@ void SleepActivity::renderDashboardSleepScreen() const {
 
 void SleepActivity::renderAgendaSleepScreen() const {
 #ifdef CROSSINK_BLE_HANDOFF_READER
-  if (BleHandoffReaderProbe::renderAgendaCard(renderer)) return;
+  if (BleHandoffReaderProbe::renderDashboardCard(renderer)) return;
 #endif
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
   renderer.clearScreen();

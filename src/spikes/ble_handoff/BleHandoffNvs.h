@@ -9,7 +9,7 @@ enum class PersistStatus : uint8_t { Ok, NotFound, Stale, InvalidPackage, OpenFa
 struct PersistedPackage {
   PackageBytes bytes{};
   uint16_t length = 0;
-  Package package{};
+  PackageHeader header{};
   int8_t slot = -1;
 };
 

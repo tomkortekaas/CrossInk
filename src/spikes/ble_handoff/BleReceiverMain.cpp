@@ -170,7 +170,7 @@ void loop() {
       dashboard::persistIfNewer(assembler.bytes().data(), assembler.length(), persisted);
   if (persistedStatus == dashboard::PersistStatus::Stale) {
     return notify(0x10,
-                  dashboard::receiverStatusPackageId(true, result.packageId, persisted.package.packageId),
+                  dashboard::receiverStatusPackageId(true, result.packageId, persisted.header.packageId),
                   result.received);
   }
   if (persistedStatus == dashboard::PersistStatus::InvalidPackage)
@@ -179,8 +179,8 @@ void loop() {
   packageAccepted = true;
   acceptedPackageId = result.packageId;
   acceptedByteCount = result.received;
-  Serial.printf("PERSISTED package=%u length=%u crc=%08x\n", persisted.package.packageId, persisted.length,
-                persisted.package.crc);
+  Serial.printf("PERSISTED package=%u length=%u crc=%08x\n", persisted.header.packageId, persisted.length,
+                persisted.header.crc);
 }
 
 #endif

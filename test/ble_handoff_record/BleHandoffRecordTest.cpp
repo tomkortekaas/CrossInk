@@ -123,4 +123,67 @@ TEST(DashboardPackage, RequiresStrictlyIncreasingPackageIds) {
   EXPECT_EQ(dashboard::comparePackageId(true, 42, 41), dashboard::Status::StalePackage);
 }
 
+void rewriteCrc(dashboard::PackageBytes& bytes, size_t length) {
+  const uint32_t crc = dashboard::crc32(bytes.data(), length - dashboard::CRC_SIZE);
+  for (size_t i = 0; i < dashboard::CRC_SIZE; ++i) {
+    bytes[length - dashboard::CRC_SIZE + i] = static_cast<uint8_t>(crc >> (i * 8));
+  }
+}
+
+TEST(PackageHeaderPeek, ReadsCommonFieldsWithoutDecodingTemplateContent) {
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::encodePackage(validPackage(), bytes, length), dashboard::Status::Ok);
+
+  dashboard::PackageHeader header{};
+  ASSERT_EQ(dashboard::peekPackageHeader(bytes.data(), length, header), dashboard::Status::Ok);
+  EXPECT_EQ(header.templateId, dashboard::TEMPLATE_AGENDA);
+  EXPECT_EQ(header.packageId, 42U);
+  EXPECT_EQ(header.generatedAt, 1000U);
+  EXPECT_EQ(header.validUntil, 2000U);
+}
+
+TEST(PackageHeaderPeek, AcceptsAnUnrecognizedTemplateIdInsteadOfRejectingIt) {
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::encodePackage(validPackage(), bytes, length), dashboard::Status::Ok);
+  bytes[5] = 99;  // a template this decoder does not know how to render
+  rewriteCrc(bytes, length);
+
+  dashboard::PackageHeader header{};
+  EXPECT_EQ(dashboard::peekPackageHeader(bytes.data(), length, header), dashboard::Status::Ok);
+  EXPECT_EQ(header.templateId, 99U);
+  EXPECT_EQ(header.packageId, 42U);
+}
+
+TEST(PackageHeaderPeek, RejectsBadMagicSchemaAndCrc) {
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::encodePackage(validPackage(), bytes, length), dashboard::Status::Ok);
+  dashboard::PackageHeader header{};
+
+  auto corrupted = bytes;
+  corrupted[0] = 'Y';
+  EXPECT_EQ(dashboard::peekPackageHeader(corrupted.data(), length, header), dashboard::Status::InvalidMagic);
+
+  corrupted = bytes;
+  corrupted[4] = 2;
+  EXPECT_EQ(dashboard::peekPackageHeader(corrupted.data(), length, header), dashboard::Status::UnsupportedSchema);
+
+  corrupted = bytes;
+  corrupted[32] ^= 1;
+  EXPECT_EQ(dashboard::peekPackageHeader(corrupted.data(), length, header), dashboard::Status::InvalidCrc);
+}
+
+TEST(PackageHeaderPeek, RejectsInvalidTimestamps) {
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::encodePackage(validPackage(), bytes, length), dashboard::Status::Ok);
+  for (size_t i = 0; i < 8; ++i) bytes[20 + i] = 0;  // validUntil = 0, now below generatedAt
+  rewriteCrc(bytes, length);
+
+  dashboard::PackageHeader header{};
+  EXPECT_EQ(dashboard::peekPackageHeader(bytes.data(), length, header), dashboard::Status::InvalidTimestamp);
+}
+
 }  // namespace

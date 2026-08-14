@@ -7,6 +7,8 @@
 #include <Logging.h>
 
 #include "BleHandoffNvs.h"
+#include "DashboardGridRenderer.h"
+#include "DashboardWidgetGrid.h"
 #include "fontIds.h"
 
 namespace BleHandoffReaderProbe {
@@ -21,19 +23,15 @@ void copyText(char* output, size_t capacity, const dashboard::TextField& field) 
   std::copy_n(field.bytes.begin(), length, output);
   output[length] = '\0';
 }
-}  // namespace
 
-void logPersistedPayload() {
-  const auto status = dashboard::readLastKnownGood(persisted);
-  LOG_INF("BLEPAY", "dashboard status=%u package=%u length=%u", static_cast<unsigned>(status),
-          status == dashboard::PersistStatus::Ok ? persisted.package.packageId : 0, persisted.length);
-}
-
-bool renderAgendaCard(GfxRenderer& renderer) {
-  if (dashboard::readLastKnownGood(persisted) != dashboard::PersistStatus::Ok) return false;
-  copyText(title, sizeof(title), persisted.package.title);
-  copyText(timeLine, sizeof(timeLine), persisted.package.timeLine);
-  copyText(footer, sizeof(footer), persisted.package.footer);
+bool renderAgendaTemplate(GfxRenderer& renderer) {
+  dashboard::Package package{};
+  if (dashboard::decodePackage(persisted.bytes.data(), persisted.length, package) != dashboard::Status::Ok) {
+    return false;
+  }
+  copyText(title, sizeof(title), package.title);
+  copyText(timeLine, sizeof(timeLine), package.timeLine);
+  copyText(footer, sizeof(footer), package.footer);
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
   renderer.clearScreen();
   const int centerY = renderer.getScreenHeight() / 2;
@@ -43,6 +41,41 @@ bool renderAgendaCard(GfxRenderer& renderer) {
   renderer.drawCenteredText(SMALL_FONT_ID, centerY + 150, footer);
   renderer.displayBuffer(HalDisplay::HALF_REFRESH, true);
   return true;
+}
+
+bool renderWidgetGridTemplate(GfxRenderer& renderer) {
+  dashboard::WidgetGridPackage package{};
+  if (dashboard::decodeWidgetGridPackage(persisted.bytes.data(), persisted.length, package) !=
+      dashboard::Status::Ok) {
+    return false;
+  }
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+  renderer.clearScreen();
+  dashboard::renderWidgetGrid(renderer, package);
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH, true);
+  return true;
+}
+
+}  // namespace
+
+void logPersistedPayload() {
+  const auto status = dashboard::readLastKnownGood(persisted);
+  LOG_INF("BLEPAY", "dashboard status=%u package=%u length=%u", static_cast<unsigned>(status),
+          status == dashboard::PersistStatus::Ok ? persisted.header.packageId : 0, persisted.length);
+}
+
+bool renderDashboardCard(GfxRenderer& renderer) {
+  if (dashboard::readLastKnownGood(persisted) != dashboard::PersistStatus::Ok) return false;
+  switch (persisted.header.templateId) {
+    case dashboard::TEMPLATE_AGENDA:
+      return renderAgendaTemplate(renderer);
+    case dashboard::TEMPLATE_WIDGET_GRID:
+      return renderWidgetGridTemplate(renderer);
+    default:
+      // Unsupported template: not corrupt, just not something this build
+      // knows how to draw. The caller falls back to the existing dashboard.
+      return false;
+  }
 }
 
 }  // namespace BleHandoffReaderProbe
