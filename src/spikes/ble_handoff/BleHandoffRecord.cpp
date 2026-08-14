@@ -41,6 +41,8 @@ uint64_t readU64(const uint8_t* in) {
   return value;
 }
 
+}  // namespace
+
 Status validateUtf8(const uint8_t* bytes, size_t length) {
   for (size_t index = 0; index < length;) {
     const uint8_t lead = bytes[index];
@@ -81,6 +83,8 @@ Status validateUtf8(const uint8_t* bytes, size_t length) {
   }
   return Status::Ok;
 }
+
+namespace {
 
 Status validateFields(const Package& package) {
   if (package.title.length == 0 || package.title.length > MAX_TITLE_SIZE || package.timeLine.length == 0 ||

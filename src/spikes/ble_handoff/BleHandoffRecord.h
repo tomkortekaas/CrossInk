@@ -54,6 +54,9 @@ struct Package {
 };
 
 uint32_t crc32(const uint8_t* data, size_t length);
+// Rejects embedded NUL/control bytes, overlong or malformed UTF-8, and
+// surrogate code points. Shared by every package template's field validation.
+Status validateUtf8(const uint8_t* bytes, size_t length);
 Status encodePackage(const Package& package, PackageBytes& output, size_t& outputLength);
 Status decodePackage(const uint8_t* bytes, size_t size, Package& output);
 Status comparePackageId(bool haveCurrent, uint32_t currentId, uint32_t candidateId);
