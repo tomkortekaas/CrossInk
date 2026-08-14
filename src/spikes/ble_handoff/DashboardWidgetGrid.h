@@ -54,8 +54,16 @@ struct ListContent {
 // `kpi` is meaningful only when `type == WidgetType::Kpi`; `list` only when
 // `type == WidgetType::List`. Encoding writes only the selected variant's
 // bytes to the wire, so an unused variant costs no package space.
+//
+// `column`/`row` are the widget's explicit top-left grid cell (0-based,
+// column < GRID_COLUMNS, row < MAX_ROW_SPAN). Placement is free-form: the
+// iPhone assigns any widget to any cell, independent of `widgets` array
+// order. There is no auto-flow/shelf-packing on the wire or in
+// computeGridLayout() - only in the now-removed shelf logic this replaced.
 struct Widget {
   WidgetType type = WidgetType::Kpi;
+  uint8_t column = 0;
+  uint8_t row = 0;
   uint8_t columnSpan = 1;
   uint8_t rowSpan = 1;
   KpiContent kpi{};

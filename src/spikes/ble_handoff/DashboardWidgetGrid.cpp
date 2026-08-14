@@ -40,9 +40,31 @@ uint64_t readU64(const uint8_t* in) {
   return value;
 }
 
+bool widgetsOverlap(const Widget& a, const Widget& b) {
+  const bool columnsOverlap = a.column < b.column + b.columnSpan && b.column < a.column + a.columnSpan;
+  const bool rowsOverlap = a.row < b.row + b.rowSpan && b.row < a.row + a.rowSpan;
+  return columnsOverlap && rowsOverlap;
+}
+
+// Checked after every widget individually validates, so an in-bounds but
+// overlapping arrangement is still rejected - free-form placement trusts the
+// composer not to overlap widgets, but does not trust it blindly.
+Status validateNoOverlaps(const WidgetGridPackage& package) {
+  for (uint8_t first = 0; first < package.widgetCount; ++first) {
+    for (uint8_t second = first + 1; second < package.widgetCount; ++second) {
+      if (widgetsOverlap(package.widgets[first], package.widgets[second])) return Status::InvalidArgument;
+    }
+  }
+  return Status::Ok;
+}
+
 Status validateWidget(const Widget& widget) {
   if (widget.columnSpan == 0 || widget.columnSpan > GRID_COLUMNS || widget.rowSpan == 0 ||
       widget.rowSpan > MAX_ROW_SPAN) {
+    return Status::InvalidLength;
+  }
+  if (widget.column >= GRID_COLUMNS || widget.row >= MAX_ROW_SPAN ||
+      widget.column + widget.columnSpan > GRID_COLUMNS || widget.row + widget.rowSpan > MAX_ROW_SPAN) {
     return Status::InvalidLength;
   }
   if (widget.type == WidgetType::Kpi) {
@@ -79,7 +101,7 @@ Status validateWidget(const Widget& widget) {
 }
 
 size_t widgetContentLength(const Widget& widget) {
-  size_t total = 3;  // type + columnSpan + rowSpan, written by writeWidget for every widget.
+  size_t total = 5;  // type + column + row + columnSpan + rowSpan, written by writeWidget for every widget.
   if (widget.type == WidgetType::Kpi) return total + 2 + widget.kpi.labelLength + widget.kpi.valueLength;
   total += 2 + widget.list.headingLength;
   for (uint8_t index = 0; index < widget.list.rowCount; ++index) {
@@ -90,9 +112,11 @@ size_t widgetContentLength(const Widget& widget) {
 
 size_t writeWidget(uint8_t* out, const Widget& widget) {
   out[0] = static_cast<uint8_t>(widget.type);
-  out[1] = widget.columnSpan;
-  out[2] = widget.rowSpan;
-  size_t offset = 3;
+  out[1] = widget.column;
+  out[2] = widget.row;
+  out[3] = widget.columnSpan;
+  out[4] = widget.rowSpan;
+  size_t offset = 5;
   if (widget.type == WidgetType::Kpi) {
     out[offset] = widget.kpi.labelLength;
     out[offset + 1] = widget.kpi.valueLength;
@@ -125,15 +149,17 @@ size_t writeWidget(uint8_t* out, const Widget& widget) {
 // distinguish "ran out of bytes" from every specific field-validity error,
 // which the field-level validateWidget() pass reports precisely afterward.
 size_t readWidget(const uint8_t* bytes, size_t offset, size_t size, Widget& widget) {
-  if (offset + 3 > size) return SIZE_MAX;
+  if (offset + 5 > size) return SIZE_MAX;
   const uint8_t rawType = bytes[offset];
   if (rawType != static_cast<uint8_t>(WidgetType::Kpi) && rawType != static_cast<uint8_t>(WidgetType::List)) {
     return SIZE_MAX;
   }
   widget.type = static_cast<WidgetType>(rawType);
-  widget.columnSpan = bytes[offset + 1];
-  widget.rowSpan = bytes[offset + 2];
-  offset += 3;
+  widget.column = bytes[offset + 1];
+  widget.row = bytes[offset + 2];
+  widget.columnSpan = bytes[offset + 3];
+  widget.rowSpan = bytes[offset + 4];
+  offset += 5;
 
   if (widget.type == WidgetType::Kpi) {
     if (offset + 2 > size) return SIZE_MAX;
@@ -194,6 +220,10 @@ Status encodeWidgetGridPackage(const WidgetGridPackage& package, PackageBytes& o
     if (status != Status::Ok) return status;
     contentLength += widgetContentLength(package.widgets[index]);
   }
+  {
+    const Status status = validateNoOverlaps(package);
+    if (status != Status::Ok) return status;
+  }
 
   const size_t totalLength = CONTENT_OFFSET + contentLength + CRC_SIZE;
   if (totalLength > MAX_PACKAGE_SIZE) return Status::InvalidLength;
@@ -250,6 +280,10 @@ Status decodeWidgetGridPackage(const uint8_t* bytes, const size_t size, WidgetGr
 
   for (uint8_t index = 0; index < candidate.widgetCount; ++index) {
     const Status status = validateWidget(candidate.widgets[index]);
+    if (status != Status::Ok) return status;
+  }
+  {
+    const Status status = validateNoOverlaps(candidate);
     if (status != Status::Ok) return status;
   }
   candidate.crc = readU32(bytes + size - CRC_SIZE);

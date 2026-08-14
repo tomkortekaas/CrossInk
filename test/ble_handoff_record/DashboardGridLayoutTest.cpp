@@ -4,8 +4,10 @@
 
 namespace {
 
-dashboard::Widget widget(uint8_t columnSpan, uint8_t rowSpan) {
+dashboard::Widget widget(uint8_t column, uint8_t row, uint8_t columnSpan, uint8_t rowSpan) {
   dashboard::Widget w{};
+  w.column = column;
+  w.row = row;
   w.columnSpan = columnSpan;
   w.rowSpan = rowSpan;
   return w;
@@ -13,9 +15,24 @@ dashboard::Widget widget(uint8_t columnSpan, uint8_t rowSpan) {
 
 }  // namespace
 
-TEST(DashboardGridLayout, SingleFullWidthWidgetFillsTopRow) {
+TEST(DashboardGridLayout, PlacesWidgetAtItsExplicitColumnAndRow) {
   dashboard::WidgetGridPackage package{};
-  package.widgets[0] = widget(4, 1);
+  package.widgets[0] = widget(/*column=*/1, /*row=*/2, /*columnSpan=*/2, /*rowSpan=*/1);
+  package.widgetCount = 1;
+
+  std::array<dashboard::WidgetRect, dashboard::MAX_WIDGETS> rects{};
+  dashboard::computeGridLayout(package, 480, 600, rects);
+
+  // colWidth = 480 / 4 = 120, rowUnitHeight = 600 / 6 = 100
+  EXPECT_EQ(rects[0].x, 120);
+  EXPECT_EQ(rects[0].y, 200);
+  EXPECT_EQ(rects[0].width, 240);
+  EXPECT_EQ(rects[0].height, 100);
+}
+
+TEST(DashboardGridLayout, FullWidthFullHeightWidgetFillsTheCanvas) {
+  dashboard::WidgetGridPackage package{};
+  package.widgets[0] = widget(0, 0, dashboard::GRID_COLUMNS, dashboard::MAX_ROW_SPAN);
   package.widgetCount = 1;
 
   std::array<dashboard::WidgetRect, dashboard::MAX_WIDGETS> rects{};
@@ -24,55 +41,27 @@ TEST(DashboardGridLayout, SingleFullWidthWidgetFillsTopRow) {
   EXPECT_EQ(rects[0].x, 0);
   EXPECT_EQ(rects[0].y, 0);
   EXPECT_EQ(rects[0].width, 480);
-  EXPECT_EQ(rects[0].height, 100);  // 600 / MAX_ROW_SPAN(6) = 100
+  EXPECT_EQ(rects[0].height, 600);
 }
 
-TEST(DashboardGridLayout, TwoHalfWidthWidgetsSitSideBySide) {
+// Placement is free-form: each widget's rectangle comes only from its own
+// column/row/columnSpan/rowSpan, never from where it sits in the widgets
+// array or from any other widget's placement.
+TEST(DashboardGridLayout, EachWidgetsRectDependsOnlyOnItsOwnPositionNotArrayOrder) {
   dashboard::WidgetGridPackage package{};
-  package.widgets[0] = widget(2, 1);
-  package.widgets[1] = widget(2, 1);
+  // Deliberately out of "reading order": the bottom-right widget is first.
+  package.widgets[0] = widget(/*column=*/2, /*row=*/4, /*columnSpan=*/2, /*rowSpan=*/2);
+  package.widgets[1] = widget(/*column=*/0, /*row=*/0, /*columnSpan=*/1, /*rowSpan=*/1);
   package.widgetCount = 2;
 
   std::array<dashboard::WidgetRect, dashboard::MAX_WIDGETS> rects{};
   dashboard::computeGridLayout(package, 480, 600, rects);
 
-  EXPECT_EQ(rects[0].x, 0);
-  EXPECT_EQ(rects[1].x, 240);
-  EXPECT_EQ(rects[0].y, rects[1].y);
-}
-
-TEST(DashboardGridLayout, FourSingleColumnWidgetsFillOneRowThenFifthWraps) {
-  dashboard::WidgetGridPackage package{};
-  for (int i = 0; i < 5; ++i) package.widgets[i] = widget(1, 1);
-  package.widgetCount = 5;
-
-  std::array<dashboard::WidgetRect, dashboard::MAX_WIDGETS> rects{};
-  dashboard::computeGridLayout(package, 480, 600, rects);
-
-  EXPECT_EQ(rects[0].x, 0);
-  EXPECT_EQ(rects[1].x, 120);
-  EXPECT_EQ(rects[2].x, 240);
-  EXPECT_EQ(rects[3].x, 360);
-  EXPECT_EQ(rects[0].y, 0);
-  EXPECT_EQ(rects[4].x, 0);
-  EXPECT_EQ(rects[4].y, 100);
-}
-
-TEST(DashboardGridLayout, NextShelfClearsTheTallestWidgetInThePreviousRow) {
-  dashboard::WidgetGridPackage package{};
-  package.widgets[0] = widget(2, 2);  // tall widget, left half
-  package.widgets[1] = widget(2, 1);  // short widget, right half, same row
-  package.widgets[2] = widget(4, 1);  // wraps after the row; must clear the tall widget
-  package.widgetCount = 3;
-
-  std::array<dashboard::WidgetRect, dashboard::MAX_WIDGETS> rects{};
-  dashboard::computeGridLayout(package, 480, 600, rects);
-
-  EXPECT_EQ(rects[0].y, 0);
-  EXPECT_EQ(rects[0].height, 200);  // 2 row units
+  // colWidth = 120, rowUnitHeight = 100
+  EXPECT_EQ(rects[0].x, 240);
+  EXPECT_EQ(rects[0].y, 400);
+  EXPECT_EQ(rects[1].x, 0);
   EXPECT_EQ(rects[1].y, 0);
-  EXPECT_EQ(rects[1].height, 100);  // 1 row unit
-  EXPECT_EQ(rects[2].y, 200);       // clears widget 0's height, not widget 1's
 }
 
 TEST(DashboardGridLayout, ZeroWidgetsProducesNoLayout) {

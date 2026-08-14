@@ -16,9 +16,12 @@ void setField(std::array<uint8_t, N>& bytes, uint8_t& length, const char* value)
   std::copy_n(reinterpret_cast<const uint8_t*>(value), length, bytes.begin());
 }
 
-dashboard::Widget kpiWidget(const char* label, const char* value, uint8_t columnSpan = 1, uint8_t rowSpan = 1) {
+dashboard::Widget kpiWidget(uint8_t column, uint8_t row, const char* label, const char* value,
+                            uint8_t columnSpan = 1, uint8_t rowSpan = 1) {
   dashboard::Widget widget{};
   widget.type = dashboard::WidgetType::Kpi;
+  widget.column = column;
+  widget.row = row;
   widget.columnSpan = columnSpan;
   widget.rowSpan = rowSpan;
   setField(widget.kpi.labelBytes, widget.kpi.labelLength, label);
@@ -26,9 +29,12 @@ dashboard::Widget kpiWidget(const char* label, const char* value, uint8_t column
   return widget;
 }
 
-dashboard::Widget listWidget(const char* heading, uint8_t columnSpan = 4, uint8_t rowSpan = 4) {
+dashboard::Widget listWidget(uint8_t column, uint8_t row, const char* heading, uint8_t columnSpan = 4,
+                             uint8_t rowSpan = 4) {
   dashboard::Widget widget{};
   widget.type = dashboard::WidgetType::List;
+  widget.column = column;
+  widget.row = row;
   widget.columnSpan = columnSpan;
   widget.rowSpan = rowSpan;
   setField(widget.list.headingBytes, widget.list.headingLength, heading);
@@ -42,14 +48,16 @@ dashboard::Widget listWidget(const char* heading, uint8_t columnSpan = 4, uint8_
   return widget;
 }
 
+// Three widgets at distinct, non-overlapping explicit positions: two 1x1 KPIs
+// side by side on the top row, a full-width list filling the rows below.
 dashboard::WidgetGridPackage validPackage() {
   dashboard::WidgetGridPackage package{};
   package.packageId = 9;
   package.generatedAt = 1000;
   package.validUntil = 2000;
-  package.widgets[0] = kpiWidget("Stappen", "8421");
-  package.widgets[1] = kpiWidget("BPM", "72");
-  package.widgets[2] = listWidget("AGENDA");
+  package.widgets[0] = kpiWidget(/*column=*/0, /*row=*/0, "Stappen", "8421");
+  package.widgets[1] = kpiWidget(/*column=*/1, /*row=*/0, "BPM", "72");
+  package.widgets[2] = listWidget(/*column=*/0, /*row=*/1, "AGENDA");
   package.widgetCount = 3;
   return package;
 }
@@ -69,6 +77,8 @@ TEST(DashboardWidgetGrid, EncodesAndRoundTripsMixedWidgets) {
   ASSERT_EQ(decoded.widgetCount, 3U);
 
   EXPECT_EQ(decoded.widgets[0].type, dashboard::WidgetType::Kpi);
+  EXPECT_EQ(decoded.widgets[0].column, 0U);
+  EXPECT_EQ(decoded.widgets[0].row, 0U);
   EXPECT_EQ(decoded.widgets[0].columnSpan, 1U);
   EXPECT_TRUE(std::equal(decoded.widgets[0].kpi.labelBytes.begin(),
                         decoded.widgets[0].kpi.labelBytes.begin() + decoded.widgets[0].kpi.labelLength,
@@ -78,6 +88,8 @@ TEST(DashboardWidgetGrid, EncodesAndRoundTripsMixedWidgets) {
                         reinterpret_cast<const uint8_t*>("8421")));
 
   EXPECT_EQ(decoded.widgets[2].type, dashboard::WidgetType::List);
+  EXPECT_EQ(decoded.widgets[2].column, 0U);
+  EXPECT_EQ(decoded.widgets[2].row, 1U);
   EXPECT_EQ(decoded.widgets[2].columnSpan, 4U);
   ASSERT_EQ(decoded.widgets[2].list.rowCount, 2U);
   EXPECT_TRUE(std::equal(decoded.widgets[2].list.rows[1].timeBytes.begin(),
@@ -120,6 +132,41 @@ TEST(DashboardWidgetGrid, RejectsSpanOutsideGrid) {
   EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::InvalidLength);
 }
 
+TEST(DashboardWidgetGrid, RejectsPositionOutsideGrid) {
+  auto package = validPackage();
+  package.widgets[0].column = dashboard::GRID_COLUMNS;  // column alone already out of bounds
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::InvalidLength);
+
+  package = validPackage();
+  package.widgets[1].column = 3;
+  package.widgets[1].columnSpan = 2;  // in-bounds column, but column + span overflows GRID_COLUMNS
+  EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::InvalidLength);
+
+  package = validPackage();
+  package.widgets[2].row = dashboard::MAX_ROW_SPAN;
+  EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::InvalidLength);
+}
+
+TEST(DashboardWidgetGrid, RejectsOverlappingWidgets) {
+  auto package = validPackage();
+  // Moves widget 1 on top of widget 0's cell.
+  package.widgets[1].column = 0;
+  package.widgets[1].row = 0;
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::InvalidArgument);
+}
+
+TEST(DashboardWidgetGrid, AllowsAdjacentNonOverlappingWidgets) {
+  auto package = validPackage();
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  // validPackage() itself is already a non-overlapping arrangement.
+  EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+}
+
 TEST(DashboardWidgetGrid, RejectsEmptyKpiLabelOrValue) {
   auto package = validPackage();
   package.widgets[0].kpi.labelLength = 0;
@@ -146,12 +193,17 @@ TEST(DashboardWidgetGrid, AllowsEmptyListHeadingButRequiresRowText) {
 
 TEST(DashboardWidgetGrid, RejectsOversizedPackage) {
   auto package = validPackage();
-  for (auto& widget : package.widgets) {
-    widget = listWidget("Vandaag");
-    for (auto& row : widget.list.rows) {
-      setField(row.timeBytes, row.timeLength, "00:00-23:59");
-      row.labelLength = dashboard::MAX_LIST_ROW_LABEL_SIZE;
-      std::fill_n(row.labelBytes.begin(), row.labelLength, 'a');
+  for (uint8_t index = 0; index < dashboard::MAX_WIDGETS; ++index) {
+    // Stack every widget in its own row so none overlap; MAX_WIDGETS(8) <= MAX_ROW_SPAN(6) is false,
+    // so wrap into two columns of up to MAX_ROW_SPAN rows each.
+    const uint8_t column = static_cast<uint8_t>((index / dashboard::MAX_ROW_SPAN) * 2);
+    const uint8_t row = static_cast<uint8_t>(index % dashboard::MAX_ROW_SPAN);
+    auto& widget = package.widgets[index];
+    widget = listWidget(column, row, "Vandaag", /*columnSpan=*/2, /*rowSpan=*/1);
+    for (auto& listRow : widget.list.rows) {
+      setField(listRow.timeBytes, listRow.timeLength, "00:00-23:59");
+      listRow.labelLength = dashboard::MAX_LIST_ROW_LABEL_SIZE;
+      std::fill_n(listRow.labelBytes.begin(), listRow.labelLength, 'a');
     }
     widget.list.rowCount = dashboard::MAX_LIST_ROWS;
   }
