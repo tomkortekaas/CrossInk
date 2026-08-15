@@ -505,8 +505,8 @@ TEST(DashboardWidgetGrid, DateWidgetRefusesUnknownField) {
 TEST(DashboardWidgetGrid, DateWidgetMatchesHandDerivedBytes) {
   dashboard::WidgetGridPackage package{};
   package.packageId = 0x01020304;
-  package.generatedAt = 0;
-  package.validUntil = 0;
+  package.generatedAt = 1000;
+  package.validUntil = 2000;
   package.style = 0;
   package.widgets[0] = dateWidget(2, 3, dashboard::DateField::WeekNumber, 1, 1);
   package.widgets[0].style = dashboard::makeWidgetStyle(5, 2, 1);
@@ -523,7 +523,7 @@ TEST(DashboardWidgetGrid, DateWidgetMatchesHandDerivedBytes) {
       3,          // row
       1,          // columnSpan
       1,          // rowSpan
-      0x05, 0x05, // style: iconId 5 | sizeRung 2 << 7 | emphasis 1 << 9 = 0x0505, little endian
+      0x05, 0x03, // style: iconId 5 | sizeRung 2 << 7 | emphasis 1 << 9 = 0x0305, little endian
       5,          // field = WeekNumber
   };
   for (size_t index = 0; index < sizeof(expected); ++index) {
@@ -555,12 +555,22 @@ enum class DateField : uint8_t { Auto = 0, Day = 1, Weekday = 2, Month = 3, Year
 constexpr uint8_t MAX_DATE_FIELD = 5;
 ```
 
-Voeg in `struct Widget`, direct onder `KpiContent kpi{};`, toe:
+Vervang in `struct Widget` het losse `uint8_t listIndex = 0;` door een union die de byte deelt. Een eigen byte voor `dateField` padt `Widget` van 42 naar 44, en `MAX_WIDGETS` daarvan is 1056 bytes — voorbij het 1 KB-budget dat `WidgetSlotsAreCheapEnoughToCoverTheWholeGrid` bewaakt. Een widget is nooit tegelijk een lijst en een datum, dus de byte delen kost niets:
 
 ```cpp
-  // Meaningful only when `type == WidgetType::Date`, like `kpi` above.
-  DateField dateField = DateField::Auto;
+  // One byte whose meaning follows `type`: a List widget's index into the
+  // package's `lists`, or a Date widget's field. A widget is never both, and
+  // sharing the byte is not a micro-optimisation: giving Date its own byte
+  // padded Widget from 42 to 44, and MAX_WIDGETS of those is 1056 bytes -
+  // past the 1 KB budget WidgetSlotsAreCheapEnoughToCoverTheWholeGrid guards
+  // so that widening the grid stays a policy decision rather than a memory one.
+  union {
+    uint8_t listIndex = 0;
+    DateField dateField;
+  };
 ```
+
+De union laat een bestaande accolade-initialisatie in `test/ble_handoff_record/DashboardGridLayoutTest.cpp` waarschuwen over een ontbrekend veld. Voeg daar `, {}` toe aan de twee `dashboard::Widget{...}`-regels, zodat de build waarschuwingsvrij blijft.
 
 - [ ] **Step 4: Breid validatie, lengte, schrijven en lezen uit**
 
@@ -655,7 +665,7 @@ func testDateWidgetCostsEightBytes() throws {
         iconId: 0, sizeRung: 0, emphasis: 0,
         content: .date(field: .auto)
     )
-    let bytes = try WidgetGridPackage(packageId: 7, generatedAt: 0, validUntil: 0, style: 0, widgets: [widget])
+    let bytes = try WidgetGridPackage(packageId: 7, generatedAt: 1000, validUntil: 2000, style: 0, widgets: [widget])
         .encoded()
     // 31-byte prefix + 8-byte date widget + 4-byte CRC.
     XCTAssertEqual(bytes.count, 43)
@@ -668,7 +678,7 @@ func testDateWidgetRoundTripsEveryField() throws {
             iconId: 0, sizeRung: 0, emphasis: 0,
             content: .date(field: field)
         )
-        let bytes = try WidgetGridPackage(packageId: 9, generatedAt: 0, validUntil: 0, style: 0, widgets: [widget])
+        let bytes = try WidgetGridPackage(packageId: 9, generatedAt: 1000, validUntil: 2000, style: 0, widgets: [widget])
             .encoded()
         let decoded = try WidgetGridPackage.decode(bytes)
         XCTAssertEqual(decoded.widgets.count, 1)
@@ -684,7 +694,7 @@ func testDateWidgetRefusesUnknownFieldByte() throws {
         iconId: 0, sizeRung: 0, emphasis: 0,
         content: .date(field: .auto)
     )
-    var bytes = try WidgetGridPackage(packageId: 11, generatedAt: 0, validUntil: 0, style: 0, widgets: [widget])
+    var bytes = try WidgetGridPackage(packageId: 11, generatedAt: 1000, validUntil: 2000, style: 0, widgets: [widget])
         .encoded()
     // Corrupt the field byte, then repair the CRC so the decoder reaches field validation.
     bytes[38] = 6
@@ -706,9 +716,9 @@ func testDateWidgetMatchesHandDerivedBytes() throws {
         content: .date(field: .weekNumber)
     )
     let bytes = try WidgetGridPackage(
-        packageId: 0x0102_0304, generatedAt: 0, validUntil: 0, style: 0, widgets: [widget]
+        packageId: 0x0102_0304, generatedAt: 1000, validUntil: 2000, style: 0, widgets: [widget]
     ).encoded()
-    let expected: [UInt8] = [3, 2, 3, 1, 1, 0x05, 0x05, 5]
+    let expected: [UInt8] = [3, 2, 3, 1, 1, 0x05, 0x03, 5]
     XCTAssertEqual(Array(bytes[31..<(31 + expected.count)]), expected)
 }
 ```
@@ -1391,7 +1401,7 @@ func testDumpDateWireBytes() throws {
             content: .date(field: field)
         )
         let bytes = try WidgetGridPackage(
-            packageId: 0x0102_0304, generatedAt: 0, validUntil: 0, style: 0, widgets: [widget]
+            packageId: 0x0102_0304, generatedAt: 1000, validUntil: 2000, style: 0, widgets: [widget]
         ).encoded()
         lines.append(bytes.map { String(format: "%02x", $0) }.joined(separator: " "))
     }
