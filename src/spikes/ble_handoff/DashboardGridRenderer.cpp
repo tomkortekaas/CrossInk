@@ -3,12 +3,15 @@
 #ifdef CROSSINK_BLE_HANDOFF_READER
 
 #include <GfxRenderer.h>
+#include <HalClock.h>
 
 #include <algorithm>
 #include <array>
-#include <iterator>
+#include <cstdio>
 #include <cstring>
+#include <iterator>
 
+#include "DashboardDateFields.h"
 #include "DashboardGridLayout.h"
 #include "components/icons/dashboardIconTable.h"
 #include "fontIds.h"
@@ -72,6 +75,56 @@ void drawTextCenteredInRect(GfxRenderer& renderer, const int fontId, const Widge
 
 // Vertical breathing room between icon, value and label inside a tile.
 constexpr int TILE_STACK_GAP = 8;
+
+// The dashboard trusts the clock on the same terms as the rest of the firmware:
+// CrossPointSettings.cpp refuses RTC dates before 2025 because the X3's
+// hardware predates that migration. A made-up date on a wall display is worse
+// than an obviously empty one.
+constexpr uint16_t MIN_TRUSTED_YEAR = 2025;
+
+struct TodaysDate {
+  bool valid = false;
+  uint16_t year = 0;
+  uint8_t month = 0;
+  uint8_t day = 0;
+};
+
+TodaysDate readTodaysDate() {
+  TodaysDate today{};
+  uint16_t year = 0;
+  uint8_t month = 0;
+  uint8_t day = 0;
+  uint8_t hour = 0;
+  uint8_t minute = 0;
+  if (!halClock.getDateTime(year, month, day, hour, minute)) return today;
+  if (year < MIN_TRUSTED_YEAR || !isValidDate(year, month, day)) return today;
+  today.valid = true;
+  today.year = year;
+  today.month = month;
+  today.day = day;
+  return today;
+}
+
+// The largest rung at or below `maxRung` whose rendering of `text` still fits
+// `maxWidth`. Falls back to the smallest rung when nothing fits; the caller
+// then truncates, the same fallback drawTextCenteredInRect already applies.
+int fittingFontId(const GfxRenderer& renderer, const char* text, const int maxWidth, const uint8_t maxRung,
+                  const EpdFontFamily::Style style) {
+  for (int rung = static_cast<int>(maxRung); rung > 0; --rung) {
+    if (renderer.getTextWidth(VALUE_FONT_FOR_RUNG[rung], text, style) <= maxWidth) {
+      return VALUE_FONT_FOR_RUNG[rung];
+    }
+  }
+  return VALUE_FONT_FOR_RUNG[0];
+}
+
+// A weekday name that fits, falling back to the two-letter abbreviation rather
+// than to a truncation like "donderda".
+const char* fittingWeekday(const GfxRenderer& renderer, const Weekday weekday, const int fontId, const int maxWidth) {
+  const char* full = weekdayName(weekday);
+  if (renderer.getTextWidth(fontId, full, EpdFontFamily::REGULAR) <= maxWidth) return full;
+  return weekdayAbbreviation(weekday);
+}
 
 // The icon variant for a tile of this height. 24px was tried first and is not
 // usable: Lucide's thin strokes do not survive rasterising that small, and the
@@ -157,6 +210,71 @@ void renderKpiWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widget
   drawTextCenteredInRect(renderer, valueFontId, rect, value, EpdFontFamily::BOLD, y, padding, ink);
   y += valueAscender + TILE_STACK_GAP;
   drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, label, EpdFontFamily::REGULAR, y, padding, ink);
+}
+
+// A tile pinned to one date field: the value as large as it fits, with a small
+// label above it only where the number alone would be a riddle ("33").
+void renderDateFieldWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widget& widget,
+                           const TodaysDate& today, const int padding) {
+  const bool ink = !isInverted(widget);
+  const int innerWidth = rect.width - 2 * padding;
+
+  char value[16] = {};
+  const char* label = "";
+  switch (widget.dateField) {
+    case DateField::Day:
+      std::snprintf(value, sizeof(value), "%u", static_cast<unsigned>(today.day));
+      break;
+    case DateField::Weekday:
+      std::snprintf(value, sizeof(value), "%s",
+                    fittingWeekday(renderer, weekdayFromDate(today.year, today.month, today.day),
+                                   VALUE_FONT_FOR_RUNG[0], innerWidth));
+      break;
+    case DateField::Month:
+      std::snprintf(value, sizeof(value), "%s", monthName(today.month));
+      break;
+    case DateField::Year:
+      std::snprintf(value, sizeof(value), "%u", static_cast<unsigned>(today.year));
+      break;
+    case DateField::WeekNumber:
+      std::snprintf(value, sizeof(value), "%u",
+                    static_cast<unsigned>(isoWeekFromDate(today.year, today.month, today.day).week));
+      label = "week";
+      break;
+    case DateField::Auto:
+      // renderDateAutoWidget draws this one; the caller never routes it here.
+      return;
+  }
+
+  const int labelAscender = renderer.getFontAscenderSize(LABEL_FONT_ID);
+  const int labelHeight = label[0] != '\0' ? labelAscender + TILE_STACK_GAP : 0;
+  const int valueFontId = fittingFontId(renderer, value, innerWidth, widgetSizeRung(widget.style), EpdFontFamily::BOLD);
+  const int valueAscender = renderer.getFontAscenderSize(valueFontId);
+
+  int y = std::max(padding, (rect.height - labelHeight - valueAscender) / 2);
+  if (labelHeight > 0) {
+    drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, label, EpdFontFamily::REGULAR, y, padding, ink);
+    y += labelHeight;
+  }
+  drawTextCenteredInRect(renderer, valueFontId, rect, value, EpdFontFamily::BOLD, y, padding, ink);
+}
+
+// DateField::Auto picks a layout from the tile's size. Until that ladder lands,
+// it draws the day number: the one field every layout in the design shows.
+void renderDateAutoWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widget& widget,
+                          const TodaysDate& today, const int padding) {
+  Widget dayWidget = widget;
+  dayWidget.dateField = DateField::Day;
+  renderDateFieldWidget(renderer, rect, dayWidget, today, padding);
+}
+
+// What a date tile shows when the RTC cannot be trusted. A dash reads as "no
+// data" at arm's length; a wrong date does not.
+void renderDatePlaceholder(GfxRenderer& renderer, const WidgetRect& rect, const bool ink, const int padding) {
+  const int fontId = VALUE_FONT_FOR_RUNG[1];
+  const int ascender = renderer.getFontAscenderSize(fontId);
+  const int y = std::max(padding, (rect.height - ascender) / 2);
+  drawTextCenteredInRect(renderer, fontId, rect, "—", EpdFontFamily::REGULAR, y, padding, ink);
 }
 
 void renderListWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widget& widget, const ListContent& list,
@@ -280,6 +398,9 @@ void renderWidgetGrid(GfxRenderer& renderer, const WidgetGridPackage& package) {
   computeGridLayout(package, canvasWidth, canvasHeight, rects, originX, originY);
   const int padding = tilePadding(package);
   const bool dividers = globalListDividers(package.style);
+  // Read once for the whole grid, not once per tile: two date tiles drawn
+  // either side of midnight would otherwise disagree about what day it is.
+  const TodaysDate today = readTodaysDate();
   for (uint8_t index = 0; index < package.widgetCount; ++index) {
     const Widget& widget = package.widgets[index];
     switch (widget.type) {
@@ -293,6 +414,17 @@ void renderWidgetGrid(GfxRenderer& renderer, const WidgetGridPackage& package) {
           renderListWidget(renderer, rects[index], widget, *content, padding, dividers);
         }
         break;
+      case WidgetType::Date: {
+        fillTile(renderer, rects[index], widgetEmphasis(widget.style));
+        if (!today.valid) {
+          renderDatePlaceholder(renderer, rects[index], !isInverted(widget), padding);
+        } else if (widget.dateField == DateField::Auto) {
+          renderDateAutoWidget(renderer, rects[index], widget, today, padding);
+        } else {
+          renderDateFieldWidget(renderer, rects[index], widget, today, padding);
+        }
+        break;
+      }
     }
   }
   drawTileBorders(renderer, package, rects, originX + canvasWidth, originY + canvasHeight);
