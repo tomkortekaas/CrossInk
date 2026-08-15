@@ -288,6 +288,27 @@ const char* wakeupRouteName(const HalGPIO::WakeupReason reason) {
   }
 }
 
+#ifdef CROSSINK_BLE_HANDOFF_READER
+// Resolves the current local hour/minute for Agenda wake-window gating.
+// Falls back to midday (safely inside the wake window) if the RTC isn't
+// ready, so a clock read failure never accidentally suppresses wake-ups.
+void resolveAgendaWakeLocalTime(uint8_t& hour, uint8_t& minute) {
+  hour = 12;
+  minute = 0;
+  uint16_t year = 0;
+  uint8_t month = 0;
+  uint8_t day = 0;
+  uint8_t rtcHour = 0;
+  uint8_t rtcMinute = 0;
+  if (!halClock.getDateTime(year, month, day, rtcHour, rtcMinute)) return;
+  const int offsetMinutes = (static_cast<int>(SETTINGS.clockUtcOffsetQ) - 48) * 15;
+  const int totalMinutes =
+      ((static_cast<int>(rtcHour) * 60 + rtcMinute + offsetMinutes) % (24 * 60) + 24 * 60) % (24 * 60);
+  hour = static_cast<uint8_t>(totalMinutes / 60);
+  minute = static_cast<uint8_t>(totalMinutes % 60);
+}
+#endif
+
 void logMemoryStats(const char* phase) {
 #if defined(BOARD_HAS_PSRAM)
   LOG_INF("MEM", "%s: heap free=%u total=%u min=%u maxAlloc=%u psram free=%u total=%u min=%u maxAlloc=%u", phase,
@@ -711,7 +732,10 @@ void enterDeepSleepInternal(const bool fromTimeout, const bool preserveLastReade
   uint64_t timerWakeUs = 0;
 #ifdef CROSSINK_BLE_HANDOFF_READER
   const bool agendaSleep = SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::AGENDA_SLEEP;
-  timerWakeUs = dashboard::sleepTimerIntervalUs(agendaSleep);
+  uint8_t agendaWakeHour = 12;
+  uint8_t agendaWakeMinute = 0;
+  if (agendaSleep) resolveAgendaWakeLocalTime(agendaWakeHour, agendaWakeMinute);
+  timerWakeUs = dashboard::sleepTimerIntervalUs(agendaSleep, agendaWakeHour, agendaWakeMinute);
   dashboard::retainReceiverResult(agendaSleep ? dashboard::ReceiverResult::AwaitingWindow
                                               : dashboard::ReceiverResult::None);
 #endif
@@ -863,7 +887,10 @@ void setup() {
   if (returnedFromReceiver && retainedResult == dashboard::ReceiverResult::TimedOut) {
     LOG_INF("BLEPAY", "Receiver window timed out; returning directly to Agenda sleep");
     dashboard::retainReceiverResult(dashboard::ReceiverResult::AwaitingWindow);
-    powerManager.startDeepSleep(gpio, dashboard::sleepTimerIntervalUs(true));
+    uint8_t agendaWakeHour = 12;
+    uint8_t agendaWakeMinute = 0;
+    resolveAgendaWakeLocalTime(agendaWakeHour, agendaWakeMinute);
+    powerManager.startDeepSleep(gpio, dashboard::sleepTimerIntervalUs(true, agendaWakeHour, agendaWakeMinute));
   }
   if (returnedFromReceiver && retainedResult == dashboard::ReceiverResult::Accepted) {
     resumeAgendaAfterAccepted = true;
