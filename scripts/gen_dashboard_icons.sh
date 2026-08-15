@@ -18,7 +18,7 @@ OUT_DIR=src/components/icons
 python3 freeink-sdk/libs/assets/Icons/tools/gen_icons.py \
   --manifest "$MANIFEST" \
   --svgdir freeink-sdk/libs/assets/Icons/lucide/icons \
-  --sizes 24,32 \
+  --sizes 32,48 \
   --out "$OUT_DIR/dashboardIcons.h"
 
 python3 - "$MANIFEST" "$OUT_DIR/dashboardIconTable.h" <<'PY'
@@ -49,7 +49,7 @@ namespace dashboard {
 
 """)
     f.write(f"constexpr size_t DASHBOARD_ICON_COUNT = {len(aliases)};\n\n")
-    for size in (24, 32):
+    for size in (32, 48):
         f.write(f"// {size}px variants, indexed by iconId.\n")
         f.write(f"static const freeink::Icon* const DASHBOARD_ICONS_{size}[] = {{\n")
         f.write("    nullptr,  // iconId 0: no icon\n")

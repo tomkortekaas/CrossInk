@@ -70,31 +70,20 @@ void drawTextCenteredInRect(GfxRenderer& renderer, const int fontId, const Widge
   renderer.drawText(fontId, x, rect.y + y, bounded.c_str(), ink, style);
 }
 
-// Draws the widget's icon centred above its value, and returns how much
-// vertical room it claimed (0 when the widget has no icon). The larger variant
-// is used only on tiles more than one row tall, where 24px would look lost.
-int drawTileIcon(GfxRenderer& renderer, const WidgetRect& rect, const Widget& widget, const int padding) {
-  const uint8_t iconId = widgetIconId(widget.style);
-  if (iconId == 0) return 0;
+// Vertical breathing room between icon, value and label inside a tile.
+constexpr int TILE_STACK_GAP = 8;
 
-  const bool large = widget.rowSpan > 1;
-  const freeink::Icon* icon = large ? DASHBOARD_ICONS_32[iconId] : DASHBOARD_ICONS_24[iconId];
-  if (icon == nullptr) return 0;
-
-  const int x = rect.x + (rect.width - icon->w) / 2;
-  const int y = rect.y + padding;
-  if (isInverted(widget)) {
-    renderer.drawIconInverted(icon->bits, x, y, icon->w, icon->h);
-  } else {
-    renderer.drawIcon(icon->bits, x, y, icon->w, icon->h);
-  }
-  return icon->h;
+// The icon variant for a tile of this height. 24px was tried first and is not
+// usable: Lucide's thin strokes do not survive rasterising that small, and the
+// icons were unidentifiable on the panel.
+const freeink::Icon* iconFor(const uint8_t iconId, const int tileHeight) {
+  if (iconId == 0) return nullptr;
+  return tileHeight >= 200 ? DASHBOARD_ICONS_48[iconId] : DASHBOARD_ICONS_32[iconId];
 }
 
 void renderKpiWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widget& widget, const int padding) {
   const bool ink = !isInverted(widget);
   fillTile(renderer, rect, widgetEmphasis(widget.style));
-  const int iconHeight = drawTileIcon(renderer, rect, widget, padding);
 
   const KpiContent& kpi = widget.kpi;
   char value[MAX_KPI_VALUE_SIZE + 1];
@@ -105,14 +94,38 @@ void renderKpiWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widget
   label[kpi.labelLength] = '\0';
 
   const int valueFontId = VALUE_FONT_FOR_RUNG[widgetSizeRung(widget.style)];
-  // Without an icon the value sits on the tile's centre line, as before. With
-  // one, it drops below the icon so the two never collide on a short tile.
-  const int valueY = iconHeight == 0
-                         ? rect.height / 2 - 4
-                         : std::max(rect.height / 2 - 4, padding + iconHeight + renderer.getFontAscenderSize(valueFontId));
-  const int labelY = rect.height - padding - renderer.getFontAscenderSize(LABEL_FONT_ID);
-  drawTextCenteredInRect(renderer, valueFontId, rect, value, EpdFontFamily::BOLD, valueY, padding, ink);
-  drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, label, EpdFontFamily::REGULAR, labelY, padding, ink);
+  const int valueAscender = renderer.getFontAscenderSize(valueFontId);
+  const int labelAscender = renderer.getFontAscenderSize(LABEL_FONT_ID);
+
+  // Icon, value and label are laid out as one block centred in the tile, rather
+  // than pinned to top/middle/bottom independently. Pinning left the icon
+  // stranded at the top with a hole under it, so the tile read as three loose
+  // parts instead of one thing.
+  const freeink::Icon* icon = iconFor(widgetIconId(widget.style), rect.height);
+  const int textHeight = valueAscender + labelAscender + TILE_STACK_GAP;
+  // A tall rung on a short tile can overflow. Dropping the icon is the least
+  // destructive way to recover: the value is the point of the tile.
+  if (icon != nullptr && icon->h + TILE_STACK_GAP + textHeight > rect.height - 2 * padding) {
+    icon = nullptr;
+  }
+  const int iconHeight = icon != nullptr ? icon->h + TILE_STACK_GAP : 0;
+  const int blockHeight = iconHeight + textHeight;
+
+  int y = std::max(padding, (rect.height - blockHeight) / 2);
+  if (icon != nullptr) {
+    const int iconX = rect.x + (rect.width - icon->w) / 2;
+    if (ink) {
+      renderer.drawIcon(icon->bits, iconX, rect.y + y, icon->w, icon->h);
+    } else {
+      renderer.drawIconInverted(icon->bits, iconX, rect.y + y, icon->w, icon->h);
+    }
+    y += iconHeight;
+  }
+
+  y += valueAscender;
+  drawTextCenteredInRect(renderer, valueFontId, rect, value, EpdFontFamily::BOLD, y, padding, ink);
+  y += TILE_STACK_GAP + labelAscender;
+  drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, label, EpdFontFamily::REGULAR, y, padding, ink);
 }
 
 void renderListWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widget& widget, const ListContent& list,
