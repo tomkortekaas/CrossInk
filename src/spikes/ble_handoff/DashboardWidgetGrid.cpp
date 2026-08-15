@@ -109,12 +109,17 @@ Status validateWidget(const WidgetGridPackage& package, const Widget& widget) {
     }
     return Status::Ok;
   }
+  if (widget.type == WidgetType::Date) {
+    if (static_cast<uint8_t>(widget.dateField) > MAX_DATE_FIELD) return Status::InvalidArgument;
+    return Status::Ok;
+  }
   return Status::InvalidArgument;
 }
 
 size_t widgetContentLength(const WidgetGridPackage& package, const Widget& widget) {
   size_t total = 7;  // type + column + row + columnSpan + rowSpan + style, written for every widget.
   if (widget.type == WidgetType::Kpi) return total + 2 + widget.kpi.labelLength + widget.kpi.valueLength;
+  if (widget.type == WidgetType::Date) return total + 1;
   const ListContent* content = listContentFor(package, widget);
   if (content == nullptr) return total + 2;
   total += 2 + content->headingLength;
@@ -141,6 +146,10 @@ size_t writeWidget(uint8_t* out, const WidgetGridPackage& package, const Widget&
     std::copy_n(widget.kpi.valueBytes.begin(), widget.kpi.valueLength, out + offset);
     offset += widget.kpi.valueLength;
     return offset;
+  }
+  if (widget.type == WidgetType::Date) {
+    out[offset] = static_cast<uint8_t>(widget.dateField);
+    return offset + 1;
   }
   // validateWidget() has already rejected a list widget without content, so a
   // null here would mean encoding an unvalidated package; write an empty list
@@ -175,8 +184,13 @@ size_t writeWidget(uint8_t* out, const WidgetGridPackage& package, const Widget&
 size_t readWidget(const uint8_t* bytes, size_t offset, size_t size, WidgetGridPackage& package, Widget& widget) {
   if (offset + 7 > size) return SIZE_MAX;
   const uint8_t rawType = bytes[offset];
-  if (rawType != static_cast<uint8_t>(WidgetType::Kpi) && rawType != static_cast<uint8_t>(WidgetType::List)) {
-    return SIZE_MAX;
+  switch (rawType) {
+    case static_cast<uint8_t>(WidgetType::Kpi):
+    case static_cast<uint8_t>(WidgetType::List):
+    case static_cast<uint8_t>(WidgetType::Date):
+      break;
+    default:
+      return SIZE_MAX;
   }
   widget.type = static_cast<WidgetType>(rawType);
   widget.column = bytes[offset + 1];
@@ -185,6 +199,14 @@ size_t readWidget(const uint8_t* bytes, size_t offset, size_t size, WidgetGridPa
   widget.rowSpan = bytes[offset + 4];
   widget.style = readU16(bytes + offset + 5);
   offset += 7;
+
+  if (widget.type == WidgetType::Date) {
+    if (offset + 1 > size) return SIZE_MAX;
+    // Only the structural read happens here; validateWidget() rejects a field
+    // value above MAX_DATE_FIELD, the same split every other field uses.
+    widget.dateField = static_cast<DateField>(bytes[offset]);
+    return offset + 1;
+  }
 
   if (widget.type == WidgetType::Kpi) {
     if (offset + 2 > size) return SIZE_MAX;

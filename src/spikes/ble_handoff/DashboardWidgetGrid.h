@@ -105,7 +105,14 @@ constexpr size_t MAX_LIST_ROWS = 6;
 constexpr size_t MAX_LIST_ROW_TIME_SIZE = 16;
 constexpr size_t MAX_LIST_ROW_LABEL_SIZE = 40;
 
-enum class WidgetType : uint8_t { Kpi = 1, List = 2 };
+enum class WidgetType : uint8_t { Kpi = 1, List = 2, Date = 3 };
+
+// Which field of today's date a Date widget shows. `Auto` lets the renderer
+// pick a layout from the tile's size; every other value pins the tile to one
+// field at whatever size fits. The date itself never travels in the package —
+// the X3 reads its own RTC — so this byte is a Date widget's entire payload.
+enum class DateField : uint8_t { Auto = 0, Day = 1, Weekday = 2, Month = 3, Year = 4, WeekNumber = 5 };
+constexpr uint8_t MAX_DATE_FIELD = 5;
 
 struct ListRow {
   std::array<uint8_t, MAX_LIST_ROW_TIME_SIZE> timeBytes{};
@@ -130,8 +137,9 @@ struct ListContent {
 
 // `kpi` is meaningful only when `type == WidgetType::Kpi`; `listIndex` only
 // when `type == WidgetType::List`, where it selects this widget's content from
-// the package's `lists`. Encoding writes only the selected variant's bytes to
-// the wire, so an unused variant costs no package space.
+// the package's `lists`; `dateField` only when `type == WidgetType::Date`.
+// Encoding writes only the selected variant's bytes to the wire, so an unused
+// variant costs no package space.
 //
 // List content lives in the package rather than in the widget because a
 // ListContent is over ten times the size of a KpiContent: inlining both made a
@@ -150,7 +158,16 @@ struct Widget {
   uint8_t row = 0;
   uint8_t columnSpan = 1;
   uint8_t rowSpan = 1;
-  uint8_t listIndex = 0;
+  // One byte whose meaning follows `type`: a List widget's index into the
+  // package's `lists`, or a Date widget's field. A widget is never both, and
+  // sharing the byte is not a micro-optimisation: giving Date its own byte
+  // padded Widget from 42 to 44, and MAX_WIDGETS of those is 1056 bytes -
+  // past the 1 KB budget WidgetSlotsAreCheapEnoughToCoverTheWholeGrid guards
+  // so that widening the grid stays a policy decision rather than a memory one.
+  union {
+    uint8_t listIndex = 0;
+    DateField dateField;
+  };
   // Schema 2 style word: iconId | sizeRung<<7 | emphasis<<9. Kept as the raw
   // little-endian uint16 so decoding never needs to reinterpret bytes; use
   // widgetIconId/widgetSizeRung/widgetEmphasis to read the fields.

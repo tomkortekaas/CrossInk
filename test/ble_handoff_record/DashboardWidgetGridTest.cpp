@@ -73,6 +73,18 @@ dashboard::WidgetGridPackage validPackage() {
   return package;
 }
 
+dashboard::Widget dateWidget(uint8_t column, uint8_t row, dashboard::DateField field, uint8_t columnSpan = 1,
+                             uint8_t rowSpan = 1) {
+  dashboard::Widget widget{};
+  widget.type = dashboard::WidgetType::Date;
+  widget.column = column;
+  widget.row = row;
+  widget.columnSpan = columnSpan;
+  widget.rowSpan = rowSpan;
+  widget.dateField = field;
+  return widget;
+}
+
 }  // namespace
 
 TEST(DashboardWidgetGrid, EncodesSchemaV2WithGlobalStyleAndContentAtOffset31) {
@@ -518,4 +530,88 @@ TEST(DashboardWidgetGrid, RejectsUndefinedGlobalStyleValues) {
   EXPECT_EQ(dashboard::globalBorderLevel(decoded.style), dashboard::MAX_BORDER_LEVEL);
   EXPECT_EQ(dashboard::globalDensity(decoded.style), dashboard::MAX_DENSITY);
   EXPECT_TRUE(dashboard::globalListDividers(decoded.style));
+}
+
+TEST(DashboardWidgetGrid, DateWidgetCostsEightBytes) {
+  dashboard::WidgetGridPackage package{};
+  package.packageId = 7;
+  package.generatedAt = 1000;
+  package.validUntil = 2000;
+  package.widgets[0] = dateWidget(0, 0, dashboard::DateField::Auto, 2, 2);
+  package.widgetCount = 1;
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+  // 31-byte prefix + 8-byte date widget + 4-byte CRC.
+  EXPECT_EQ(length, 43u);
+}
+
+TEST(DashboardWidgetGrid, DateWidgetRoundTripsEveryField) {
+  const dashboard::DateField fields[] = {dashboard::DateField::Auto,  dashboard::DateField::Day,
+                                         dashboard::DateField::Weekday, dashboard::DateField::Month,
+                                         dashboard::DateField::Year,  dashboard::DateField::WeekNumber};
+  for (const dashboard::DateField field : fields) {
+    dashboard::WidgetGridPackage package{};
+    package.packageId = 9;
+    package.generatedAt = 1000;
+    package.validUntil = 2000;
+    package.widgets[0] = dateWidget(1, 2, field);
+    package.widgetCount = 1;
+
+    dashboard::PackageBytes bytes{};
+    size_t length = 0;
+    ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+
+    dashboard::WidgetGridPackage decoded{};
+    ASSERT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::Ok);
+    ASSERT_EQ(decoded.widgetCount, 1);
+    EXPECT_EQ(decoded.widgets[0].type, dashboard::WidgetType::Date);
+    EXPECT_EQ(decoded.widgets[0].dateField, field);
+    EXPECT_EQ(decoded.widgets[0].column, 1);
+    EXPECT_EQ(decoded.widgets[0].row, 2);
+  }
+}
+
+TEST(DashboardWidgetGrid, DateWidgetRefusesUnknownField) {
+  dashboard::WidgetGridPackage package{};
+  package.packageId = 11;
+  package.generatedAt = 1000;
+  package.validUntil = 2000;
+  package.widgets[0] = dateWidget(0, 0, static_cast<dashboard::DateField>(6));
+  package.widgetCount = 1;
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::InvalidArgument);
+}
+
+// The hand-derived vector the Swift side must reproduce byte for byte.
+TEST(DashboardWidgetGrid, DateWidgetMatchesHandDerivedBytes) {
+  dashboard::WidgetGridPackage package{};
+  package.packageId = 0x01020304;
+  package.generatedAt = 1000;
+  package.validUntil = 2000;
+  package.style = 0;
+  package.widgets[0] = dateWidget(2, 3, dashboard::DateField::WeekNumber, 1, 1);
+  package.widgets[0].style = dashboard::makeWidgetStyle(5, 2, 1);
+  package.widgetCount = 1;
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+
+  // The widget's own 8 bytes start right after the 31-byte prefix.
+  const uint8_t expected[] = {
+      3,          // type = Date
+      2,          // column
+      3,          // row
+      1,          // columnSpan
+      1,          // rowSpan
+      0x05, 0x03, // style: iconId 5 | sizeRung 2 << 7 | emphasis 1 << 9 = 0x0305, little endian
+      5,          // field = WeekNumber
+  };
+  for (size_t index = 0; index < sizeof(expected); ++index) {
+    EXPECT_EQ(bytes[31 + index], expected[index]) << "byte " << index;
+  }
 }

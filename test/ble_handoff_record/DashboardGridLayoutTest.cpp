@@ -76,8 +76,10 @@ TEST(DashboardGridLayout, ZeroWidgetsProducesNoLayout) {
 // the panel edge, which is what put a full-width agenda against the frame.
 TEST(DashboardGridLayout, ShiftsTheWholeGridByTheCanvasOrigin) {
   dashboard::WidgetGridPackage package{};
-  package.widgets[0] = dashboard::Widget{dashboard::WidgetType::Kpi, 0, 0, 1, 1};
-  package.widgets[1] = dashboard::Widget{dashboard::WidgetType::Kpi, 3, 5, 1, 1};
+  // The trailing `{}` is the type-dependent variant byte (listIndex/dateField);
+  // naming it explicitly keeps this brace-init warning-free.
+  package.widgets[0] = dashboard::Widget{dashboard::WidgetType::Kpi, 0, 0, 1, 1, {}};
+  package.widgets[1] = dashboard::Widget{dashboard::WidgetType::Kpi, 3, 5, 1, 1, {}};
   package.widgetCount = 2;
 
   std::array<dashboard::WidgetRect, dashboard::MAX_WIDGETS> rects{};
