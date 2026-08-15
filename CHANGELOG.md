@@ -6,6 +6,7 @@
 - Dashboard tiles can carry an icon, chosen from a set of 64, and can be emphasised with a light or dark shade or reversed to white on black — so one tile can stand out the way a colour would on a colour screen.
 - The dashboard wake cycle now records one line per wake to `/crossink-ble-trace.txt` on the SD card, so a device left on battery overnight can be checked afterwards. Previously the only way to observe a wake was a USB cable, which itself changes how the device behaves when idle.
 - A dashboard now chooses how its tiles are framed (no frame, thin rules between neighbours, a light outline, or a solid one), how tightly they are packed, and whether agenda rows are separated by rules.
+- A dashboard tile can show the date, read from the device's own clock. In the phone app you pick what it shows — the day, the weekday, the month, the year or the week number — or let it choose a layout to suit its size, from a bare day number on the smallest tile up to a full calendar sheet with month, weekday and week number. Because the date itself is never sent, the tile turns over at midnight on its own and keeps telling the truth while the phone is away. A device whose clock has never been set shows a dash rather than an invented date.
 
 ### Changed
 

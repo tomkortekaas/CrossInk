@@ -1,7 +1,7 @@
 # Datumwidget — ontwerp
 
 **Datum:** 2026-08-15
-**Status:** goedgekeurd, nog niet geïmplementeerd
+**Status:** geïmplementeerd, nog niet op hardware geverifieerd
 **Repo's:** firmware `/Volumes/2TB/Development/Projects/CrossInk` (branch `feat/ble-handoff`),
 iPhone-app `/Volumes/2TB/Development/Projects/xteink-x3-dashboard-ios` (branch `feat/native-ios-app`).
 **Voorgeschiedenis:** `docs/superpowers/specs/2026-08-15-widget-grid-editor-design.md`.
@@ -139,8 +139,15 @@ tegel klopt en de dag erna is omgeslagen.
 - **Claude:** dit ontwerp, de firmware-renderer en de indelingsladder, de composer-UI en de preview,
   en de review van DeepSeeks diff.
 
-## Aandachtspunt bij aanvang
+## Wat het bouwen aan dit ontwerp veranderde
 
-Beide repo's hebben op dit moment ongecommit werk, waaronder 48 nieuwe regels in
-`DashboardGridRenderer.cpp` — precies het bestand dat dit ontwerp uitbreidt. Dat eerst afronden of
-apart zetten voordat het werk begint.
+Eén ding bleek bij het bouwen niet te kloppen. Het veld kreeg in `struct Widget` niet zijn eigen byte,
+maar deelt er een met `listIndex` in een union. Een eigen byte padde `Widget` van 42 naar 44 bytes, en
+`MAX_WIDGETS` daarvan is 1056 — voorbij het 1 KB-budget dat een bestaande test bewaakt zodat het raster
+later verbreden een beleidskeuze blijft en geen geheugenkwestie. Een widget is nooit tegelijk een lijst
+en een datum, dus de byte delen kost niets. Het wire-formaat is hierdoor niet veranderd: op de draad
+staat de veldbyte nog steeds achter de 7-byte kop, en de tegel is 8 bytes.
+
+De pariteit tussen beide implementaties is aangetoond: alle zes veldwaarden geven aan beide kanten
+dezelfde 43 bytes, inclusief CRC. De C++-bytes staan nu als decodeervector in de Swift-testsuite, zodat
+die controle blijft draaien zonder de wegwerpharness.
