@@ -3,6 +3,7 @@ add_executable(BleHandoffRecordTest
   BleHandoffRecordTest.cpp
   DashboardGridLayoutTest.cpp
   DashboardWidgetGridTest.cpp
+  DashboardDateFieldsTest.cpp
   DashboardTransferTest.cpp
   DashboardSlotSelectionTest.cpp
   ReceiverWindowTest.cpp
@@ -13,6 +14,7 @@ add_executable(BleHandoffRecordTest
   ${REPO_ROOT}/src/spikes/ble_handoff/DashboardTransfer.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/DashboardSlotSelection.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/ReceiverWindow.cpp
+  ${REPO_ROOT}/src/spikes/ble_handoff/DashboardDateFields.cpp
 )
 
 target_include_directories(BleHandoffRecordTest PRIVATE
