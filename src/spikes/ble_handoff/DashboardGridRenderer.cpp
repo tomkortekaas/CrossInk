@@ -164,7 +164,8 @@ void renderListWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widge
 // framed exactly like a KPI tile. Previously only KPI tiles drew a border, from
 // inside their own render function, which is why the grid looked half framed.
 void drawTileBorders(GfxRenderer& renderer, const WidgetGridPackage& package,
-                     const std::array<WidgetRect, MAX_WIDGETS>& rects) {
+                     const std::array<WidgetRect, MAX_WIDGETS>& rects, const int gridRight,
+                     const int gridBottom) {
   const uint8_t level = globalBorderLevel(package.style);
   if (level == BORDER_NONE) return;
 
@@ -175,10 +176,10 @@ void drawTileBorders(GfxRenderer& renderer, const WidgetGridPackage& package,
         // Only the shared edges, not a box: a rule down the right side and
         // along the bottom. Tiles on the grid's far edge get nothing, so the
         // dashboard has no outer frame.
-        if (rect.x + rect.width < renderer.getScreenWidth()) {
+        if (rect.x + rect.width < gridRight) {
           renderer.fillRect(rect.x + rect.width - 1, rect.y, 1, rect.height, true);
         }
-        if (rect.y + rect.height < renderer.getScreenHeight()) {
+        if (rect.y + rect.height < gridBottom) {
           renderer.fillRect(rect.x, rect.y + rect.height - 1, rect.width, 1, true);
         }
         break;
@@ -208,8 +209,23 @@ void drawTileBorders(GfxRenderer& renderer, const WidgetGridPackage& package,
 }  // namespace
 
 void renderWidgetGrid(GfxRenderer& renderer, const WidgetGridPackage& package) {
+  // The panel's outermost pixels sit under the bezel, so the grid is inset by
+  // the viewable margins plus a little breathing room — a full-width agenda
+  // drawn from x=0 reads as if it is falling off the screen. GRID_MARGIN is the
+  // one number to turn if the dashboard wants to sit tighter or looser.
+  int marginTop = 0;
+  int marginRight = 0;
+  int marginBottom = 0;
+  int marginLeft = 0;
+  renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
+  constexpr int GRID_MARGIN = 6;
+  const int originX = marginLeft + GRID_MARGIN;
+  const int originY = marginTop + GRID_MARGIN;
+  const int canvasWidth = renderer.getScreenWidth() - originX - marginRight - GRID_MARGIN;
+  const int canvasHeight = renderer.getScreenHeight() - originY - marginBottom - GRID_MARGIN;
+
   std::array<WidgetRect, MAX_WIDGETS> rects{};
-  computeGridLayout(package, renderer.getScreenWidth(), renderer.getScreenHeight(), rects);
+  computeGridLayout(package, canvasWidth, canvasHeight, rects, originX, originY);
   const int padding = tilePadding(package);
   const bool dividers = globalListDividers(package.style);
   for (uint8_t index = 0; index < package.widgetCount; ++index) {
@@ -227,7 +243,7 @@ void renderWidgetGrid(GfxRenderer& renderer, const WidgetGridPackage& package) {
         break;
     }
   }
-  drawTileBorders(renderer, package, rects);
+  drawTileBorders(renderer, package, rects, originX + canvasWidth, originY + canvasHeight);
 }
 
 }  // namespace dashboard

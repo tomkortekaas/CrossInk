@@ -70,3 +70,28 @@ TEST(DashboardGridLayout, ZeroWidgetsProducesNoLayout) {
   std::array<dashboard::WidgetRect, dashboard::MAX_WIDGETS> rects{};
   EXPECT_NO_THROW(dashboard::computeGridLayout(package, 480, 600, rects));
 }
+
+// The X3's outermost pixels sit under the bezel, so the renderer hands in an
+// inset canvas. The grid must shift with it rather than silently drawing from
+// the panel edge, which is what put a full-width agenda against the frame.
+TEST(DashboardGridLayout, ShiftsTheWholeGridByTheCanvasOrigin) {
+  dashboard::WidgetGridPackage package{};
+  package.widgets[0] = dashboard::Widget{dashboard::WidgetType::Kpi, 0, 0, 1, 1};
+  package.widgets[1] = dashboard::Widget{dashboard::WidgetType::Kpi, 3, 5, 1, 1};
+  package.widgetCount = 2;
+
+  std::array<dashboard::WidgetRect, dashboard::MAX_WIDGETS> rects{};
+  dashboard::computeGridLayout(package, 504, 768, rects, 12, 18);
+
+  const int colWidth = 504 / dashboard::GRID_COLUMNS;
+  const int rowHeight = 768 / dashboard::MAX_ROW_SPAN;
+
+  EXPECT_EQ(rects[0].x, 12);
+  EXPECT_EQ(rects[0].y, 18);
+  EXPECT_EQ(rects[1].x, 12 + 3 * colWidth);
+  EXPECT_EQ(rects[1].y, 18 + 5 * rowHeight);
+  // The far corner stays inside the inset canvas, so nothing lands under the
+  // bezel on the opposite edge either.
+  EXPECT_LE(rects[1].x + rects[1].width, 12 + 504);
+  EXPECT_LE(rects[1].y + rects[1].height, 18 + 768);
+}

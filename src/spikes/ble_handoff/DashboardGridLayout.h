@@ -23,7 +23,12 @@ struct WidgetRect {
 // detect or resolve overlap, it only maps position/span to pixels. Pure
 // integer geometry, no rendering dependency, so it is host-testable
 // independent of GfxRenderer.
+//
+// `originX`/`originY` shift the whole grid, so a caller can hand in a canvas
+// inset from the panel edges. The X3's outermost pixels sit under the bezel
+// (`GfxRenderer::VIEWABLE_MARGIN_*`), and a full-width widget drawn from x=0
+// puts its text hard against that edge.
 void computeGridLayout(const WidgetGridPackage& package, int canvasWidth, int canvasHeight,
-                       std::array<WidgetRect, MAX_WIDGETS>& rectsOut);
+                       std::array<WidgetRect, MAX_WIDGETS>& rectsOut, int originX = 0, int originY = 0);
 
 }  // namespace dashboard
