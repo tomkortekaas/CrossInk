@@ -615,3 +615,70 @@ TEST(DashboardWidgetGrid, DateWidgetMatchesHandDerivedBytes) {
     EXPECT_EQ(bytes[31 + index], expected[index]) << "byte " << index;
   }
 }
+
+// Hand-built bytes rather than encoder output: a date widget arrives over BLE
+// from a phone this firmware does not control, so the decode path has to be
+// checked against bytes it did not produce. A defect that lives only in
+// readWidget - a truncated payload, a field value the encoder would never
+// emit - is invisible to an encode/decode round trip.
+TEST(DashboardWidgetGrid, DecodesDateWidgetFromBytesItDidNotProduce) {
+  constexpr size_t total = 31 + 8 + dashboard::CRC_SIZE;
+
+  auto buildDatePackage = [](uint8_t fieldByte, size_t length) {
+    std::array<uint8_t, dashboard::MAX_PACKAGE_SIZE> bytes{};
+    bytes[0] = 'X';
+    bytes[1] = '3';
+    bytes[2] = 'D';
+    bytes[3] = 'P';
+    bytes[4] = dashboard::SCHEMA_V2;
+    bytes[5] = dashboard::TEMPLATE_WIDGET_GRID;
+    bytes[6] = static_cast<uint8_t>(length);
+    bytes[8] = 9;     // packageId
+    bytes[12] = 100;  // generatedAt
+    bytes[20] = 200;  // validUntil
+    bytes[28] = dashboard::GRID_COLUMNS;
+    bytes[29] = 1;  // widgetCount
+    bytes[30] = 0;  // global style byte
+    uint8_t* widget = bytes.data() + 31;
+    widget[0] = static_cast<uint8_t>(dashboard::WidgetType::Date);
+    widget[1] = 2;  // column
+    widget[2] = 3;  // row
+    widget[3] = 1;  // columnSpan
+    widget[4] = 1;  // rowSpan
+    widget[5] = 0;  // style, low byte
+    widget[6] = 0;  // style, high byte
+    widget[7] = fieldByte;
+    const uint32_t crc = dashboard::crc32(bytes.data(), length - dashboard::CRC_SIZE);
+    for (uint8_t index = 0; index < 4; ++index) {
+      bytes[length - dashboard::CRC_SIZE + index] = static_cast<uint8_t>(crc >> (index * 8U));
+    }
+    return bytes;
+  };
+
+  {
+    const auto bytes = buildDatePackage(static_cast<uint8_t>(dashboard::DateField::WeekNumber), total);
+    dashboard::WidgetGridPackage decoded{};
+    ASSERT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), total, decoded), dashboard::Status::Ok);
+    ASSERT_EQ(decoded.widgetCount, 1);
+    EXPECT_EQ(decoded.widgets[0].type, dashboard::WidgetType::Date);
+    EXPECT_EQ(decoded.widgets[0].dateField, dashboard::DateField::WeekNumber);
+    EXPECT_EQ(decoded.widgets[0].column, 2);
+    EXPECT_EQ(decoded.widgets[0].row, 3);
+  }
+
+  {
+    // A field byte the encoder would never emit. validateWidget must refuse it
+    // by name, not readWidget by running out of bytes.
+    const auto bytes = buildDatePackage(dashboard::MAX_DATE_FIELD + 1, total);
+    dashboard::WidgetGridPackage decoded{};
+    EXPECT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), total, decoded), dashboard::Status::InvalidArgument);
+  }
+
+  {
+    // The declared length stops one byte short of the field, so the widget's
+    // payload is missing entirely.
+    const auto bytes = buildDatePackage(static_cast<uint8_t>(dashboard::DateField::Day), total - 1);
+    dashboard::WidgetGridPackage decoded{};
+    EXPECT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), total - 1, decoded), dashboard::Status::InvalidLength);
+  }
+}

@@ -166,6 +166,8 @@ struct Widget {
   // so that widening the grid stays a policy decision rather than a memory one.
   union {
     uint8_t listIndex = 0;
+    // Initialised through listIndex above: DateField(0) is Auto, so a
+    // value-initialised Widget is a valid date widget as well as a valid list.
     DateField dateField;
   };
   // Schema 2 style word: iconId | sizeRung<<7 | emphasis<<9. Kept as the raw
