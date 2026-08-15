@@ -40,12 +40,19 @@ void writeU32(uint8_t* out, uint32_t value) {
   for (uint8_t index = 0; index < 4; ++index) out[index] = static_cast<uint8_t>(value >> (index * 8U));
 }
 
-void notify(uint8_t code, uint32_t packageId, uint16_t received) {
+// `detail` names the underlying reason behind a failure code, so the phone can
+// explain a rejection without anyone attaching a serial cable to the X3: the
+// dashboard::Status behind 0x12, the PersistStatus behind 0x13, and the
+// TransferStatus behind 0x11. Zero for the success codes, which carry no
+// further reason. Older phone builds read only the first seven bytes and are
+// unaffected by the extra one.
+void notify(uint8_t code, uint32_t packageId, uint16_t received, uint8_t detail = 0) {
   if (statusCharacteristic == nullptr) return;
-  uint8_t value[7] = {code};
+  uint8_t value[8] = {code};
   writeU32(value + 1, packageId);
   value[5] = static_cast<uint8_t>(received);
   value[6] = static_cast<uint8_t>(received >> 8U);
+  value[7] = detail;
   statusCharacteristic->setValue(value, sizeof(value));
   statusCharacteristic->notify();
 }
@@ -163,19 +170,24 @@ void loop() {
                 static_cast<unsigned>(result.status), result.packageId, result.received);
   if (result.status == dashboard::TransferStatus::Ready) return notify(0x01, result.packageId, result.received);
   if (result.status == dashboard::TransferStatus::Progress) return notify(0x02, result.packageId, result.received);
-  if (result.status != dashboard::TransferStatus::Complete) return notify(0x11, result.packageId, result.received);
+  if (result.status != dashboard::TransferStatus::Complete)
+    return notify(0x11, result.packageId, result.received, static_cast<uint8_t>(result.status));
 
   static dashboard::PersistedPackage persisted;
+  dashboard::Status persistDetail = dashboard::Status::Ok;
   const dashboard::PersistStatus persistedStatus =
-      dashboard::persistIfNewer(assembler.bytes().data(), assembler.length(), persisted);
+      dashboard::persistIfNewer(assembler.bytes().data(), assembler.length(), persisted, &persistDetail);
+  Serial.printf("BLE-RX persistIfNewer status=%u detail=%u\n", static_cast<unsigned>(persistedStatus),
+                static_cast<unsigned>(persistDetail));
   if (persistedStatus == dashboard::PersistStatus::Stale) {
     return notify(0x10,
                   dashboard::receiverStatusPackageId(true, result.packageId, persisted.header.packageId),
                   result.received);
   }
   if (persistedStatus == dashboard::PersistStatus::InvalidPackage)
-    return notify(0x12, result.packageId, result.received);
-  if (persistedStatus != dashboard::PersistStatus::Ok) return notify(0x13, result.packageId, result.received);
+    return notify(0x12, result.packageId, result.received, static_cast<uint8_t>(persistDetail));
+  if (persistedStatus != dashboard::PersistStatus::Ok)
+    return notify(0x13, result.packageId, result.received, static_cast<uint8_t>(persistedStatus));
   packageAccepted = true;
   acceptedPackageId = result.packageId;
   acceptedByteCount = result.received;

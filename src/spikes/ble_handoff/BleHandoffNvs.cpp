@@ -1,5 +1,6 @@
 #include "BleHandoffNvs.h"
 
+#include <Logging.h>
 #include <nvs.h>
 
 #include <algorithm>
@@ -80,16 +81,26 @@ PersistStatus readLastKnownGood(PersistedPackage& output) {
   return status;
 }
 
-PersistStatus persistIfNewer(const uint8_t* bytes, const size_t length, PersistedPackage& output) {
+PersistStatus persistIfNewer(const uint8_t* bytes, const size_t length, PersistedPackage& output,
+                             Status* detailOut) {
   PackageHeader candidate{};
-  if (peekPackageHeader(bytes, length, candidate) != Status::Ok) return PersistStatus::InvalidPackage;
+  const Status peekStatus = peekPackageHeader(bytes, length, candidate);
+  if (peekStatus != Status::Ok) {
+    if (detailOut != nullptr) *detailOut = peekStatus;
+    LOG_ERR("BLEPAY", "peekPackageHeader failed status=%u length=%u", static_cast<unsigned>(peekStatus), length);
+    return PersistStatus::InvalidPackage;
+  }
 
   nvs_handle_t handle = 0;
-  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) return PersistStatus::OpenFailed;
+  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) {
+    LOG_ERR("BLEPAY", "persistIfNewer: nvs_open failed");
+    return PersistStatus::OpenFailed;
+  }
   PersistedPackage current{};
   SlotDecision decision{};
   const PersistStatus currentStatus = load(handle, current, &decision);
   if (currentStatus != PersistStatus::Ok && currentStatus != PersistStatus::NotFound) {
+    LOG_ERR("BLEPAY", "persistIfNewer: load current failed status=%u", static_cast<unsigned>(currentStatus));
     nvs_close(handle);
     return currentStatus;
   }
@@ -98,6 +109,8 @@ PersistStatus persistIfNewer(const uint8_t* bytes, const size_t length, Persiste
                       currentStatus == PersistStatus::Ok && current.slot == 1 ? SlotState{true, current.header.packageId}
                                                                              : SlotState{},
                       candidate.packageId)) {
+    LOG_ERR("BLEPAY", "persistIfNewer: stale candidate=%u currentSlot=%d currentId=%u", candidate.packageId,
+            currentStatus == PersistStatus::Ok ? current.slot : -1, current.header.packageId);
     output = current;
     nvs_close(handle);
     return PersistStatus::Stale;
@@ -111,24 +124,34 @@ PersistStatus persistIfNewer(const uint8_t* bytes, const size_t length, Persiste
   std::copy_n(bytes, length, record.bytes.begin());
   record.crc = crc32(reinterpret_cast<const uint8_t*>(&record), sizeof(SlotRecord) - sizeof(uint32_t));
   if (nvs_set_blob(handle, SLOT_KEYS[decision.writeTarget], &record, sizeof(record)) != ESP_OK) {
+    LOG_ERR("BLEPAY", "persistIfNewer: nvs_set_blob failed target=%d", decision.writeTarget);
     nvs_close(handle);
     return PersistStatus::WriteFailed;
   }
   if (nvs_commit(handle) != ESP_OK) {
+    LOG_ERR("BLEPAY", "persistIfNewer: nvs_commit (blob) failed");
     nvs_close(handle);
     return PersistStatus::CommitFailed;
   }
   SlotState verified{};
-  if (!readSlot(handle, decision.writeTarget, verified) || verified.packageId != candidate.packageId) {
+  const bool readOk = readSlot(handle, decision.writeTarget, verified);
+  if (!readOk || verified.packageId != candidate.packageId) {
+    LOG_ERR("BLEPAY", "persistIfNewer: verify failed readOk=%d verifiedId=%u candidateId=%u", readOk,
+            verified.packageId, candidate.packageId);
     nvs_close(handle);
     return PersistStatus::VerifyFailed;
   }
   if (nvs_set_u8(handle, SELECTED_KEY, static_cast<uint8_t>(decision.writeTarget)) != ESP_OK || nvs_commit(handle) != ESP_OK) {
+    LOG_ERR("BLEPAY", "persistIfNewer: nvs_set_u8/commit (selected) failed");
     nvs_close(handle);
     return PersistStatus::CommitFailed;
   }
   const PersistStatus finalStatus = load(handle, output);
   nvs_close(handle);
+  if (!(finalStatus == PersistStatus::Ok && output.header.packageId == candidate.packageId)) {
+    LOG_ERR("BLEPAY", "persistIfNewer: final verify mismatch finalStatus=%u outputId=%u candidateId=%u",
+            static_cast<unsigned>(finalStatus), output.header.packageId, candidate.packageId);
+  }
   return finalStatus == PersistStatus::Ok && output.header.packageId == candidate.packageId ? PersistStatus::Ok
                                                                                              : PersistStatus::VerifyFailed;
 }
