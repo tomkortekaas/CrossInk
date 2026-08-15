@@ -111,6 +111,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "spikes/ble_handoff/AgendaWakePolicy.h"
 #include "spikes/ble_handoff/AgendaWakeRetention.h"
 #include "spikes/ble_handoff/BleHandoffReaderProbe.h"
+#include "spikes/ble_handoff/BleHandoffTrace.h"
 #include "spikes/ble_handoff/DashboardBootSwitch.h"
 #endif
 
@@ -953,6 +954,12 @@ void setup() {
     return;
   }
   logBootHeap("storage ready");
+
+#ifdef CROSSINK_BLE_HANDOFF_READER
+  // First point in boot where the card is mounted. The wake fields were sampled
+  // far earlier, so they are carried down to here rather than re-read.
+  dashboard::appendBootTrace(static_cast<uint8_t>(wakeupReason), retainedResult, true);
+#endif
 
   HalSystem::checkPanic();
 
