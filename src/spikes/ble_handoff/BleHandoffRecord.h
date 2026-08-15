@@ -6,7 +6,14 @@
 
 namespace dashboard {
 
-constexpr size_t MAX_PACKAGE_SIZE = 256;
+// Sized so a dashboard can carry a screenful of tiles *and* a full agenda
+// rather than forcing a choice between them: three KPI tiles plus six
+// maximum-length agenda rows is about 500 bytes. Everything that scales with
+// this is static or caller-owned - see BleReceiverMain's frame buffers and
+// BleHandoffNvs's SlotRecord workspace - so raising it costs flash-backed RAM,
+// not stack. A package still has to cross BLE inside the receiver's 20-second
+// window, which at this size takes well under a second.
+constexpr size_t MAX_PACKAGE_SIZE = 1024;
 constexpr size_t FIXED_HEADER_SIZE = 32;
 constexpr size_t CRC_SIZE = 4;
 // TEMPLATE_AGENDA's own minimum: its 32-byte fixed header (which includes the

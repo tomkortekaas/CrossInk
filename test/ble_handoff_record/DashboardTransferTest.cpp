@@ -65,7 +65,7 @@ TEST(DashboardTransfer, NewStartResetsAndRejectsIdMismatchOrOverflow) {
   EXPECT_EQ(assembler.accept(start.data(), start.size()).packageId, 8U);
   const std::array<uint8_t, 8> wrongId = {2, 7, 0, 0, 0, 0, 0, 0};
   EXPECT_EQ(assembler.accept(wrongId.data(), wrongId.size()).status, dashboard::TransferStatus::InvalidFrame);
-  const auto oversized = startFrame(9, 257, 0);
+  const auto oversized = startFrame(9, static_cast<uint16_t>(dashboard::MAX_PACKAGE_SIZE + 1), 0);
   EXPECT_EQ(assembler.accept(oversized.data(), oversized.size()).status, dashboard::TransferStatus::InvalidFrame);
 }
 

@@ -6,7 +6,9 @@
 
 ### Changed
 
+- A dashboard can now fill all 24 cells of its grid instead of eight, and carry a full agenda alongside its tiles rather than having to choose between them.
 - Dashboard widgets take about a tenth of the memory they used to, leaving room for richer dashboards on the same hardware. A package may now carry at most three list widgets.
+- Devices updating to this version show their dashboard again after the next update from the phone; the stored copy is not carried across the larger package format.
 
 ### Fixed
 

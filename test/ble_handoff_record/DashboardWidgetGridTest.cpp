@@ -283,8 +283,12 @@ TEST(DashboardWidgetGrid, PeekAcceptsWidgetGridPackageWithoutWidgets) {
 // grew linearly with MAX_WIDGETS, which is what blocked raising it from 8
 // toward the grid's 24 cells. The wire format is unaffected either way -
 // encoding never wrote the unused variant.
-TEST(DashboardWidgetGrid, PackageStaysSmallEnoughToBeAStackLocal) {
-  EXPECT_LE(sizeof(dashboard::WidgetGridPackage), 1600u);
+TEST(DashboardWidgetGrid, WidgetSlotsAreCheapEnoughToCoverTheWholeGrid) {
+  EXPECT_LE(sizeof(dashboard::Widget), 48u);
+  // The whole grid's worth of slots must stay a fraction of the package, so
+  // that widening the grid later stays a policy decision rather than a memory
+  // one.
+  EXPECT_LE(sizeof(dashboard::Widget) * dashboard::MAX_WIDGETS, 1024u);
 }
 
 // Hand-built bytes rather than encodeWidgetGridPackage output: the encoder
@@ -326,4 +330,67 @@ TEST(DashboardWidgetGrid, DecodeRejectsMoreListsThanTheDecodedFormCanHold) {
 
   dashboard::WidgetGridPackage decoded{};
   EXPECT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), total, decoded), dashboard::Status::InvalidLength);
+}
+
+// A dashboard of three KPI tiles plus a full agenda is about 500 bytes, which
+// the original 256-byte budget could not hold: it forced a choice between
+// tiles and agenda rows rather than fitting both.
+TEST(DashboardWidgetGrid, CarriesAFullDashboardOfTilesAndAgendaRows) {
+  dashboard::WidgetGridPackage package{};
+  package.packageId = 9;
+  package.generatedAt = 1000;
+  package.validUntil = 2000;
+  package.widgets[0] = kpiWidget(/*column=*/0, /*row=*/0, "Stappen", "8.432");
+  package.widgets[1] = kpiWidget(/*column=*/1, /*row=*/0, "Batterij", "87%");
+  package.widgets[2] = kpiWidget(/*column=*/2, /*row=*/0, "Woonkamer", "21.4C");
+  package.widgets[3] = listWidget(package, /*column=*/0, /*row=*/1, "AGENDA", /*columnSpan=*/4, /*rowSpan=*/5);
+  package.widgetCount = 4;
+
+  dashboard::ListContent& list = package.lists[package.widgets[3].listIndex];
+  for (auto& row : list.rows) {
+    setField(row.timeBytes, row.timeLength, "09:00");
+    row.labelLength = dashboard::MAX_LIST_ROW_LABEL_SIZE;
+    std::fill_n(row.labelBytes.begin(), row.labelLength, 'a');
+  }
+  list.rowCount = dashboard::MAX_LIST_ROWS;
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+  EXPECT_GT(length, 256U);
+
+  dashboard::WidgetGridPackage decoded{};
+  ASSERT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::Ok);
+  EXPECT_EQ(decoded.widgetCount, 4U);
+  const dashboard::ListContent* decodedList = dashboard::listContentFor(decoded, decoded.widgets[3]);
+  ASSERT_NE(decodedList, nullptr);
+  EXPECT_EQ(decodedList->rowCount, dashboard::MAX_LIST_ROWS);
+}
+
+// The grid is four columns by six rows, but only eight widgets used to fit in
+// a package, so two thirds of the cells the composer offered could never be
+// filled. A widget costs 40 bytes of decoded package since list content moved
+// out, so covering every cell is affordable.
+TEST(DashboardWidgetGrid, FillsEveryCellOfTheGrid) {
+  dashboard::WidgetGridPackage package{};
+  package.packageId = 9;
+  package.generatedAt = 1000;
+  package.validUntil = 2000;
+  ASSERT_GE(dashboard::MAX_WIDGETS, static_cast<size_t>(dashboard::GRID_COLUMNS) * dashboard::MAX_ROW_SPAN);
+
+  uint8_t index = 0;
+  for (uint8_t row = 0; row < dashboard::MAX_ROW_SPAN; ++row) {
+    for (uint8_t column = 0; column < dashboard::GRID_COLUMNS; ++column) {
+      package.widgets[index++] = kpiWidget(column, row, "Sensor", "21.4C");
+    }
+  }
+  package.widgetCount = index;
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+
+  dashboard::WidgetGridPackage decoded{};
+  ASSERT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::Ok);
+  EXPECT_EQ(decoded.widgetCount, 24U);
 }

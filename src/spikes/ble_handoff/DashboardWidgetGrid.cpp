@@ -286,7 +286,13 @@ Status decodeWidgetGridPackage(const uint8_t* bytes, const size_t size, WidgetGr
   if (crc32(bytes, size - CRC_SIZE) != readU32(bytes + size - CRC_SIZE)) return Status::InvalidCrc;
   if (bytes[GRID_COLUMNS_OFFSET] != GRID_COLUMNS) return Status::UnsupportedTemplate;
 
-  WidgetGridPackage candidate{};
+  // Static rather than a stack local: a decoded package covering the whole
+  // grid is a couple of kilobytes, more than this task's stack can spare.
+  // Decoding stays two-phase - a rejected package must not overwrite the
+  // caller's - and the dashboard path is single-threaded, so one workspace is
+  // enough.
+  static WidgetGridPackage candidate;
+  candidate = {};
   candidate.schema = bytes[4];
   candidate.templateId = bytes[5];
   candidate.packageId = readU32(bytes + PACKAGE_ID_OFFSET);

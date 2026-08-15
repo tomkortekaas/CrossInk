@@ -17,8 +17,11 @@ namespace dashboard {
 // template-agnostic reader can dispatch on byte 5.
 constexpr uint8_t TEMPLATE_WIDGET_GRID = 3;
 constexpr uint8_t GRID_COLUMNS = 4;
-constexpr size_t MAX_WIDGETS = 8;
 constexpr uint8_t MAX_ROW_SPAN = 6;
+// One per grid cell, so any arrangement the composer can draw also fits in a
+// package. Affordable only because list content lives in the package rather
+// than in every Widget: a widget slot costs 40 bytes here, not 421.
+constexpr size_t MAX_WIDGETS = static_cast<size_t>(GRID_COLUMNS) * MAX_ROW_SPAN;
 // How many of those widgets may be lists. A ListContent is over ten times the
 // size of a KpiContent, so storing one per widget would dominate the decoded
 // package (see WidgetGridPackage below). Three full-width lists stacked in a

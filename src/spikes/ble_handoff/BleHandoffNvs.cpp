@@ -14,7 +14,11 @@ constexpr char NVS_NAMESPACE[] = "x3dashboard";
 constexpr char SLOT_KEYS[][6] = {"slot0", "slot1"};
 constexpr char SELECTED_KEY[] = "selected";
 constexpr uint32_t SLOT_MAGIC = 0x44503358U;
-constexpr uint8_t STORAGE_VERSION = 1;
+// Bumped when MAX_PACKAGE_SIZE grew: a SlotRecord written by the previous
+// version is a different size and would fail readSlot's length check anyway,
+// but rejecting it by version says why. A device flashed across this boundary
+// forgets its stored dashboard and renders the next package it receives.
+constexpr uint8_t STORAGE_VERSION = 2;
 
 struct SlotRecord {
   uint32_t magic = SLOT_MAGIC;
@@ -96,7 +100,11 @@ PersistStatus persistIfNewer(const uint8_t* bytes, const size_t length, Persiste
     LOG_ERR("BLEPAY", "persistIfNewer: nvs_open failed");
     return PersistStatus::OpenFailed;
   }
-  PersistedPackage current{};
+  // Static for the same reason as the slot workspace above: a PersistedPackage
+  // embeds a full PackageBytes, which is too large to place on the stack.
+  // persistIfNewer is only ever called from the receiver's loop().
+  static PersistedPackage current;
+  current = {};
   SlotDecision decision{};
   const PersistStatus currentStatus = load(handle, current, &decision);
   if (currentStatus != PersistStatus::Ok && currentStatus != PersistStatus::NotFound) {

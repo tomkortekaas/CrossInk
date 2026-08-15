@@ -44,7 +44,10 @@ bool renderAgendaTemplate(GfxRenderer& renderer) {
 }
 
 bool renderWidgetGridTemplate(GfxRenderer& renderer) {
-  dashboard::WidgetGridPackage package{};
+  // Static for the same reason as `persisted` above: a decoded package
+  // covering the whole grid is too large to place on the render task's stack.
+  static dashboard::WidgetGridPackage package;
+  package = {};
   if (dashboard::decodeWidgetGridPackage(persisted.bytes.data(), persisted.length, package) !=
       dashboard::Status::Ok) {
     return false;

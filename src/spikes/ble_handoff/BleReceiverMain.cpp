@@ -151,7 +151,10 @@ void loop() {
     return;
   }
 
-  std::array<uint8_t, MAX_FRAME_SIZE> frame{};
+  // Static, not a local: MAX_FRAME_SIZE tracks MAX_PACKAGE_SIZE, and a
+  // kilobyte-plus array would be a large slice of this task's stack. Only
+  // loop() touches it, and loop() is not reentrant.
+  static std::array<uint8_t, MAX_FRAME_SIZE> frame{};
   size_t length = 0;
   portENTER_CRITICAL(&pendingMux);
   if (framePending) {
