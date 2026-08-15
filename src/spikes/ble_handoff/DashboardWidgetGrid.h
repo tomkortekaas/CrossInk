@@ -28,6 +28,75 @@ constexpr size_t MAX_WIDGETS = static_cast<size_t>(GRID_COLUMNS) * MAX_ROW_SPAN;
 // 4x6 grid is already more than the wire budget can fill with real rows.
 constexpr size_t MAX_LIST_WIDGETS = 3;
 
+// Global style byte at offset 30, introduced with schema 2. Bits 0-2 select
+// the border treatment, bits 3-4 the tile padding density, bit 5 toggles list
+// row dividers, and bits 6-7 are reserved and must be zero.
+constexpr uint8_t MAX_ICON_ID = 64;
+constexpr uint8_t GLOBAL_STYLE_BORDER_LEVEL_SHIFT = 0;
+constexpr uint8_t GLOBAL_STYLE_DENSITY_SHIFT = 3;
+constexpr uint8_t GLOBAL_STYLE_LIST_DIVIDERS_SHIFT = 5;
+constexpr uint8_t GLOBAL_STYLE_RESERVED_MASK = 0xC0;
+// Both fields are wider than the treatments they name: three bits for four
+// border levels, two for three densities. The renderer turns each into a table
+// index, so validation refuses the unnamed values rather than letting them
+// reach it.
+constexpr uint8_t MAX_BORDER_LEVEL = 3;
+constexpr uint8_t MAX_DENSITY = 2;
+
+// Border treatments, indexing the renderer's border pass.
+constexpr uint8_t BORDER_NONE = 0;
+constexpr uint8_t BORDER_HAIRLINE = 1;  // thin rule between neighbouring tiles
+constexpr uint8_t BORDER_LIGHT = 2;     // dithered outline per tile
+constexpr uint8_t BORDER_SOLID = 3;     // full black outline per tile
+
+// Per-widget emphasis. Unlike borderLevel and density these use their bits
+// exactly, so every value is named and no range check is needed.
+constexpr uint8_t EMPHASIS_NONE = 0;
+constexpr uint8_t EMPHASIS_LIGHT = 1;     // 25% dither behind the content
+constexpr uint8_t EMPHASIS_DARK = 2;      // 50% dither behind the content
+constexpr uint8_t EMPHASIS_INVERTED = 3;  // solid black, content drawn white
+
+constexpr uint8_t globalBorderLevel(const uint8_t style) {
+  return static_cast<uint8_t>((style >> GLOBAL_STYLE_BORDER_LEVEL_SHIFT) & 0x7U);
+}
+
+constexpr uint8_t globalDensity(const uint8_t style) {
+  return static_cast<uint8_t>((style >> GLOBAL_STYLE_DENSITY_SHIFT) & 0x3U);
+}
+
+constexpr bool globalListDividers(const uint8_t style) {
+  return ((style >> GLOBAL_STYLE_LIST_DIVIDERS_SHIFT) & 0x1U) != 0;
+}
+
+constexpr uint8_t makeGlobalStyle(const uint8_t borderLevel, const uint8_t density, const bool listDividers) {
+  return static_cast<uint8_t>((borderLevel << GLOBAL_STYLE_BORDER_LEVEL_SHIFT) |
+                              (density << GLOBAL_STYLE_DENSITY_SHIFT) |
+                              (static_cast<uint8_t>(listDividers) << GLOBAL_STYLE_LIST_DIVIDERS_SHIFT));
+}
+
+// Per-widget little-endian uint16 style word. Bits 0-6 are the icon id, bits
+// 7-8 the font size rung, bits 9-10 the emphasis, and bits 11-15 are reserved
+// and must be zero.
+constexpr uint16_t WIDGET_STYLE_ICON_ID_MASK = 0x007F;
+constexpr uint8_t WIDGET_STYLE_SIZE_RUNG_SHIFT = 7;
+constexpr uint8_t WIDGET_STYLE_EMPHASIS_SHIFT = 9;
+constexpr uint16_t WIDGET_STYLE_RESERVED_MASK = 0xF800;
+
+constexpr uint8_t widgetIconId(const uint16_t style) { return static_cast<uint8_t>(style & WIDGET_STYLE_ICON_ID_MASK); }
+
+constexpr uint8_t widgetSizeRung(const uint16_t style) {
+  return static_cast<uint8_t>((style >> WIDGET_STYLE_SIZE_RUNG_SHIFT) & 0x3U);
+}
+
+constexpr uint8_t widgetEmphasis(const uint16_t style) {
+  return static_cast<uint8_t>((style >> WIDGET_STYLE_EMPHASIS_SHIFT) & 0x3U);
+}
+
+constexpr uint16_t makeWidgetStyle(const uint8_t iconId, const uint8_t sizeRung, const uint8_t emphasis) {
+  return static_cast<uint16_t>(iconId) | (static_cast<uint16_t>(sizeRung) << WIDGET_STYLE_SIZE_RUNG_SHIFT) |
+         (static_cast<uint16_t>(emphasis) << WIDGET_STYLE_EMPHASIS_SHIFT);
+}
+
 constexpr size_t MAX_KPI_LABEL_SIZE = 16;
 constexpr size_t MAX_KPI_VALUE_SIZE = 16;
 
@@ -82,15 +151,21 @@ struct Widget {
   uint8_t columnSpan = 1;
   uint8_t rowSpan = 1;
   uint8_t listIndex = 0;
+  // Schema 2 style word: iconId | sizeRung<<7 | emphasis<<9. Kept as the raw
+  // little-endian uint16 so decoding never needs to reinterpret bytes; use
+  // widgetIconId/widgetSizeRung/widgetEmphasis to read the fields.
+  uint16_t style = 0;
   KpiContent kpi{};
 };
 
 struct WidgetGridPackage {
-  uint8_t schema = SCHEMA_V1;
+  uint8_t schema = SCHEMA_V2;
   uint8_t templateId = TEMPLATE_WIDGET_GRID;
   uint32_t packageId = 0;
   uint64_t generatedAt = 0;
   uint64_t validUntil = 0;
+  // Schema 2 global style byte: borderLevel | density<<3 | listDividers<<5.
+  uint8_t style = 0;
   std::array<Widget, MAX_WIDGETS> widgets{};
   // Content for the list-typed widgets, in the order they appear in `widgets`.
   // `listCount` is how many are in use, never more than MAX_LIST_WIDGETS.

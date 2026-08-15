@@ -120,7 +120,8 @@ Status encodePackage(const Package& package, PackageBytes& output, size_t& outpu
   const Status fieldStatus = validateFields(package);
   if (fieldStatus != Status::Ok) return fieldStatus;
 
-  const size_t textLength = package.title.length + package.timeLine.length + package.footer.length + package.staleLine.length;
+  const size_t textLength =
+      package.title.length + package.timeLine.length + package.footer.length + package.staleLine.length;
   const size_t totalLength = FIXED_HEADER_SIZE + textLength + CRC_SIZE;
   if (totalLength > MAX_PACKAGE_SIZE) return Status::InvalidLength;
 
@@ -173,8 +174,8 @@ Status decodePackage(const uint8_t* bytes, const size_t size, Package& output) {
   const Status lengthStatus = validateFields(candidate);
   if (lengthStatus == Status::InvalidLength) return lengthStatus;
 
-  const size_t textLength = candidate.title.length + candidate.timeLine.length + candidate.footer.length +
-                            candidate.staleLine.length;
+  const size_t textLength =
+      candidate.title.length + candidate.timeLine.length + candidate.footer.length + candidate.staleLine.length;
   if (FIXED_HEADER_SIZE + textLength + CRC_SIZE != size) return Status::InvalidLength;
   size_t offset = FIXED_HEADER_SIZE;
   for (TextField* field : {&candidate.title, &candidate.timeLine, &candidate.footer, &candidate.staleLine}) {
@@ -196,7 +197,7 @@ Status peekPackageHeader(const uint8_t* bytes, const size_t size, PackageHeader&
   if (size < MIN_ENVELOPE_SIZE || size > MAX_PACKAGE_SIZE) return Status::InvalidSize;
   if (bytes[0] != 'X' || bytes[1] != '3' || bytes[2] != 'D' || bytes[3] != 'P') return Status::InvalidMagic;
   if (readU16(bytes + LENGTH_OFFSET) != size) return Status::InvalidSize;
-  if (bytes[4] != SCHEMA_V1) return Status::UnsupportedSchema;
+  if (bytes[4] != SCHEMA_V1 && bytes[4] != SCHEMA_V2) return Status::UnsupportedSchema;
   if (crc32(bytes, size - CRC_SIZE) != readU32(bytes + size - CRC_SIZE)) return Status::InvalidCrc;
 
   PackageHeader candidate{};

@@ -1,0 +1,97 @@
+# Dashboard widget-grid icon set.
+#
+# ONE MANIFEST, TWO CONSUMERS. This file is the single source of truth for the
+# dashboard icon set: it generates both the firmware header
+# (src/components/icons/dashboardIcons.h, via
+# freeink-sdk/libs/assets/Icons/tools/gen_icons.py) and the iPhone composer's
+# picker. Keeping one list is what stops the two sides from drifting apart —
+# see docs/superpowers/specs/2026-08-15-widget-grid-editor-design.md.
+#
+# LINE ORDER IS THE WIRE FORMAT. Line N (counting non-comment lines from 1) is
+# iconId N in the per-widget style word; iconId 0 means "no icon". APPEND ONLY.
+# Reordering or removing a line silently repoints every dashboard already stored
+# on a device, because the X3 renders from its last-known-good package.
+#
+# Cap is 64: the style word gives the icon id 7 bits, and 64 entries at 24 and
+# 32 px cost roughly 13 KB of flash.
+#
+# Format: alias = lucide-name. The alias is the C identifier; the lucide name
+# picks the SVG from freeink-sdk/libs/assets/Icons/lucide/icons.
+
+# --- weer (1-13) ---
+sun              = sun
+cloud            = cloud
+cloud_rain       = cloud-rain
+cloud_snow       = cloud-snow
+cloud_lightning  = cloud-lightning
+wind             = wind
+droplets         = droplets
+umbrella         = umbrella
+thermometer      = thermometer
+snowflake        = snowflake
+sunrise          = sunrise
+sunset           = sunset
+moon             = moon
+
+# --- energie en huis (14-24) ---
+flame            = flame
+zap              = zap
+plug             = plug
+battery          = battery
+battery_charging = battery-charging
+lightbulb        = lightbulb
+house            = house
+gauge            = gauge
+power            = power
+leaf             = leaf
+fan              = fan
+
+# --- vervoer (25-32) ---
+car              = car
+fuel             = fuel
+traffic_cone     = traffic-cone
+map_pin          = map-pin
+navigation       = navigation
+bike             = bike
+train            = train-front
+plane            = plane
+
+# --- geld en markten (33-41) ---
+trending_up      = trending-up
+trending_down    = trending-down
+euro             = euro
+banknote         = banknote
+chart_line       = chart-line
+chart_candles    = chart-candlestick
+wallet           = wallet
+piggy_bank       = piggy-bank
+bitcoin          = bitcoin
+
+# --- tijd en agenda (42-46) ---
+calendar         = calendar
+clock            = clock
+alarm_clock      = alarm-clock
+timer            = timer
+bell             = bell
+
+# --- lichaam en activiteit (47-52) ---
+footprints       = footprints
+heart            = heart
+heart_pulse      = heart-pulse
+activity         = activity
+dumbbell         = dumbbell
+bed              = bed
+
+# --- status en algemeen (53-64) ---
+check            = check
+cross            = x
+alert            = circle-alert
+info             = info
+wifi             = wifi
+bluetooth        = bluetooth
+signal           = signal
+refresh          = refresh-cw
+package          = package
+trash            = trash-2
+users            = users
+utensils         = utensils

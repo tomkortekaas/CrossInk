@@ -31,6 +31,10 @@ constexpr size_t MAX_TIME_LINE_SIZE = 48;
 constexpr size_t MAX_FOOTER_SIZE = 40;
 constexpr size_t MAX_STALE_LINE_SIZE = 48;
 constexpr uint8_t SCHEMA_V1 = 1;
+// TEMPLATE_WIDGET_GRID packages moved to schema 2 to add the global style byte
+// and the per-widget style word without disturbing agenda packages, which stay
+// on schema 1.
+constexpr uint8_t SCHEMA_V2 = 2;
 constexpr uint8_t TEMPLATE_AGENDA = 1;
 
 enum class Status : uint8_t {

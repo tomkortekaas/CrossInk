@@ -16,8 +16,15 @@ void setField(std::array<uint8_t, N>& bytes, uint8_t& length, const char* value)
   std::copy_n(reinterpret_cast<const uint8_t*>(value), length, bytes.begin());
 }
 
-dashboard::Widget kpiWidget(uint8_t column, uint8_t row, const char* label, const char* value,
-                            uint8_t columnSpan = 1, uint8_t rowSpan = 1) {
+void rewriteCrc(dashboard::PackageBytes& bytes, const size_t length) {
+  const uint32_t crc = dashboard::crc32(bytes.data(), length - dashboard::CRC_SIZE);
+  for (size_t index = 0; index < dashboard::CRC_SIZE; ++index) {
+    bytes[length - dashboard::CRC_SIZE + index] = static_cast<uint8_t>(crc >> (index * 8U));
+  }
+}
+
+dashboard::Widget kpiWidget(uint8_t column, uint8_t row, const char* label, const char* value, uint8_t columnSpan = 1,
+                            uint8_t rowSpan = 1) {
   dashboard::Widget widget{};
   widget.type = dashboard::WidgetType::Kpi;
   widget.column = column;
@@ -31,8 +38,8 @@ dashboard::Widget kpiWidget(uint8_t column, uint8_t row, const char* label, cons
 
 // List content lives in the package, so building a list widget also claims one
 // of its MAX_LIST_WIDGETS content slots.
-dashboard::Widget listWidget(dashboard::WidgetGridPackage& package, uint8_t column, uint8_t row,
-                             const char* heading, uint8_t columnSpan = 4, uint8_t rowSpan = 4) {
+dashboard::Widget listWidget(dashboard::WidgetGridPackage& package, uint8_t column, uint8_t row, const char* heading,
+                             uint8_t columnSpan = 4, uint8_t rowSpan = 4) {
   dashboard::Widget widget{};
   widget.type = dashboard::WidgetType::List;
   widget.column = column;
@@ -68,6 +75,92 @@ dashboard::WidgetGridPackage validPackage() {
 
 }  // namespace
 
+TEST(DashboardWidgetGrid, EncodesSchemaV2WithGlobalStyleAndContentAtOffset31) {
+  auto package = validPackage();
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+  EXPECT_EQ(bytes[4], 2);   // TEMPLATE_WIDGET_GRID moved to schema 2
+  EXPECT_EQ(bytes[30], 0);  // global style byte defaults to zero
+  EXPECT_EQ(bytes[31], static_cast<uint8_t>(dashboard::WidgetType::Kpi));
+}
+
+TEST(DashboardWidgetGrid, RoundTripsGlobalAndPerWidgetStyle) {
+  auto package = validPackage();
+  package.style = static_cast<uint8_t>(2U | (1U << dashboard::GLOBAL_STYLE_DENSITY_SHIFT) |
+                                       (1U << dashboard::GLOBAL_STYLE_LIST_DIVIDERS_SHIFT));
+  package.widgets[0].style = dashboard::makeWidgetStyle(/*iconId=*/64, /*sizeRung=*/3, /*emphasis=*/2);
+  package.widgets[1].style = dashboard::makeWidgetStyle(/*iconId=*/1, /*sizeRung=*/0, /*emphasis=*/0);
+  package.widgets[2].style = dashboard::makeWidgetStyle(/*iconId=*/0, /*sizeRung=*/2, /*emphasis=*/3);
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+
+  dashboard::WidgetGridPackage decoded{};
+  ASSERT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::Ok);
+  EXPECT_EQ(decoded.style, package.style);
+  EXPECT_EQ(dashboard::widgetIconId(decoded.widgets[0].style), 64U);
+  EXPECT_EQ(dashboard::widgetSizeRung(decoded.widgets[0].style), 3U);
+  EXPECT_EQ(dashboard::widgetEmphasis(decoded.widgets[0].style), 2U);
+  EXPECT_EQ(decoded.widgets[0].style, dashboard::makeWidgetStyle(64, 3, 2));
+  EXPECT_EQ(decoded.widgets[1].style, dashboard::makeWidgetStyle(1, 0, 0));
+  EXPECT_EQ(decoded.widgets[2].style, dashboard::makeWidgetStyle(0, 2, 3));
+}
+
+TEST(DashboardWidgetGrid, RejectsReservedBitsInGlobalStyle) {
+  auto package = validPackage();
+  package.style = dashboard::GLOBAL_STYLE_RESERVED_MASK;  // 0xC0
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::InvalidArgument);
+
+  package.style = 0;
+  ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+  bytes[30] |= 0x80;
+  rewriteCrc(bytes, length);
+  dashboard::WidgetGridPackage decoded{};
+  EXPECT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::InvalidArgument);
+}
+
+TEST(DashboardWidgetGrid, RejectsReservedBitsInWidgetStyle) {
+  auto package = validPackage();
+  package.widgets[0].style = dashboard::WIDGET_STYLE_RESERVED_MASK;  // 0xF800
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::InvalidArgument);
+
+  package.widgets[0].style = 0;
+  ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+  // Widget 0's style word sits at offsets 36-37 (content starts at 31, header
+  // is 7); reserved bits live in the high byte.
+  bytes[37] |= 0x80;
+  rewriteCrc(bytes, length);
+  dashboard::WidgetGridPackage decoded{};
+  EXPECT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::InvalidArgument);
+}
+
+TEST(DashboardWidgetGrid, RejectsIconIdAbove64) {
+  auto package = validPackage();
+  package.widgets[0].style = dashboard::makeWidgetStyle(/*iconId=*/65, 0, 0);
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::InvalidArgument);
+
+  package.widgets[0].style = 0;
+  ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+  bytes[36] = 65;
+  rewriteCrc(bytes, length);
+  dashboard::WidgetGridPackage decoded{};
+  EXPECT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::InvalidArgument);
+}
+
+TEST(DashboardWidgetGrid, WidgetAndPackageSizesStayWithinBudget) {
+  EXPECT_EQ(sizeof(dashboard::Widget), 42u);
+  EXPECT_EQ(sizeof(dashboard::WidgetGridPackage), 2192u);
+  EXPECT_LE(sizeof(dashboard::Widget) * dashboard::MAX_WIDGETS, 1024u);
+}
+
 TEST(DashboardWidgetGrid, EncodesAndRoundTripsMixedWidgets) {
   dashboard::PackageBytes bytes{};
   size_t length = 0;
@@ -85,11 +178,11 @@ TEST(DashboardWidgetGrid, EncodesAndRoundTripsMixedWidgets) {
   EXPECT_EQ(decoded.widgets[0].row, 0U);
   EXPECT_EQ(decoded.widgets[0].columnSpan, 1U);
   EXPECT_TRUE(std::equal(decoded.widgets[0].kpi.labelBytes.begin(),
-                        decoded.widgets[0].kpi.labelBytes.begin() + decoded.widgets[0].kpi.labelLength,
-                        reinterpret_cast<const uint8_t*>("Stappen")));
+                         decoded.widgets[0].kpi.labelBytes.begin() + decoded.widgets[0].kpi.labelLength,
+                         reinterpret_cast<const uint8_t*>("Stappen")));
   EXPECT_TRUE(std::equal(decoded.widgets[0].kpi.valueBytes.begin(),
-                        decoded.widgets[0].kpi.valueBytes.begin() + decoded.widgets[0].kpi.valueLength,
-                        reinterpret_cast<const uint8_t*>("8421")));
+                         decoded.widgets[0].kpi.valueBytes.begin() + decoded.widgets[0].kpi.valueLength,
+                         reinterpret_cast<const uint8_t*>("8421")));
 
   EXPECT_EQ(decoded.widgets[2].type, dashboard::WidgetType::List);
   EXPECT_EQ(decoded.widgets[2].column, 0U);
@@ -98,9 +191,8 @@ TEST(DashboardWidgetGrid, EncodesAndRoundTripsMixedWidgets) {
   const dashboard::ListContent* decodedList = dashboard::listContentFor(decoded, decoded.widgets[2]);
   ASSERT_NE(decodedList, nullptr);
   ASSERT_EQ(decodedList->rowCount, 2U);
-  EXPECT_TRUE(std::equal(decodedList->rows[1].timeBytes.begin(),
-                        decodedList->rows[1].timeBytes.begin() + 5,
-                        reinterpret_cast<const uint8_t*>("14:00")));
+  EXPECT_TRUE(std::equal(decodedList->rows[1].timeBytes.begin(), decodedList->rows[1].timeBytes.begin() + 5,
+                         reinterpret_cast<const uint8_t*>("14:00")));
 }
 
 TEST(DashboardWidgetGrid, AllowsZeroWidgetsAsEmptyDashboard) {
@@ -268,7 +360,7 @@ TEST(DashboardWidgetGrid, PeekAcceptsWidgetGridPackageWithoutWidgets) {
   dashboard::PackageBytes bytes{};
   size_t length = 0;
   ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
-  ASSERT_EQ(length, 34u);
+  ASSERT_EQ(length, 35u);
 
   dashboard::PackageHeader header{};
   EXPECT_EQ(dashboard::peekPackageHeader(bytes.data(), length, header), dashboard::Status::Ok);
@@ -297,7 +389,7 @@ TEST(DashboardWidgetGrid, WidgetSlotsAreCheapEnoughToCoverTheWholeGrid) {
 // does not control.
 TEST(DashboardWidgetGrid, DecodeRejectsMoreListsThanTheDecodedFormCanHold) {
   constexpr size_t widgetCount = dashboard::MAX_LIST_WIDGETS + 1;
-  constexpr size_t total = 30 + widgetCount * 7 + dashboard::CRC_SIZE;
+  constexpr size_t total = 31 + widgetCount * 9 + dashboard::CRC_SIZE;
   ASSERT_LE(widgetCount, dashboard::GRID_COLUMNS);  // one 1x1 list per column, no overlaps
 
   std::array<uint8_t, dashboard::MAX_PACKAGE_SIZE> bytes{};
@@ -305,23 +397,26 @@ TEST(DashboardWidgetGrid, DecodeRejectsMoreListsThanTheDecodedFormCanHold) {
   bytes[1] = '3';
   bytes[2] = 'D';
   bytes[3] = 'P';
-  bytes[4] = dashboard::SCHEMA_V1;
+  bytes[4] = dashboard::SCHEMA_V2;
   bytes[5] = dashboard::TEMPLATE_WIDGET_GRID;
   bytes[6] = static_cast<uint8_t>(total);
-  bytes[8] = 9;      // packageId
-  bytes[12] = 100;   // generatedAt
-  bytes[20] = 200;   // validUntil
+  bytes[8] = 9;     // packageId
+  bytes[12] = 100;  // generatedAt
+  bytes[20] = 200;  // validUntil
   bytes[28] = dashboard::GRID_COLUMNS;
   bytes[29] = static_cast<uint8_t>(widgetCount);
+  bytes[30] = 0;  // global style byte
   for (size_t index = 0; index < widgetCount; ++index) {
-    uint8_t* widget = bytes.data() + 30 + index * 7;
+    uint8_t* widget = bytes.data() + 31 + index * 9;
     widget[0] = static_cast<uint8_t>(dashboard::WidgetType::List);
     widget[1] = static_cast<uint8_t>(index);  // column
     widget[2] = 0;                            // row
     widget[3] = 1;                            // columnSpan
     widget[4] = 1;                            // rowSpan
-    widget[5] = 0;                            // headingLength
-    widget[6] = 0;                            // rowCount
+    widget[5] = 0;                            // style, low byte
+    widget[6] = 0;                            // style, high byte
+    widget[7] = 0;                            // headingLength
+    widget[8] = 0;                            // rowCount
   }
   const uint32_t crc = dashboard::crc32(bytes.data(), total - dashboard::CRC_SIZE);
   for (uint8_t index = 0; index < 4; ++index) {
@@ -393,4 +488,34 @@ TEST(DashboardWidgetGrid, FillsEveryCellOfTheGrid) {
   dashboard::WidgetGridPackage decoded{};
   ASSERT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::Ok);
   EXPECT_EQ(decoded.widgetCount, 24U);
+}
+
+// borderLevel occupies three bits but names only four treatments, and density
+// two bits for three paddings. The renderer turns both into a table index, so a
+// package naming an undefined one must be refused here rather than reaching it.
+TEST(DashboardWidgetGrid, RejectsUndefinedGlobalStyleValues) {
+  dashboard::WidgetGridPackage package{};
+  package.packageId = 7;
+  package.generatedAt = 1000;
+  package.validUntil = 2000;
+  package.widgets[0] = kpiWidget(0, 0, "Stappen", "8432");
+  package.widgetCount = 1;
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+
+  package.style = dashboard::makeGlobalStyle(dashboard::MAX_BORDER_LEVEL + 1, 0, false);
+  EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::InvalidArgument);
+
+  package.style = dashboard::makeGlobalStyle(0, dashboard::MAX_DENSITY + 1, false);
+  EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::InvalidArgument);
+
+  package.style = dashboard::makeGlobalStyle(dashboard::MAX_BORDER_LEVEL, dashboard::MAX_DENSITY, true);
+  ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+
+  dashboard::WidgetGridPackage decoded{};
+  ASSERT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::Ok);
+  EXPECT_EQ(dashboard::globalBorderLevel(decoded.style), dashboard::MAX_BORDER_LEVEL);
+  EXPECT_EQ(dashboard::globalDensity(decoded.style), dashboard::MAX_DENSITY);
+  EXPECT_TRUE(dashboard::globalListDividers(decoded.style));
 }

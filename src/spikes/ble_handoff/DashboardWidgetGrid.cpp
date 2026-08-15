@@ -11,7 +11,8 @@ constexpr size_t GENERATED_AT_OFFSET = 12;
 constexpr size_t VALID_UNTIL_OFFSET = 20;
 constexpr size_t GRID_COLUMNS_OFFSET = 28;
 constexpr size_t WIDGET_COUNT_OFFSET = 29;
-constexpr size_t CONTENT_OFFSET = 30;
+constexpr size_t STYLE_OFFSET = 30;
+constexpr size_t CONTENT_OFFSET = 31;
 
 void writeU16(uint8_t* out, uint16_t value) {
   out[0] = static_cast<uint8_t>(value);
@@ -58,15 +59,24 @@ Status validateNoOverlaps(const WidgetGridPackage& package) {
   return Status::Ok;
 }
 
+Status validateGlobalStyle(const uint8_t style) {
+  if ((style & GLOBAL_STYLE_RESERVED_MASK) != 0) return Status::InvalidArgument;
+  if (globalBorderLevel(style) > MAX_BORDER_LEVEL) return Status::InvalidArgument;
+  if (globalDensity(style) > MAX_DENSITY) return Status::InvalidArgument;
+  return Status::Ok;
+}
+
 Status validateWidget(const WidgetGridPackage& package, const Widget& widget) {
   if (widget.columnSpan == 0 || widget.columnSpan > GRID_COLUMNS || widget.rowSpan == 0 ||
       widget.rowSpan > MAX_ROW_SPAN) {
     return Status::InvalidLength;
   }
-  if (widget.column >= GRID_COLUMNS || widget.row >= MAX_ROW_SPAN ||
-      widget.column + widget.columnSpan > GRID_COLUMNS || widget.row + widget.rowSpan > MAX_ROW_SPAN) {
+  if (widget.column >= GRID_COLUMNS || widget.row >= MAX_ROW_SPAN || widget.column + widget.columnSpan > GRID_COLUMNS ||
+      widget.row + widget.rowSpan > MAX_ROW_SPAN) {
     return Status::InvalidLength;
   }
+  if ((widget.style & WIDGET_STYLE_RESERVED_MASK) != 0) return Status::InvalidArgument;
+  if (widgetIconId(widget.style) > MAX_ICON_ID) return Status::InvalidArgument;
   if (widget.type == WidgetType::Kpi) {
     const KpiContent& kpi = widget.kpi;
     if (kpi.labelLength == 0 || kpi.labelLength > MAX_KPI_LABEL_SIZE || kpi.valueLength == 0 ||
@@ -103,7 +113,7 @@ Status validateWidget(const WidgetGridPackage& package, const Widget& widget) {
 }
 
 size_t widgetContentLength(const WidgetGridPackage& package, const Widget& widget) {
-  size_t total = 5;  // type + column + row + columnSpan + rowSpan, written by writeWidget for every widget.
+  size_t total = 7;  // type + column + row + columnSpan + rowSpan + style, written for every widget.
   if (widget.type == WidgetType::Kpi) return total + 2 + widget.kpi.labelLength + widget.kpi.valueLength;
   const ListContent* content = listContentFor(package, widget);
   if (content == nullptr) return total + 2;
@@ -120,7 +130,8 @@ size_t writeWidget(uint8_t* out, const WidgetGridPackage& package, const Widget&
   out[2] = widget.row;
   out[3] = widget.columnSpan;
   out[4] = widget.rowSpan;
-  size_t offset = 5;
+  writeU16(out + 5, widget.style);
+  size_t offset = 7;
   if (widget.type == WidgetType::Kpi) {
     out[offset] = widget.kpi.labelLength;
     out[offset + 1] = widget.kpi.valueLength;
@@ -162,7 +173,7 @@ size_t writeWidget(uint8_t* out, const WidgetGridPackage& package, const Widget&
 // distinguish "ran out of bytes" from every specific field-validity error,
 // which the field-level validateWidget() pass reports precisely afterward.
 size_t readWidget(const uint8_t* bytes, size_t offset, size_t size, WidgetGridPackage& package, Widget& widget) {
-  if (offset + 5 > size) return SIZE_MAX;
+  if (offset + 7 > size) return SIZE_MAX;
   const uint8_t rawType = bytes[offset];
   if (rawType != static_cast<uint8_t>(WidgetType::Kpi) && rawType != static_cast<uint8_t>(WidgetType::List)) {
     return SIZE_MAX;
@@ -172,7 +183,8 @@ size_t readWidget(const uint8_t* bytes, size_t offset, size_t size, WidgetGridPa
   widget.row = bytes[offset + 2];
   widget.columnSpan = bytes[offset + 3];
   widget.rowSpan = bytes[offset + 4];
-  offset += 5;
+  widget.style = readU16(bytes + offset + 5);
+  offset += 7;
 
   if (widget.type == WidgetType::Kpi) {
     if (offset + 2 > size) return SIZE_MAX;
@@ -233,11 +245,15 @@ const ListContent* listContentFor(const WidgetGridPackage& package, const Widget
 
 Status encodeWidgetGridPackage(const WidgetGridPackage& package, PackageBytes& output, size_t& outputLength) {
   outputLength = 0;
-  if (package.schema != SCHEMA_V1) return Status::UnsupportedSchema;
+  if (package.schema != SCHEMA_V2) return Status::UnsupportedSchema;
   if (package.templateId != TEMPLATE_WIDGET_GRID) return Status::UnsupportedTemplate;
   if (package.generatedAt == 0 || package.validUntil < package.generatedAt) return Status::InvalidTimestamp;
   if (package.widgetCount > MAX_WIDGETS) return Status::InvalidLength;
   if (package.listCount > MAX_LIST_WIDGETS) return Status::InvalidLength;
+  {
+    const Status status = validateGlobalStyle(package.style);
+    if (status != Status::Ok) return status;
+  }
 
   size_t contentLength = 0;
   for (uint8_t index = 0; index < package.widgetCount; ++index) {
@@ -266,6 +282,7 @@ Status encodeWidgetGridPackage(const WidgetGridPackage& package, PackageBytes& o
   writeU64(output.data() + VALID_UNTIL_OFFSET, package.validUntil);
   output[GRID_COLUMNS_OFFSET] = GRID_COLUMNS;
   output[WIDGET_COUNT_OFFSET] = package.widgetCount;
+  output[STYLE_OFFSET] = package.style;
 
   size_t offset = CONTENT_OFFSET;
   for (uint8_t index = 0; index < package.widgetCount; ++index) {
@@ -281,7 +298,7 @@ Status decodeWidgetGridPackage(const uint8_t* bytes, const size_t size, WidgetGr
   if (size < CONTENT_OFFSET + CRC_SIZE || size > MAX_PACKAGE_SIZE) return Status::InvalidSize;
   if (bytes[0] != 'X' || bytes[1] != '3' || bytes[2] != 'D' || bytes[3] != 'P') return Status::InvalidMagic;
   if (readU16(bytes + LENGTH_OFFSET) != size) return Status::InvalidSize;
-  if (bytes[4] != SCHEMA_V1) return Status::UnsupportedSchema;
+  if (bytes[4] != SCHEMA_V2) return Status::UnsupportedSchema;
   if (bytes[5] != TEMPLATE_WIDGET_GRID) return Status::UnsupportedTemplate;
   if (crc32(bytes, size - CRC_SIZE) != readU32(bytes + size - CRC_SIZE)) return Status::InvalidCrc;
   if (bytes[GRID_COLUMNS_OFFSET] != GRID_COLUMNS) return Status::UnsupportedTemplate;
@@ -298,8 +315,13 @@ Status decodeWidgetGridPackage(const uint8_t* bytes, const size_t size, WidgetGr
   candidate.packageId = readU32(bytes + PACKAGE_ID_OFFSET);
   candidate.generatedAt = readU64(bytes + GENERATED_AT_OFFSET);
   candidate.validUntil = readU64(bytes + VALID_UNTIL_OFFSET);
+  candidate.style = bytes[STYLE_OFFSET];
   candidate.widgetCount = bytes[WIDGET_COUNT_OFFSET];
   if (candidate.generatedAt == 0 || candidate.validUntil < candidate.generatedAt) return Status::InvalidTimestamp;
+  {
+    const Status status = validateGlobalStyle(candidate.style);
+    if (status != Status::Ok) return status;
+  }
   if (candidate.widgetCount > MAX_WIDGETS) return Status::InvalidLength;
 
   size_t offset = CONTENT_OFFSET;

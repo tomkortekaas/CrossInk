@@ -3,8 +3,13 @@
 ### Added
 
 - The BLE dashboard receiver now reports why it refused a package, not just that it did, so a rejected dashboard update can be diagnosed from the phone instead of from a USB serial capture.
+- Dashboard tiles can carry an icon, chosen from a set of 64, and can be emphasised with a light or dark shade or reversed to white on black — so one tile can stand out the way a colour would on a colour screen.
+- A dashboard now chooses how its tiles are framed (no frame, thin rules between neighbours, a light outline, or a solid one), how tightly they are packed, and whether agenda rows are separated by rules.
 
 ### Changed
+
+- Dashboard tile values are set in one typeface at four sizes, so a value reads clearly apart from its label. Previously every tile used the same two sizes.
+- Every dashboard tile is now framed the same way. Agenda tiles previously went unframed while value tiles were outlined, which left the grid looking half finished.
 
 - A dashboard can now fill all 24 cells of its grid instead of eight, and carry a full agenda alongside its tiles rather than having to choose between them.
 - Dashboard widgets take about a tenth of the memory they used to, leaving room for richer dashboards on the same hardware. A package may now carry at most three list widgets.

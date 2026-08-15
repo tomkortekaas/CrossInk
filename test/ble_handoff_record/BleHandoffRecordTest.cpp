@@ -39,8 +39,8 @@ TEST(DashboardPackage, EncodesSpecifiedLittleEndianLayoutAndRoundTrips) {
   ASSERT_EQ(dashboard::encodePackage(validPackage(), bytes, length), dashboard::Status::Ok);
   ASSERT_EQ(length, 48U);
   const std::array<uint8_t, 44> expectedPrefix = {
-      'X', '3', 'D', 'P', 1, 1, 48, 0, 42, 0, 0, 0, 0xE8, 3, 0, 0, 0, 0, 0, 0,
-      0xD0, 7, 0, 0, 0, 0, 0, 0, 4, 5, 0, 3, 'M', 'e', 'e', 't', '1', '0', ':', '0', '0', 'O', 'l', 'd'};
+      'X', '3', 'D', 'P', 1, 1, 48, 0, 42, 0, 0,   0,   0xE8, 3,   0,   0,   0,   0,   0,   0,   0xD0, 7,
+      0,   0,   0,   0,   0, 0, 4,  5, 0,  3, 'M', 'e', 'e',  't', '1', '0', ':', '0', '0', 'O', 'l',  'd'};
   EXPECT_TRUE(std::equal(expectedPrefix.begin(), expectedPrefix.end(), bytes.begin()));
 
   dashboard::Package decoded{};
@@ -50,7 +50,7 @@ TEST(DashboardPackage, EncodesSpecifiedLittleEndianLayoutAndRoundTrips) {
   EXPECT_EQ(decoded.validUntil, 2000U);
   EXPECT_EQ(decoded.title.length, 4U);
   EXPECT_TRUE(std::equal(decoded.title.bytes.begin(), decoded.title.bytes.begin() + 4,
-                        reinterpret_cast<const uint8_t*>("Meet")));
+                         reinterpret_cast<const uint8_t*>("Meet")));
 }
 
 TEST(DashboardPackage, RejectsCorruptionAndInconsistentSize) {
@@ -167,7 +167,7 @@ TEST(PackageHeaderPeek, RejectsBadMagicSchemaAndCrc) {
   EXPECT_EQ(dashboard::peekPackageHeader(corrupted.data(), length, header), dashboard::Status::InvalidMagic);
 
   corrupted = bytes;
-  corrupted[4] = 2;
+  corrupted[4] = 3;  // schema 2 is valid for TEMPLATE_WIDGET_GRID now
   EXPECT_EQ(dashboard::peekPackageHeader(corrupted.data(), length, header), dashboard::Status::UnsupportedSchema);
 
   corrupted = bytes;
