@@ -18,6 +18,7 @@
 ### Fixed
 
 - Dashboard tile icons are drawn the right way up. Every icon appeared rotated a quarter turn, because the drawing routine expects artwork stored pre-rotated while the dashboard's icons are stored the natural way round.
+- Dashboard tile text sits inside its tile. Values and labels were each placed a full line too low, so they overlapped each other, drifted past the bottom edge, and left a gap under the tile's icon. Agenda headings and the rules between agenda rows were misplaced for the same reason.
 - Dashboard packages that carry no widgets are no longer rejected by the storage layer, which previously applied the agenda template's minimum size to every template.
 - The isolated BLE receiver firmware builds again when its sources log through `LOG_ERR`; the build environment was missing the `BoardConfig` dependency that `lib/Logging` needs.
 

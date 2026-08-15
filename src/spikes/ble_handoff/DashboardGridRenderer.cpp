@@ -147,9 +147,15 @@ void renderKpiWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widget
     y += iconHeight;
   }
 
-  y += valueAscender;
+  // GfxRenderer::drawText takes the text's TOP, not its baseline - it adds the
+  // ascender itself (GfxRenderer.cpp: `yPos = y + getFontAscenderSize(...)`).
+  // This used to add the ascender again before each call, which pushed the
+  // value a full ascender below where blockHeight said it would sit and the
+  // label a further ascender below that, so on a 130px tile the two strings
+  // overlapped each other and both spilled past the bottom edge - visible as a
+  // hole under the icon and labels sitting outside their own emphasis fill.
   drawTextCenteredInRect(renderer, valueFontId, rect, value, EpdFontFamily::BOLD, y, padding, ink);
-  y += TILE_STACK_GAP + labelAscender;
+  y += valueAscender + TILE_STACK_GAP;
   drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, label, EpdFontFamily::REGULAR, y, padding, ink);
 }
 
@@ -159,7 +165,10 @@ void renderListWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widge
   fillTile(renderer, rect, widgetEmphasis(widget.style));
 
   const int rowFontId = VALUE_FONT_FOR_RUNG[widgetSizeRung(widget.style)];
-  int y = padding + renderer.getFontAscenderSize(LABEL_FONT_ID);
+  // Plain padding: drawText takes the text's top and adds the ascender itself,
+  // so seeding y with an ascender here indented the heading by one extra line.
+  // Same mistake renderKpiWidget made.
+  int y = padding;
   if (list.headingLength > 0) {
     char heading[MAX_LIST_HEADING_SIZE + 1];
     std::copy_n(list.headingBytes.begin(), list.headingLength, heading);
@@ -191,7 +200,12 @@ void renderListWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widge
     // A rule under every row but the last, so the list reads as rows without
     // the heavier per-tile border the grid pass would draw.
     if (dividers && index + 1 < list.rowCount && y + lineHeight <= rect.height - padding) {
-      const int ruleY = rect.y + y - lineHeight + renderer.getFontAscenderSize(rowFontId) / 2;
+      // Midway between this row's glyph bottom and the next row's top. The old
+      // expression put it half an ascender below the row's top edge - through
+      // the text - which only looked like an underline because the double
+      // ascender was pushing every row down past it.
+      const int rowAscender = renderer.getFontAscenderSize(rowFontId);
+      const int ruleY = rect.y + y - lineHeight + rowAscender + (lineHeight - rowAscender) / 2;
       renderer.fillRectDither(rect.x + padding, ruleY, rect.width - 2 * padding, 1,
                               ink ? Color::DarkGray : Color::White);
     }
