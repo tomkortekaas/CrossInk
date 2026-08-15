@@ -81,6 +81,35 @@ const freeink::Icon* iconFor(const uint8_t iconId, const int tileHeight) {
   return tileHeight >= 200 ? DASHBOARD_ICONS_48[iconId] : DASHBOARD_ICONS_32[iconId];
 }
 
+// Draws an SDK-format icon (freeink::Icon: row-major, natural orientation, a
+// clear bit is ink).
+//
+// GfxRenderer::drawIcon must NOT be used for these. It reads its source as
+// though the asset were stored pre-rotated - it takes imgW from the height and
+// imgH from the width - which is the layout the older hand-authored assets like
+// icons/chart.h use. Feeding it a natural-layout asset costs no size check,
+// because these icons are square, and simply draws every one of them a quarter
+// turn rotated on the panel. FreeInkUIGfxRenderer::bitmap's comment states the
+// same incompatibility from the other side.
+//
+// drawPixel takes logical coordinates and applies the portrait transform via
+// rotateCoordinates, so walking the source naturally is both correct and
+// orientation-safe - the same route FreeInkUI takes for these assets. At 48x48
+// that is ~2300 pixel writes, once per tile, on a panel that repaints at most
+// once a minute: not a hot path, and it allocates nothing.
+void drawDashboardIcon(const GfxRenderer& renderer, const freeink::Icon& icon, const int x, const int y,
+                       const bool ink) {
+  const int stride = (icon.w + 7) / 8;
+  for (int row = 0; row < icon.h; ++row) {
+    const uint8_t* sourceRow = icon.bits + row * stride;
+    for (int col = 0; col < icon.w; ++col) {
+      if ((sourceRow[col >> 3] & static_cast<uint8_t>(0x80U >> (col & 7))) == 0) {
+        renderer.drawPixel(x + col, y + row, ink);
+      }
+    }
+  }
+}
+
 void renderKpiWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widget& widget, const int padding) {
   const bool ink = !isInverted(widget);
   fillTile(renderer, rect, widgetEmphasis(widget.style));
@@ -114,11 +143,7 @@ void renderKpiWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widget
   int y = std::max(padding, (rect.height - blockHeight) / 2);
   if (icon != nullptr) {
     const int iconX = rect.x + (rect.width - icon->w) / 2;
-    if (ink) {
-      renderer.drawIcon(icon->bits, iconX, rect.y + y, icon->w, icon->h);
-    } else {
-      renderer.drawIconInverted(icon->bits, iconX, rect.y + y, icon->w, icon->h);
-    }
+    drawDashboardIcon(renderer, *icon, iconX, rect.y + y, ink);
     y += iconHeight;
   }
 
