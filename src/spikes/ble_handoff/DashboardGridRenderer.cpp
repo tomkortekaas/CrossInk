@@ -259,13 +259,103 @@ void renderDateFieldWidget(GfxRenderer& renderer, const WidgetRect& rect, const 
   drawTextCenteredInRect(renderer, valueFontId, rect, value, EpdFontFamily::BOLD, y, padding, ink);
 }
 
-// DateField::Auto picks a layout from the tile's size. Until that ladder lands,
-// it draws the day number: the one field every layout in the design shows.
+// Layout thresholds on the tile's inner size, not on columnSpan/rowSpan, so an
+// unusual span like 4x1 or 3x2 lands somewhere sensible without a table of span
+// combinations. At density "normal" a 1x1 tile is about 111x112 inner pixels
+// and a 2x2 about 239x240, so both thresholds sit well clear of the sizes the
+// grid actually produces and a tile never flips layout over one pixel.
+constexpr int DATE_WIDE_THRESHOLD = 200;
+constexpr int DATE_TALL_THRESHOLD = 170;
+
+// DateField::Auto: the tile shows as much of the date as its shape allows.
 void renderDateAutoWidget(GfxRenderer& renderer, const WidgetRect& rect, const Widget& widget,
                           const TodaysDate& today, const int padding) {
-  Widget dayWidget = widget;
-  dayWidget.dateField = DateField::Day;
-  renderDateFieldWidget(renderer, rect, dayWidget, today, padding);
+  const bool ink = !isInverted(widget);
+  const int innerWidth = rect.width - 2 * padding;
+  const int innerHeight = rect.height - 2 * padding;
+  const Weekday weekday = weekdayFromDate(today.year, today.month, today.day);
+  const IsoWeek isoWeek = isoWeekFromDate(today.year, today.month, today.day);
+  const uint8_t maxRung = widgetSizeRung(widget.style);
+  const int labelAscender = renderer.getFontAscenderSize(LABEL_FONT_ID);
+
+  char day[4] = {};
+  std::snprintf(day, sizeof(day), "%u", static_cast<unsigned>(today.day));
+  char week[12] = {};
+  std::snprintf(week, sizeof(week), "week %u", static_cast<unsigned>(isoWeek.week));
+
+  const bool wide = innerWidth >= DATE_WIDE_THRESHOLD;
+  const bool tall = innerHeight >= DATE_TALL_THRESHOLD;
+
+  if (wide && !tall) {
+    // One line: "za 15 aug", with the week number under it when there is room.
+    // This is the only layout with width to spare, so it is the only one that
+    // honours the tile's iconId; elsewhere an icon would compete with the day
+    // number for the same middle of the tile.
+    char line[24] = {};
+    std::snprintf(line, sizeof(line), "%s %u %s", weekdayAbbreviation(weekday),
+                  static_cast<unsigned>(today.day), monthAbbreviation(today.month));
+    const freeink::Icon* icon = iconFor(widgetIconId(widget.style), rect.height);
+    const int iconWidth = icon != nullptr ? icon->w + TILE_STACK_GAP : 0;
+    const int lineFontId = fittingFontId(renderer, line, innerWidth - iconWidth, maxRung, EpdFontFamily::BOLD);
+    const int lineAscender = renderer.getFontAscenderSize(lineFontId);
+    const bool showWeek = lineAscender + TILE_STACK_GAP + labelAscender <= innerHeight;
+    const int blockHeight = lineAscender + (showWeek ? TILE_STACK_GAP + labelAscender : 0);
+    int y = std::max(padding, (rect.height - blockHeight) / 2);
+    if (icon != nullptr) {
+      drawDashboardIcon(renderer, *icon, rect.x + padding, rect.y + std::max(padding, (rect.height - icon->h) / 2),
+                        ink);
+    }
+    // The text block sits to the right of the icon, so it is centred in what is
+    // left rather than in the whole tile.
+    const WidgetRect textRect{rect.x + iconWidth, rect.y, rect.width - iconWidth, rect.height};
+    drawTextCenteredInRect(renderer, lineFontId, textRect, line, EpdFontFamily::BOLD, y, padding, ink);
+    if (showWeek) {
+      y += lineAscender + TILE_STACK_GAP;
+      drawTextCenteredInRect(renderer, LABEL_FONT_ID, textRect, week, EpdFontFamily::REGULAR, y, padding, ink);
+    }
+    return;
+  }
+
+  if (wide && tall) {
+    // The full sheet: an inverted header carrying month and year, the day
+    // number large, the weekday spelled out, and the week number as a footnote.
+    char header[24] = {};
+    std::snprintf(header, sizeof(header), "%s %u", monthName(today.month), static_cast<unsigned>(today.year));
+    const int headerHeight = labelAscender + 2 * TILE_STACK_GAP;
+    renderer.fillRect(rect.x, rect.y, rect.width, headerHeight, ink);
+    drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, header, EpdFontFamily::BOLD, TILE_STACK_GAP, padding, !ink);
+
+    const int dayFontId = fittingFontId(renderer, day, innerWidth, maxRung, EpdFontFamily::BOLD);
+    const int dayAscender = renderer.getFontAscenderSize(dayFontId);
+    const char* weekdayText = fittingWeekday(renderer, weekday, LABEL_FONT_ID, innerWidth);
+    const int blockHeight = dayAscender + TILE_STACK_GAP + labelAscender + TILE_STACK_GAP + labelAscender;
+    int y = headerHeight + std::max(padding, (rect.height - headerHeight - blockHeight) / 2);
+    drawTextCenteredInRect(renderer, dayFontId, rect, day, EpdFontFamily::BOLD, y, padding, ink);
+    y += dayAscender + TILE_STACK_GAP;
+    drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, weekdayText, EpdFontFamily::REGULAR, y, padding, ink);
+    y += labelAscender + TILE_STACK_GAP;
+    drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, week, EpdFontFamily::REGULAR, y, padding, ink);
+    return;
+  }
+
+  // Narrow: weekday above the day number, with the abbreviated month underneath
+  // only when the tile is tall enough to carry a third line.
+  const char* weekdayText = fittingWeekday(renderer, weekday, LABEL_FONT_ID, innerWidth);
+  const int dayFontId = fittingFontId(renderer, day, innerWidth, maxRung, EpdFontFamily::BOLD);
+  const int dayAscender = renderer.getFontAscenderSize(dayFontId);
+  const bool showMonth =
+      tall && labelAscender + TILE_STACK_GAP + dayAscender + TILE_STACK_GAP + labelAscender <= innerHeight;
+  const int blockHeight =
+      labelAscender + TILE_STACK_GAP + dayAscender + (showMonth ? TILE_STACK_GAP + labelAscender : 0);
+  int y = std::max(padding, (rect.height - blockHeight) / 2);
+  drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, weekdayText, EpdFontFamily::REGULAR, y, padding, ink);
+  y += labelAscender + TILE_STACK_GAP;
+  drawTextCenteredInRect(renderer, dayFontId, rect, day, EpdFontFamily::BOLD, y, padding, ink);
+  if (showMonth) {
+    y += dayAscender + TILE_STACK_GAP;
+    drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, monthAbbreviation(today.month), EpdFontFamily::REGULAR, y,
+                           padding, ink);
+  }
 }
 
 // What a date tile shows when the RTC cannot be trusted. A dash reads as "no
