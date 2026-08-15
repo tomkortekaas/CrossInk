@@ -19,6 +19,11 @@ constexpr uint8_t TEMPLATE_WIDGET_GRID = 3;
 constexpr uint8_t GRID_COLUMNS = 4;
 constexpr size_t MAX_WIDGETS = 8;
 constexpr uint8_t MAX_ROW_SPAN = 6;
+// How many of those widgets may be lists. A ListContent is over ten times the
+// size of a KpiContent, so storing one per widget would dominate the decoded
+// package (see WidgetGridPackage below). Three full-width lists stacked in a
+// 4x6 grid is already more than the wire budget can fill with real rows.
+constexpr size_t MAX_LIST_WIDGETS = 3;
 
 constexpr size_t MAX_KPI_LABEL_SIZE = 16;
 constexpr size_t MAX_KPI_VALUE_SIZE = 16;
@@ -51,9 +56,16 @@ struct ListContent {
   uint8_t rowCount = 0;
 };
 
-// `kpi` is meaningful only when `type == WidgetType::Kpi`; `list` only when
-// `type == WidgetType::List`. Encoding writes only the selected variant's
-// bytes to the wire, so an unused variant costs no package space.
+// `kpi` is meaningful only when `type == WidgetType::Kpi`; `listIndex` only
+// when `type == WidgetType::List`, where it selects this widget's content from
+// the package's `lists`. Encoding writes only the selected variant's bytes to
+// the wire, so an unused variant costs no package space.
+//
+// List content lives in the package rather than in the widget because a
+// ListContent is over ten times the size of a KpiContent: inlining both made a
+// Widget 421 bytes and the package 3400, which is a lot to place on a C3 task
+// stack (decodeWidgetGridPackage and renderWidgetGridTemplate both hold one)
+// and it grew with every extra widget slot. The wire format is unchanged.
 //
 // `column`/`row` are the widget's explicit top-left grid cell (0-based,
 // column < GRID_COLUMNS, row < MAX_ROW_SPAN). Placement is free-form: the
@@ -66,8 +78,8 @@ struct Widget {
   uint8_t row = 0;
   uint8_t columnSpan = 1;
   uint8_t rowSpan = 1;
+  uint8_t listIndex = 0;
   KpiContent kpi{};
-  ListContent list{};
 };
 
 struct WidgetGridPackage {
@@ -77,9 +89,18 @@ struct WidgetGridPackage {
   uint64_t generatedAt = 0;
   uint64_t validUntil = 0;
   std::array<Widget, MAX_WIDGETS> widgets{};
+  // Content for the list-typed widgets, in the order they appear in `widgets`.
+  // `listCount` is how many are in use, never more than MAX_LIST_WIDGETS.
+  std::array<ListContent, MAX_LIST_WIDGETS> lists{};
   uint8_t widgetCount = 0;
+  uint8_t listCount = 0;
   uint32_t crc = 0;
 };
+
+// The list content `widget` refers to, or nullptr when it is not a list widget
+// or its index is out of range. Callers that render or measure a widget must
+// go through this rather than indexing `lists` directly.
+const ListContent* listContentFor(const WidgetGridPackage& package, const Widget& widget);
 
 Status encodeWidgetGridPackage(const WidgetGridPackage& package, PackageBytes& output, size_t& outputLength);
 Status decodeWidgetGridPackage(const uint8_t* bytes, size_t size, WidgetGridPackage& output);

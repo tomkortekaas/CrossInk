@@ -58,7 +58,7 @@ Status validateNoOverlaps(const WidgetGridPackage& package) {
   return Status::Ok;
 }
 
-Status validateWidget(const Widget& widget) {
+Status validateWidget(const WidgetGridPackage& package, const Widget& widget) {
   if (widget.columnSpan == 0 || widget.columnSpan > GRID_COLUMNS || widget.rowSpan == 0 ||
       widget.rowSpan > MAX_ROW_SPAN) {
     return Status::InvalidLength;
@@ -78,7 +78,9 @@ Status validateWidget(const Widget& widget) {
     return validateUtf8(kpi.valueBytes.data(), kpi.valueLength);
   }
   if (widget.type == WidgetType::List) {
-    const ListContent& list = widget.list;
+    const ListContent* content = listContentFor(package, widget);
+    if (content == nullptr) return Status::InvalidArgument;
+    const ListContent& list = *content;
     if (list.headingLength > MAX_LIST_HEADING_SIZE || list.rowCount > MAX_LIST_ROWS) return Status::InvalidLength;
     if (list.headingLength > 0) {
       const Status status = validateUtf8(list.headingBytes.data(), list.headingLength);
@@ -100,17 +102,19 @@ Status validateWidget(const Widget& widget) {
   return Status::InvalidArgument;
 }
 
-size_t widgetContentLength(const Widget& widget) {
+size_t widgetContentLength(const WidgetGridPackage& package, const Widget& widget) {
   size_t total = 5;  // type + column + row + columnSpan + rowSpan, written by writeWidget for every widget.
   if (widget.type == WidgetType::Kpi) return total + 2 + widget.kpi.labelLength + widget.kpi.valueLength;
-  total += 2 + widget.list.headingLength;
-  for (uint8_t index = 0; index < widget.list.rowCount; ++index) {
-    total += 2 + widget.list.rows[index].timeLength + widget.list.rows[index].labelLength;
+  const ListContent* content = listContentFor(package, widget);
+  if (content == nullptr) return total + 2;
+  total += 2 + content->headingLength;
+  for (uint8_t index = 0; index < content->rowCount; ++index) {
+    total += 2 + content->rows[index].timeLength + content->rows[index].labelLength;
   }
   return total;
 }
 
-size_t writeWidget(uint8_t* out, const Widget& widget) {
+size_t writeWidget(uint8_t* out, const WidgetGridPackage& package, const Widget& widget) {
   out[0] = static_cast<uint8_t>(widget.type);
   out[1] = widget.column;
   out[2] = widget.row;
@@ -127,13 +131,22 @@ size_t writeWidget(uint8_t* out, const Widget& widget) {
     offset += widget.kpi.valueLength;
     return offset;
   }
-  out[offset] = widget.list.headingLength;
-  out[offset + 1] = widget.list.rowCount;
+  // validateWidget() has already rejected a list widget without content, so a
+  // null here would mean encoding an unvalidated package; write an empty list
+  // rather than dereferencing.
+  const ListContent* content = listContentFor(package, widget);
+  if (content == nullptr) {
+    out[offset] = 0;
+    out[offset + 1] = 0;
+    return offset + 2;
+  }
+  out[offset] = content->headingLength;
+  out[offset + 1] = content->rowCount;
   offset += 2;
-  std::copy_n(widget.list.headingBytes.begin(), widget.list.headingLength, out + offset);
-  offset += widget.list.headingLength;
-  for (uint8_t index = 0; index < widget.list.rowCount; ++index) {
-    const ListRow& row = widget.list.rows[index];
+  std::copy_n(content->headingBytes.begin(), content->headingLength, out + offset);
+  offset += content->headingLength;
+  for (uint8_t index = 0; index < content->rowCount; ++index) {
+    const ListRow& row = content->rows[index];
     out[offset] = row.timeLength;
     out[offset + 1] = row.labelLength;
     offset += 2;
@@ -148,7 +161,7 @@ size_t writeWidget(uint8_t* out, const Widget& widget) {
 // Returns SIZE_MAX on malformed input instead of a Status so callers can
 // distinguish "ran out of bytes" from every specific field-validity error,
 // which the field-level validateWidget() pass reports precisely afterward.
-size_t readWidget(const uint8_t* bytes, size_t offset, size_t size, Widget& widget) {
+size_t readWidget(const uint8_t* bytes, size_t offset, size_t size, WidgetGridPackage& package, Widget& widget) {
   if (offset + 5 > size) return SIZE_MAX;
   const uint8_t rawType = bytes[offset];
   if (rawType != static_cast<uint8_t>(WidgetType::Kpi) && rawType != static_cast<uint8_t>(WidgetType::List)) {
@@ -178,18 +191,24 @@ size_t readWidget(const uint8_t* bytes, size_t offset, size_t size, Widget& widg
   }
 
   if (offset + 2 > size) return SIZE_MAX;
-  widget.list.headingLength = bytes[offset];
-  widget.list.rowCount = bytes[offset + 1];
+  // A package may declare more list widgets than the decoded form can hold;
+  // that is a size failure like any other, not a silently truncated dashboard.
+  if (package.listCount >= MAX_LIST_WIDGETS) return SIZE_MAX;
+  widget.listIndex = package.listCount;
+  ListContent& list = package.lists[package.listCount];
+  ++package.listCount;
+  list.headingLength = bytes[offset];
+  list.rowCount = bytes[offset + 1];
   offset += 2;
-  if (widget.list.headingLength > MAX_LIST_HEADING_SIZE || widget.list.rowCount > MAX_LIST_ROWS ||
-      offset + widget.list.headingLength > size) {
+  if (list.headingLength > MAX_LIST_HEADING_SIZE || list.rowCount > MAX_LIST_ROWS ||
+      offset + list.headingLength > size) {
     return SIZE_MAX;
   }
-  std::copy_n(bytes + offset, widget.list.headingLength, widget.list.headingBytes.begin());
-  offset += widget.list.headingLength;
-  for (uint8_t index = 0; index < widget.list.rowCount; ++index) {
+  std::copy_n(bytes + offset, list.headingLength, list.headingBytes.begin());
+  offset += list.headingLength;
+  for (uint8_t index = 0; index < list.rowCount; ++index) {
     if (offset + 2 > size) return SIZE_MAX;
-    ListRow& row = widget.list.rows[index];
+    ListRow& row = list.rows[index];
     row.timeLength = bytes[offset];
     row.labelLength = bytes[offset + 1];
     offset += 2;
@@ -207,18 +226,24 @@ size_t readWidget(const uint8_t* bytes, size_t offset, size_t size, Widget& widg
 
 }  // namespace
 
+const ListContent* listContentFor(const WidgetGridPackage& package, const Widget& widget) {
+  if (widget.type != WidgetType::List || widget.listIndex >= package.listCount) return nullptr;
+  return &package.lists[widget.listIndex];
+}
+
 Status encodeWidgetGridPackage(const WidgetGridPackage& package, PackageBytes& output, size_t& outputLength) {
   outputLength = 0;
   if (package.schema != SCHEMA_V1) return Status::UnsupportedSchema;
   if (package.templateId != TEMPLATE_WIDGET_GRID) return Status::UnsupportedTemplate;
   if (package.generatedAt == 0 || package.validUntil < package.generatedAt) return Status::InvalidTimestamp;
   if (package.widgetCount > MAX_WIDGETS) return Status::InvalidLength;
+  if (package.listCount > MAX_LIST_WIDGETS) return Status::InvalidLength;
 
   size_t contentLength = 0;
   for (uint8_t index = 0; index < package.widgetCount; ++index) {
-    const Status status = validateWidget(package.widgets[index]);
+    const Status status = validateWidget(package, package.widgets[index]);
     if (status != Status::Ok) return status;
-    contentLength += widgetContentLength(package.widgets[index]);
+    contentLength += widgetContentLength(package, package.widgets[index]);
   }
   {
     const Status status = validateNoOverlaps(package);
@@ -244,7 +269,7 @@ Status encodeWidgetGridPackage(const WidgetGridPackage& package, PackageBytes& o
 
   size_t offset = CONTENT_OFFSET;
   for (uint8_t index = 0; index < package.widgetCount; ++index) {
-    offset += writeWidget(output.data() + offset, package.widgets[index]);
+    offset += writeWidget(output.data() + offset, package, package.widgets[index]);
   }
   writeU32(output.data() + offset, crc32(output.data(), offset));
   outputLength = totalLength;
@@ -273,13 +298,13 @@ Status decodeWidgetGridPackage(const uint8_t* bytes, const size_t size, WidgetGr
 
   size_t offset = CONTENT_OFFSET;
   for (uint8_t index = 0; index < candidate.widgetCount; ++index) {
-    offset = readWidget(bytes, offset, size, candidate.widgets[index]);
+    offset = readWidget(bytes, offset, size, candidate, candidate.widgets[index]);
     if (offset == SIZE_MAX) return Status::InvalidLength;
   }
   if (offset + CRC_SIZE != size) return Status::InvalidLength;
 
   for (uint8_t index = 0; index < candidate.widgetCount; ++index) {
-    const Status status = validateWidget(candidate.widgets[index]);
+    const Status status = validateWidget(candidate, candidate.widgets[index]);
     if (status != Status::Ok) return status;
   }
   {

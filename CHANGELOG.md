@@ -4,6 +4,10 @@
 
 - The BLE dashboard receiver now reports why it refused a package, not just that it did, so a rejected dashboard update can be diagnosed from the phone instead of from a USB serial capture.
 
+### Changed
+
+- Dashboard widgets take about a tenth of the memory they used to, leaving room for richer dashboards on the same hardware. A package may now carry at most three list widgets.
+
 ### Fixed
 
 - Dashboard packages that carry no widgets are no longer rejected by the storage layer, which previously applied the agenda template's minimum size to every template.

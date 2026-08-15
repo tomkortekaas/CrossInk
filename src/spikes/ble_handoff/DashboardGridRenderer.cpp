@@ -85,7 +85,11 @@ void renderWidgetGrid(GfxRenderer& renderer, const WidgetGridPackage& package) {
         renderKpiWidget(renderer, rects[index], widget.kpi);
         break;
       case WidgetType::List:
-        renderListWidget(renderer, rects[index], widget.list);
+        // A decoded package always carries content for every list widget; skip
+        // rather than draw garbage if a caller hand-built one that does not.
+        if (const ListContent* content = listContentFor(package, widget); content != nullptr) {
+          renderListWidget(renderer, rects[index], *content);
+        }
         break;
     }
   }
