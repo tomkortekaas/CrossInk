@@ -119,10 +119,13 @@ int fittingFontId(const GfxRenderer& renderer, const char* text, const int maxWi
 }
 
 // A weekday name that fits, falling back to the two-letter abbreviation rather
-// than to a truncation like "donderda".
-const char* fittingWeekday(const GfxRenderer& renderer, const Weekday weekday, const int fontId, const int maxWidth) {
+// than to a truncation like "donderda". Callers must pass the style the text
+// will actually be drawn in: BOLD is wider than REGULAR, so measuring in the
+// wrong one lets the full name through and then truncates it anyway.
+const char* fittingWeekday(const GfxRenderer& renderer, const Weekday weekday, const int fontId, const int maxWidth,
+                           const EpdFontFamily::Style style) {
   const char* full = weekdayName(weekday);
-  if (renderer.getTextWidth(fontId, full, EpdFontFamily::REGULAR) <= maxWidth) return full;
+  if (renderer.getTextWidth(fontId, full, style) <= maxWidth) return full;
   return weekdayAbbreviation(weekday);
 }
 
@@ -226,9 +229,12 @@ void renderDateFieldWidget(GfxRenderer& renderer, const WidgetRect& rect, const 
       std::snprintf(value, sizeof(value), "%u", static_cast<unsigned>(today.day));
       break;
     case DateField::Weekday:
+      // Measured at the smallest rung and in BOLD, the style this tile draws
+      // in: the full name gives way to the abbreviation only when it cannot fit
+      // at any size, and fittingFontId below then grows whichever won.
       std::snprintf(value, sizeof(value), "%s",
                     fittingWeekday(renderer, weekdayFromDate(today.year, today.month, today.day),
-                                   VALUE_FONT_FOR_RUNG[0], innerWidth));
+                                   VALUE_FONT_FOR_RUNG[0], innerWidth, EpdFontFamily::BOLD));
       break;
     case DateField::Month:
       std::snprintf(value, sizeof(value), "%s", monthName(today.month));
@@ -327,7 +333,7 @@ void renderDateAutoWidget(GfxRenderer& renderer, const WidgetRect& rect, const W
 
     const int dayFontId = fittingFontId(renderer, day, innerWidth, maxRung, EpdFontFamily::BOLD);
     const int dayAscender = renderer.getFontAscenderSize(dayFontId);
-    const char* weekdayText = fittingWeekday(renderer, weekday, LABEL_FONT_ID, innerWidth);
+    const char* weekdayText = fittingWeekday(renderer, weekday, LABEL_FONT_ID, innerWidth, EpdFontFamily::REGULAR);
     const int blockHeight = dayAscender + TILE_STACK_GAP + labelAscender + TILE_STACK_GAP + labelAscender;
     int y = headerHeight + std::max(padding, (rect.height - headerHeight - blockHeight) / 2);
     drawTextCenteredInRect(renderer, dayFontId, rect, day, EpdFontFamily::BOLD, y, padding, ink);
@@ -340,7 +346,7 @@ void renderDateAutoWidget(GfxRenderer& renderer, const WidgetRect& rect, const W
 
   // Narrow: weekday above the day number, with the abbreviated month underneath
   // only when the tile is tall enough to carry a third line.
-  const char* weekdayText = fittingWeekday(renderer, weekday, LABEL_FONT_ID, innerWidth);
+  const char* weekdayText = fittingWeekday(renderer, weekday, LABEL_FONT_ID, innerWidth, EpdFontFamily::REGULAR);
   const int dayFontId = fittingFontId(renderer, day, innerWidth, maxRung, EpdFontFamily::BOLD);
   const int dayAscender = renderer.getFontAscenderSize(dayFontId);
   const bool showMonth =
