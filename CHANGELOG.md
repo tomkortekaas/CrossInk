@@ -1,3 +1,14 @@
+## [Unreleased]
+
+### Added
+
+- The BLE dashboard receiver now reports why it refused a package, not just that it did, so a rejected dashboard update can be diagnosed from the phone instead of from a USB serial capture.
+
+### Fixed
+
+- Dashboard packages that carry no widgets are no longer rejected by the storage layer, which previously applied the agenda template's minimum size to every template.
+- The isolated BLE receiver firmware builds again when its sources log through `LOG_ERR`; the build environment was missing the `BoardConfig` dependency that `lib/Logging` needs.
+
 ## [v1.5.0] - 2026-08-08
 
 ### Added

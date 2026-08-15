@@ -44,3 +44,37 @@ Refer to https://freeink.org/llms.txt for guidance.
 
 - POSIX TZ signs are inverted from ISO 8601 in `TimeStore::applyTimezone()`: `"UTC-1"` means UTC+1.
 - `LyraTheme::drawHeader()` does not call `BaseTheme::drawHeader()`, so header changes in the base theme must be duplicated in Lyra if needed.
+
+## Host Test Suite And BLE Receiver Builds
+
+- cmake/ctest ARE available, bundled with PlatformIO — earlier sessions wrongly
+  recorded them as missing and fell back to throwaway `clang++` harnesses:
+  ```bash
+  export PATH="$HOME/.platformio/packages/tool-cmake/bin:$PATH"
+  cmake -S test -B /tmp/crossink-test-build -DCMAKE_BUILD_TYPE=Release
+  cmake --build /tmp/crossink-test-build --target BleHandoffRecordTest -j8
+  /tmp/crossink-test-build/ble_handoff_record/BleHandoffRecordTest
+  ```
+  `tool-ninja` is there too. Use the real suite, not ad-hoc harnesses.
+- The X3 holds two app images: `app0`/`ota_0` at `0x10000` is the reader,
+  `app1`/`ota_1` at `0x650000` is the BLE receiver. `DashboardBootSwitch` picks
+  between them by rewriting `otadata`; each must be flashed separately.
+- **Never flash the receiver with `pio run -e spike-ble-receiver-x3 -t upload`.**
+  `-t upload` writes to `0x10000` regardless of that env's
+  `board_upload.offset_address`, so it overwrites the *reader* with the receiver
+  image. The device then boot-loops on `BLE-RX invalid launch route; returning
+  to reader`, because the receiver's launch guard restarts into what is now
+  itself. Recover with `pio run -e default -t upload` (~3 min). Flash the
+  receiver with esptool at the explicit offset instead:
+  ```bash
+  ~/.platformio/penv/bin/python ~/.platformio/packages/tool-esptoolpy/esptool.py \
+    --chip esp32c3 --port /dev/cu.usbmodem31301 --baud 921600 \
+    write_flash 0x650000 .pio/build/spike-ble-receiver-x3/firmware.bin
+  ```
+- `env:default` does NOT build the BLE receiver at all: `BleReceiverMain.cpp` is
+  behind `CROSSINK_BLE_HANDOFF_RECEIVER`, defined only by
+  `env:spike-ble-receiver-x3`. Flashing `-e default` leaves `app1` untouched.
+- `env:spike-ble-receiver-x3` does not extend `[base]`, so it only links what its
+  own `lib_deps` lists. Anything in `src/spikes/ble_handoff/` that includes
+  `<Logging.h>` needs `BoardConfig` there, or the build fails with
+  `fatal error: BoardConfig.h: No such file or directory`.
