@@ -9,7 +9,16 @@ namespace dashboard {
 constexpr size_t MAX_PACKAGE_SIZE = 256;
 constexpr size_t FIXED_HEADER_SIZE = 32;
 constexpr size_t CRC_SIZE = 4;
+// TEMPLATE_AGENDA's own minimum: its 32-byte fixed header (which includes the
+// four text-length bytes at offsets 28..31) plus the CRC trailer.
 constexpr size_t MIN_PACKAGE_SIZE = FIXED_HEADER_SIZE + CRC_SIZE;
+// The prefix every template shares - magic, schema, templateId, declared
+// length, packageId, generatedAt, validUntil - ending where template-specific
+// content begins at offset 28. Smaller than FIXED_HEADER_SIZE, so peeking at
+// any template's envelope must not use the agenda-only minimum: a widget grid
+// carrying no widgets is a valid 34-byte package.
+constexpr size_t SHARED_PREFIX_SIZE = 28;
+constexpr size_t MIN_ENVELOPE_SIZE = SHARED_PREFIX_SIZE + CRC_SIZE;
 constexpr size_t MAX_TITLE_SIZE = 96;
 constexpr size_t MAX_TIME_LINE_SIZE = 48;
 constexpr size_t MAX_FOOTER_SIZE = 40;

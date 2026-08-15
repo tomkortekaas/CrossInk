@@ -190,7 +190,10 @@ Status decodePackage(const uint8_t* bytes, const size_t size, Package& output) {
 
 Status peekPackageHeader(const uint8_t* bytes, const size_t size, PackageHeader& output) {
   if (bytes == nullptr) return Status::InvalidArgument;
-  if (size < MIN_PACKAGE_SIZE || size > MAX_PACKAGE_SIZE) return Status::InvalidSize;
+  // MIN_ENVELOPE_SIZE, not MIN_PACKAGE_SIZE: this reads only the shared prefix,
+  // so it must accept every template's smallest valid package, not just
+  // TEMPLATE_AGENDA's.
+  if (size < MIN_ENVELOPE_SIZE || size > MAX_PACKAGE_SIZE) return Status::InvalidSize;
   if (bytes[0] != 'X' || bytes[1] != '3' || bytes[2] != 'D' || bytes[3] != 'P') return Status::InvalidMagic;
   if (readU16(bytes + LENGTH_OFFSET) != size) return Status::InvalidSize;
   if (bytes[4] != SCHEMA_V1) return Status::UnsupportedSchema;

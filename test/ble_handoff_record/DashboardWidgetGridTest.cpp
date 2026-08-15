@@ -242,3 +242,27 @@ TEST(DashboardWidgetGrid, RejectsInvalidTimestamp) {
   size_t length = 0;
   EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::InvalidTimestamp);
 }
+
+// peekPackageHeader is the only validation the persistence layer runs, and it
+// is documented as template-agnostic. Its MIN_PACKAGE_SIZE, however, is
+// TEMPLATE_AGENDA's 32-byte fixed header plus the CRC. A widget grid's content
+// starts at byte 30, so a valid grid package carrying no widgets is 34 bytes
+// and used to be rejected as InvalidSize by peek while decodeWidgetGridPackage
+// accepted it - meaning such a package could never be persisted.
+TEST(DashboardWidgetGrid, PeekAcceptsWidgetGridPackageWithoutWidgets) {
+  dashboard::WidgetGridPackage package{};
+  package.packageId = 5;
+  package.generatedAt = 500;
+  package.validUntil = 1500;
+  package.widgetCount = 0;
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+  ASSERT_EQ(length, 34u);
+
+  dashboard::PackageHeader header{};
+  EXPECT_EQ(dashboard::peekPackageHeader(bytes.data(), length, header), dashboard::Status::Ok);
+  EXPECT_EQ(header.packageId, 5u);
+  EXPECT_EQ(header.templateId, dashboard::TEMPLATE_WIDGET_GRID);
+}
