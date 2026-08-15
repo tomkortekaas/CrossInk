@@ -80,7 +80,8 @@ wantrouwt als de rest van de firmware.
 weeknummer is ISO-8601 (week 1 is de week met de eerste donderdag). Beide zijn pure functies van
 `(jaar, maand, dag)` en horen in een apart bestandje met eigen tests, los van de renderer.
 
-**Namen.** Vaste NL-tabellen in flash: 7 weekdagnamen en 12 maandnamen, plus hun drieletterafkorting.
+**Namen.** Vaste NL-tabellen in flash: 7 weekdagnamen en 12 maandnamen, plus hun afkortingen
+(weekdagen twee letters — `ma`, `di`, `wo`, `do`, `vr`, `za`, `zo`; maanden drie — `jan` t/m `dec`).
 
 **Indeling.** Bij `field != 0` toont de tegel dat ene veld, zo groot als past, met waar zinnig een
 klein label erboven (`week` boven `33`). Bij `field == 0` kiest de renderer op de binnenmaat van de
@@ -89,7 +90,7 @@ tegel ná padding uit vier indelingen:
 | Binnenmaat | Indeling |
 |---|---|
 | smal en laag | weekdag klein, dagnummer groot |
-| breed en laag | icoon + `vr 15 aug` op één regel, weeknummer erbij als het past |
+| breed en laag | icoon + `za 15 aug` op één regel, weeknummer erbij als het past |
 | smal en hoog | weekdag, dagnummer groot, maand afgekort, gestapeld |
 | breed en hoog | kop met maand + jaar in omgekeerde emphasis, dagnummer groot, weekdag voluit, weeknummer |
 
