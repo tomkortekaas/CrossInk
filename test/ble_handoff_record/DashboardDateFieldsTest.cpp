@@ -62,4 +62,22 @@ TEST(DashboardDateFields, NamesRefuseOutOfRangeMonths) {
   EXPECT_STREQ(dashboard::monthAbbreviation(13), "");
 }
 
+TEST(DashboardDateFields, NamesRefuseOutOfRangeWeekdays) {
+  EXPECT_STREQ(dashboard::weekdayName(static_cast<Weekday>(7)), "");
+  EXPECT_STREQ(dashboard::weekdayAbbreviation(static_cast<Weekday>(7)), "");
+  EXPECT_STREQ(dashboard::weekdayName(static_cast<Weekday>(255)), "");
+  EXPECT_STREQ(dashboard::weekdayAbbreviation(static_cast<Weekday>(255)), "");
+}
+
+// Pins the documented convention: weekdayFromDate has no value to spare for
+// "bad input", so it returns Monday rather than reading past its table. Callers
+// must validate first — isoWeekFromDate does, and so does the renderer.
+TEST(DashboardDateFields, WeekdayFallsBackToMondayOnAnInvalidMonth) {
+  EXPECT_EQ(dashboard::weekdayFromDate(2026, 0, 15), Weekday::Monday);
+  EXPECT_EQ(dashboard::weekdayFromDate(2026, 13, 15), Weekday::Monday);
+  // isoWeekFromDate, which does validate, reports an impossible week instead.
+  EXPECT_EQ(dashboard::isoWeekFromDate(2026, 13, 15).week, 0);
+  EXPECT_EQ(dashboard::isoWeekFromDate(2026, 2, 30).week, 0);
+}
+
 }  // namespace

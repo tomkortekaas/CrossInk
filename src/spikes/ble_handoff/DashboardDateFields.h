@@ -19,9 +19,20 @@ struct IsoWeek {
   uint8_t week;
 };
 
-Weekday weekdayFromDate(uint16_t year, uint8_t month, uint8_t day);
-IsoWeek isoWeekFromDate(uint16_t year, uint8_t month, uint8_t day);
+// Year 0 is never valid: the RTC reports it when it has never been set, and
+// treating that as a real date is how a wall display ends up confidently
+// showing the wrong day.
 bool isValidDate(uint16_t year, uint8_t month, uint8_t day);
+
+// Call isValidDate() first. Unlike isoWeekFromDate(), which returns a week of 0
+// that no real date can produce, a Weekday has no spare value to signal "bad
+// input" — an out-of-range month yields Monday, indistinguishable from a real
+// Monday. The guard exists so the lookup table is never read out of bounds, not
+// so callers can skip validating.
+Weekday weekdayFromDate(uint16_t year, uint8_t month, uint8_t day);
+
+// Returns week 0, a value no real date produces, when the date is invalid.
+IsoWeek isoWeekFromDate(uint16_t year, uint8_t month, uint8_t day);
 
 // Dutch names, held in static constexpr tables so they live in flash rather
 // than DRAM (CLAUDE.md resource rule 3). Out-of-range input returns "" rather
