@@ -141,9 +141,12 @@ constexpr unsigned long X4PRO_POWER_DOUBLE_CLICK_MS = 500;
 constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 400;
 
 constexpr uint64_t dashboardSleepTimerWakeUs() {
-  // The fast validation milestone is foreground-only. Keep timer sync disabled
-  // until its still-unsafe live NimBLE teardown has a separately proven exit.
+#if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
+  // One interval for every arming point — see kGateTimerWakeUs.
+  return dashboard_sync::kGateTimerWakeUs;
+#else
   return 0;
+#endif
 }
 }  // namespace
 
@@ -325,6 +328,13 @@ RTC_NOINIT_ATTR uint32_t silentReaderPageBuildFlags;
 #if defined(CROSSINK_ENABLE_DASHBOARD_BLE_PROBE) && CROSSINK_ENABLE_DASHBOARD_BLE_PROBE
 RTC_NOINIT_ATTR uint32_t dashboardBleSkipOnceMagic;
 #endif
+// Battery-observable wake tally. RTC memory survives deep sleep and dies with the
+// battery rail, which is exactly the distinction under test: a device that slept
+// and woke on its timer comes back with a running count, a device that switched
+// off comes back at zero. Reads garbage on cold boot, so it is seeded on POWERON.
+RTC_NOINIT_ATTR uint32_t timerWakeTallyMagic;
+RTC_NOINIT_ATTR uint32_t timerWakeTally;
+constexpr uint32_t TIMER_WAKE_TALLY_MAGIC = 0xC1EAB7A1;
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
@@ -829,6 +839,17 @@ void setup() {
   LOG_INF("BOOT", "Reset diagnostic: reset=%d(%s) sleepWake=%d(%s)", static_cast<int>(rawResetReason),
           resetReasonName(rawResetReason), static_cast<int>(rawWakeupCause), wakeupCauseName(rawWakeupCause));
 
+  // A cold boot leaves RTC memory uninitialized, so validate the magic before
+  // trusting the tally. Losing the rail lands here too — which is the signal.
+  if (rawResetReason == ESP_RST_POWERON || timerWakeTallyMagic != TIMER_WAKE_TALLY_MAGIC) {
+    timerWakeTallyMagic = TIMER_WAKE_TALLY_MAGIC;
+    timerWakeTally = 0;
+  }
+  if (rawWakeupCause == ESP_SLEEP_WAKEUP_TIMER) {
+    ++timerWakeTally;
+  }
+  LOG_INF("BOOT", "Timer wake tally: %lu", static_cast<unsigned long>(timerWakeTally));
+
   // Read-and-clear so a panic later in setup() doesn't loop into silent reboot.
   // Validate the target too — RTC_NOINIT memory is uninitialized on cold boot.
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
@@ -1151,6 +1172,13 @@ void setup() {
 
   // Ensure we're not still holding the power button before leaving setup
   waitForPowerRelease();
+
+  // Repeat the wake tally at the end of setup. The copy next to the reset
+  // diagnostic is the authoritative one, but it lands inside the ~1.1 s the USB
+  // CDC port spends enumerating, so a capture opened after the reset can never
+  // see it. By here the port is up and this line always arrives.
+  LOG_INF("BOOT", "Timer wake tally (late): %lu", static_cast<unsigned long>(timerWakeTally));
+
   allowSleepAt = millis() + 2000;
 }
 

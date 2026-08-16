@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Fixed
+
+- The X3 no longer switches itself off when it goes to sleep with a scheduled wake-up pending. Its power latch and its SD-card power switch are the same pin, so releasing it for sleep cut the battery rail; on USB the device stayed powered and the problem was invisible.
+
 ## [v1.5.0] - 2026-08-04
 
 ### Added

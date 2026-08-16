@@ -4,7 +4,15 @@
 
 namespace dashboard_sync {
 
-inline constexpr uint64_t kGateTimerWakeUs = 30ULL * 60ULL * 1000ULL * 1000ULL;
+// Seconds between dashboard timer wakes. Overridable at build time so a battery test
+// can run a short cycle without shipping one: -DCROSSINK_DASHBOARD_TIMER_WAKE_S=60.
+// It belongs here rather than at the sleep call site, because runConnectionGate()
+// re-arms the timer itself after every window — an override that reached only the
+// first sleep would silently leave every later cycle at the default.
+#ifndef CROSSINK_DASHBOARD_TIMER_WAKE_S
+#define CROSSINK_DASHBOARD_TIMER_WAKE_S 1800
+#endif
+inline constexpr uint64_t kGateTimerWakeUs = static_cast<uint64_t>(CROSSINK_DASHBOARD_TIMER_WAKE_S) * 1000000ULL;
 inline constexpr uint32_t kGateWindowMs = 10000;
 inline constexpr uint32_t kConnectedSettleMs = 750;
 
