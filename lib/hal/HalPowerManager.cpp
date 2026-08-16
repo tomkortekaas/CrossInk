@@ -90,6 +90,7 @@ void HalPowerManager::setPowerSaving(bool enabled) {
 }
 
 void HalPowerManager::startDeepSleep(HalGPIO& gpio, const uint64_t timerWakeUs) const {
+  const bool timerWake = timerWakeUs > 0;
   disableWiFiBeforeDeepSleep();
 
 #ifdef ENABLE_SERIAL_LOG
@@ -101,15 +102,25 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio, const uint64_t timerWakeUs) 
 #endif
 
 #if !SOC_PM_SUPPORT_EXT1_WAKEUP
-  // Release every configured battery latch. BoardConfig owns the pin mapping;
-  // the collision guard prevents a stale/mismatched profile from driving a
-  // display or SD bus pin low and holding it through sleep.
-  for (const int8_t pin : {BoardConfig::ACTIVE.power.latch0, BoardConfig::ACTIVE.power.latch1}) {
-    if (pin < 0 || BoardConfig::latchConflictsWithBus(pin)) continue;
-    const auto latch = static_cast<gpio_num_t>(pin);
-    gpio_set_direction(latch, GPIO_MODE_OUTPUT);
-    gpio_set_level(latch, 0);
-    gpio_hold_en(latch);
+  // Release every configured battery latch — a software power-off. BoardConfig
+  // owns the pin mapping; the collision guard prevents a stale/mismatched profile
+  // from driving a display or SD bus pin low and holding it through sleep.
+  //
+  // Skipped when a timer wake is armed: releasing the latch cuts the battery rail,
+  // so the device would switch off and the timer would never fire. The latch is
+  // asserted and held instead, further down. USB hides the difference because VBUS
+  // feeds the same latch node in parallel with the latch pin.
+  if (!timerWake) {
+    for (const int8_t pin : {BoardConfig::ACTIVE.power.latch0, BoardConfig::ACTIVE.power.latch1}) {
+      if (pin < 0 || BoardConfig::latchConflictsWithBus(pin)) continue;
+      const auto latch = static_cast<gpio_num_t>(pin);
+      // A previous timer-wake sleep held this pin HIGH; without releasing that
+      // hold first, the level write below is silently a no-op.
+      gpio_hold_dis(latch);
+      gpio_set_direction(latch, GPIO_MODE_OUTPUT);
+      gpio_set_level(latch, 0);
+      gpio_hold_en(latch);
+    }
   }
 #endif
 
@@ -129,8 +140,14 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio, const uint64_t timerWakeUs) 
   freeink::PowerManager::waitForPowerButtonRelease();
   esp_sleep_config_gpio_isolate();
   freeink::PowerManager::armPowerButtonWakeup();
-  if (timerWakeUs > 0 && esp_sleep_enable_timer_wakeup(timerWakeUs) != ESP_OK) {
+  if (timerWake && esp_sleep_enable_timer_wakeup(timerWakeUs) != ESP_OK) {
     LOG_ERR("PWR", "Failed to arm deep-sleep timer for %llu us", timerWakeUs);
+  }
+  if (timerWake) {
+    // After the isolate, for the same reason the power pin is re-armed above:
+    // isolation leaves the latch pin floating, and a floating latch on battery
+    // is a power-off. gpio_deep_sleep_hold_en() below makes the hold persist.
+    freeink::PowerManager::holdPowerRailsForTimerWake();
   }
   gpio_deep_sleep_hold_en();
   esp_deep_sleep_start();

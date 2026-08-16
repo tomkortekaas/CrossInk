@@ -8,6 +8,10 @@
 - A dashboard now chooses how its tiles are framed (no frame, thin rules between neighbours, a light outline, or a solid one), how tightly they are packed, and whether agenda rows are separated by rules.
 - A dashboard tile can show the date, read from the device's own clock. In the phone app you pick what it shows — the day, the weekday, the month, the year or the week number — or let it choose a layout to suit its size, from a bare day number on the smallest tile up to a full calendar sheet with month, weekday and week number. Because the date itself is never sent, the tile turns over at midnight on its own and keeps telling the truth while the phone is away. A device whose clock has never been set shows a dash rather than an invented date.
 
+### Fixed
+
+- The X3 no longer switches itself off when it goes to sleep with a scheduled wake-up pending, so a dashboard left on battery keeps refreshing instead of going dark until the power button is pressed. Its power latch and its SD-card power switch turn out to be the same pin, and releasing it for sleep cut the battery rail; on USB the device stayed powered through the cable and the problem was invisible.
+
 ### Changed
 
 - Dashboard tile values are set in one typeface at four sizes, so a value reads clearly apart from its label. Previously every tile used the same two sizes.
