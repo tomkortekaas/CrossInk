@@ -2,8 +2,10 @@
 
 #ifdef CROSSINK_BLE_HANDOFF_READER
 
+#include <BoardConfig.h>
 #include <HalClock.h>
 #include <HalStorage.h>
+#include <Wire.h>
 
 #include <cstdio>
 
@@ -49,9 +51,58 @@ const char* resultName(const ReceiverResult result) {
   }
 }
 
+// BQ27220 standard command registers. RemainingCapacity is what makes a battery
+// question answerable at all: the gauge is a coulomb counter and keeps
+// integrating while the ESP32 is in deep sleep, so the difference between two
+// wakes is the charge that whole interval cost, sleep included. State-of-charge
+// is only whole percents — about 15 mAh a step here — which is coarser than a
+// night of standby, so it would read the same before and after and say nothing.
+//
+// Read straight off the bus rather than through BatteryMonitor because that
+// lives in the freeink-sdk submodule, which has no fork and carries changes as
+// patches; diagnostics are not worth another one. Safe here because the RTC
+// read just above shares this bus and has already brought Wire up.
+constexpr uint8_t GAUGE_VOLTAGE_MV = 0x08;
+constexpr uint8_t GAUGE_REMAINING_MAH = 0x10;
+
+bool readGaugeWord(const uint8_t reg, uint16_t& out) {
+  const auto& gauge = BoardConfig::ACTIVE.batteryGauge;
+  if (gauge.gaugeAddr == 0) return false;
+  const auto addr = static_cast<uint8_t>(gauge.gaugeAddr);
+  Wire.beginTransmission(addr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(addr, static_cast<uint8_t>(2)) != 2) return false;
+  const uint8_t low = static_cast<uint8_t>(Wire.read());
+  const uint8_t high = static_cast<uint8_t>(Wire.read());
+  out = static_cast<uint16_t>(low | (high << 8));
+  return true;
+}
+
+// -1 for a gauge that did not answer, so a bus failure reads differently from a
+// genuine zero.
+int gaugeValueOrUnknown(const uint8_t reg) {
+  uint16_t value = 0;
+  return readGaugeWord(reg, value) ? static_cast<int>(value) : -1;
+}
+
+const char* stageName(const BootTraceStage stage) {
+  switch (stage) {
+    case BootTraceStage::ReceiverHandoff:
+      return "handoff";
+    case BootTraceStage::ReceiverTimedOut:
+      return "timedout";
+    case BootTraceStage::PowerButtonRejected:
+      return "rejected";
+    default:
+      return "full";
+  }
+}
+
 }  // namespace
 
-void appendBootTrace(const uint8_t wakeupReason, const ReceiverResult retainedResult, const bool storageReady) {
+void appendBootTrace(const uint8_t wakeupReason, const ReceiverResult retainedResult, const BootTraceStage stage,
+                     const char* resetName, const bool storageReady) {
   if (!storageReady) return;
 
   uint16_t year = 0;
@@ -64,12 +115,19 @@ void appendBootTrace(const uint8_t wakeupReason, const ReceiverResult retainedRe
   // UTC on the boots where settings failed to load.
   const bool haveClock = halClock.getDateTime(year, month, day, hour, minute);
 
-  char line[96];
+  const int milliVolts = gaugeValueOrUnknown(GAUGE_VOLTAGE_MV);
+  const int remainingMah = gaugeValueOrUnknown(GAUGE_REMAINING_MAH);
+
+  char line[160];
+  const char* reset = resetName != nullptr ? resetName : "?";
   const int written =
-      haveClock ? snprintf(line, sizeof(line), "%04u-%02u-%02u %02u:%02u UTC wake=%s receiver=%s\n", year, month, day,
-                           hour, minute, wakeName(wakeupReason), resultName(retainedResult))
-                : snprintf(line, sizeof(line), "(no clock) +%lums wake=%s receiver=%s\n",
-                           static_cast<unsigned long>(millis()), wakeName(wakeupReason), resultName(retainedResult));
+      haveClock ? snprintf(line, sizeof(line),
+                           "%04u-%02u-%02u %02u:%02u UTC wake=%s receiver=%s stage=%s reset=%s mv=%d mah=%d\n", year,
+                           month, day, hour, minute, wakeName(wakeupReason), resultName(retainedResult),
+                           stageName(stage), reset, milliVolts, remainingMah)
+                : snprintf(line, sizeof(line), "(no clock) +%lums wake=%s receiver=%s stage=%s reset=%s mv=%d mah=%d\n",
+                           static_cast<unsigned long>(millis()), wakeName(wakeupReason), resultName(retainedResult),
+                           stageName(stage), reset, milliVolts, remainingMah);
   if (written <= 0) return;
 
   if (Storage.exists(TRACE_PATH)) {
@@ -88,6 +146,15 @@ void appendBootTrace(const uint8_t wakeupReason, const ReceiverResult retainedRe
   }
   file.write(reinterpret_cast<const uint8_t*>(line), static_cast<size_t>(written));
   file.close();
+}
+
+void appendEarlyBootTrace(const uint8_t wakeupReason, const ReceiverResult retainedResult, const BootTraceStage stage,
+                          const char* resetName) {
+  if (!Storage.begin()) {
+    LOG_ERR("BLETRACE", "Could not mount storage for an early boot trace");
+    return;
+  }
+  appendBootTrace(wakeupReason, retainedResult, stage, resetName, true);
 }
 
 }  // namespace dashboard

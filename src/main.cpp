@@ -887,6 +887,8 @@ void setup() {
   const bool returnedFromReceiver = rawResetReason == ESP_RST_SW && dashboard_boot::isRunningReader();
   if (returnedFromReceiver && retainedResult == dashboard::ReceiverResult::TimedOut) {
     LOG_INF("BLEPAY", "Receiver window timed out; returning directly to Agenda sleep");
+    dashboard::appendEarlyBootTrace(static_cast<uint8_t>(wakeupReason), retainedResult,
+                                    dashboard::BootTraceStage::ReceiverTimedOut, resetReasonName(rawResetReason));
     dashboard::retainReceiverResult(dashboard::ReceiverResult::AwaitingWindow);
     uint8_t agendaWakeHour = 12;
     uint8_t agendaWakeMinute = 0;
@@ -908,6 +910,13 @@ void setup() {
       LOG_INF("BOOT", "Power-button wake: verifying duration required=%u shortAllowed=%d", requiredDuration,
               shortPressWakes);
       if (!gpio.verifyPowerButtonWakeup(requiredDuration, shortPressWakes)) {
+#ifdef CROSSINK_BLE_HANDOFF_READER
+        // Sleeps without a wake timer, so an agenda cycle that gets here is
+        // over until someone picks the device up. Worth a line of its own.
+        dashboard::appendEarlyBootTrace(static_cast<uint8_t>(wakeupReason), retainedResult,
+                                        dashboard::BootTraceStage::PowerButtonRejected,
+                                        resetReasonName(rawResetReason));
+#endif
         powerManager.startDeepSleep(gpio);
       }
       break;
@@ -935,6 +944,12 @@ void setup() {
           wakeupReason == HalGPIO::WakeupReason::Timer ? dashboard::WakeSource::Timer : dashboard::WakeSource::Other) ==
       dashboard::AgendaBootRoute::Receiver) {
     LOG_INF("BLEPAY", "Agenda timer wake; switching to isolated dashboard receiver");
+    // Written before the hand-off, not after it: this is the one line that says
+    // a timer wake happened at all. If the switch fails, or the receiver hangs
+    // and never resets back, the return boot that would have reported the
+    // verdict never comes.
+    dashboard::appendEarlyBootTrace(static_cast<uint8_t>(wakeupReason), retainedResult,
+                                    dashboard::BootTraceStage::ReceiverHandoff, resetReasonName(rawResetReason));
     if (dashboard_boot::switchToReceiver()) {
       delay(50);
       ESP.restart();
@@ -958,7 +973,8 @@ void setup() {
 #ifdef CROSSINK_BLE_HANDOFF_READER
   // First point in boot where the card is mounted. The wake fields were sampled
   // far earlier, so they are carried down to here rather than re-read.
-  dashboard::appendBootTrace(static_cast<uint8_t>(wakeupReason), retainedResult, true);
+  dashboard::appendBootTrace(static_cast<uint8_t>(wakeupReason), retainedResult, dashboard::BootTraceStage::Full,
+                             resetReasonName(rawResetReason), true);
 #endif
 
   HalSystem::checkPanic();
