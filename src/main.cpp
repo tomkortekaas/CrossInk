@@ -293,7 +293,11 @@ const char* wakeupRouteName(const HalGPIO::WakeupReason reason) {
 // Resolves the current local hour/minute for Agenda wake-window gating.
 // Falls back to midday (safely inside the wake window) if the RTC isn't
 // ready, so a clock read failure never accidentally suppresses wake-ups.
-void resolveAgendaWakeLocalTime(uint8_t& hour, uint8_t& minute) {
+// `offsetQ` is passed in rather than read from SETTINGS because one caller runs
+// before the SD card that SETTINGS lives on is mounted; see the NVS mirror by
+// mirrorClockUtcOffsetQToNvs(). Falls back to midday — safely inside the wake
+// window — when the RTC cannot be read at all.
+void resolveAgendaWakeLocalTime(uint8_t& hour, uint8_t& minute, const uint8_t offsetQ) {
   hour = 12;
   minute = 0;
   uint16_t year = 0;
@@ -302,11 +306,9 @@ void resolveAgendaWakeLocalTime(uint8_t& hour, uint8_t& minute) {
   uint8_t rtcHour = 0;
   uint8_t rtcMinute = 0;
   if (!halClock.getDateTime(year, month, day, rtcHour, rtcMinute)) return;
-  const int offsetMinutes = (static_cast<int>(SETTINGS.clockUtcOffsetQ) - 48) * 15;
-  const int totalMinutes =
-      ((static_cast<int>(rtcHour) * 60 + rtcMinute + offsetMinutes) % (24 * 60) + 24 * 60) % (24 * 60);
-  hour = static_cast<uint8_t>(totalMinutes / 60);
-  minute = static_cast<uint8_t>(totalMinutes % 60);
+  const uint16_t localMinutes = dashboard::localMinuteOfDay(rtcHour, rtcMinute, offsetQ);
+  hour = static_cast<uint8_t>(localMinutes / 60);
+  minute = static_cast<uint8_t>(localMinutes % 60);
 }
 #endif
 
@@ -666,6 +668,15 @@ static bool loadSleepFrameBuffer() {
 constexpr char WAKE_NVS_NAMESPACE[] = "crosspoint";
 constexpr char WAKE_SHORT_PRESS_KEY[] = "wakeShortPr";
 
+// The Agenda sleep window is expressed in local time, so deciding when to wake
+// needs the UTC offset — and one of the two paths that decides it (a receiver
+// window that timed out, in setup()) also runs before the SD card is mounted.
+// It read the compiled-in default of 48 instead, which means UTC, so the device
+// kept waking two hours past the window on a +2 offset and came back two hours
+// late in the morning. Same mirror treatment as the wake-hold flag above.
+constexpr char CLOCK_UTC_OFFSET_KEY[] = "clockUtcOffQ";
+constexpr uint8_t CLOCK_UTC_OFFSET_Q_UTC = 48;
+
 bool readWakeShortPressFromNvs() {
 #ifdef SIMULATOR
   return false;
@@ -688,6 +699,36 @@ void mirrorWakeShortPressToNvs() {
   const bool have = nvs_get_u8(h, WAKE_SHORT_PRESS_KEY, &cur) == ESP_OK;
   if (!have || cur != want) {  // skip the flash write when unchanged
     nvs_set_u8(h, WAKE_SHORT_PRESS_KEY, want);
+    nvs_commit(h);
+  }
+  nvs_close(h);
+#endif
+}
+
+// UTC when the mirror is missing, which is the first boot after this change and
+// matches what the code did before it. One clean sleep or settings load fills it.
+uint8_t readClockUtcOffsetQFromNvs() {
+#ifdef SIMULATOR
+  return CLOCK_UTC_OFFSET_Q_UTC;
+#else
+  nvs_handle_t h;
+  if (nvs_open(WAKE_NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return CLOCK_UTC_OFFSET_Q_UTC;
+  uint8_t v = 0;
+  const esp_err_t e = nvs_get_u8(h, CLOCK_UTC_OFFSET_KEY, &v);
+  nvs_close(h);
+  return e == ESP_OK ? v : CLOCK_UTC_OFFSET_Q_UTC;
+#endif
+}
+
+void mirrorClockUtcOffsetQToNvs() {
+#ifndef SIMULATOR
+  const uint8_t want = SETTINGS.clockUtcOffsetQ;
+  nvs_handle_t h;
+  if (nvs_open(WAKE_NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) return;
+  uint8_t cur = 0;
+  const bool have = nvs_get_u8(h, CLOCK_UTC_OFFSET_KEY, &cur) == ESP_OK;
+  if (!have || cur != want) {  // skip the flash write when unchanged
+    nvs_set_u8(h, CLOCK_UTC_OFFSET_KEY, want);
     nvs_commit(h);
   }
   nvs_close(h);
@@ -727,7 +768,8 @@ void enterDeepSleepInternal(const bool fromTimeout, const bool preserveLastReade
 
   putTiltSensorToSleepForDeepSleep();
   display.deepSleep();
-  mirrorWakeShortPressToNvs();  // next boot's wake-hold check reads this pre-SD
+  mirrorWakeShortPressToNvs();   // next boot's wake-hold check reads this pre-SD
+  mirrorClockUtcOffsetQToNvs();  // and its Agenda wake window reads this one
   LOG_DBG("MAIN", "Entering deep sleep");
 
   uint64_t timerWakeUs = 0;
@@ -735,7 +777,8 @@ void enterDeepSleepInternal(const bool fromTimeout, const bool preserveLastReade
   const bool agendaSleep = SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::AGENDA_SLEEP;
   uint8_t agendaWakeHour = 12;
   uint8_t agendaWakeMinute = 0;
-  if (agendaSleep) resolveAgendaWakeLocalTime(agendaWakeHour, agendaWakeMinute);
+  // SETTINGS is loaded on this path, and the mirror above was just written from it.
+  if (agendaSleep) resolveAgendaWakeLocalTime(agendaWakeHour, agendaWakeMinute, SETTINGS.clockUtcOffsetQ);
   timerWakeUs = dashboard::sleepTimerIntervalUs(agendaSleep, agendaWakeHour, agendaWakeMinute);
   dashboard::retainReceiverResult(agendaSleep ? dashboard::ReceiverResult::AwaitingWindow
                                               : dashboard::ReceiverResult::None);
@@ -892,7 +935,8 @@ void setup() {
     dashboard::retainReceiverResult(dashboard::ReceiverResult::AwaitingWindow);
     uint8_t agendaWakeHour = 12;
     uint8_t agendaWakeMinute = 0;
-    resolveAgendaWakeLocalTime(agendaWakeHour, agendaWakeMinute);
+    // Pre-SD: SETTINGS is not loaded here, so the offset comes from its NVS mirror.
+    resolveAgendaWakeLocalTime(agendaWakeHour, agendaWakeMinute, readClockUtcOffsetQFromNvs());
     powerManager.startDeepSleep(gpio, dashboard::sleepTimerIntervalUs(true, agendaWakeHour, agendaWakeMinute));
   }
   if (returnedFromReceiver && retainedResult == dashboard::ReceiverResult::Accepted) {
@@ -1006,10 +1050,11 @@ void setup() {
   const bool restoreLightOn = SETTINGS.frontlightOn != 0 && (SETTINGS.frontlightRestoreOnWake != 0 || isSilentReboot);
   Frontlight.begin(SETTINGS.frontlightBrightness, SETTINGS.frontlightWarmth, restoreLightOn);
 
-  // Re-sync the wake-hold NVS mirror with the freshly-loaded settings, covering
-  // a setting change followed by power loss without a clean sleep. (The wake
-  // verification itself already ran, pre-SD, further up.)
+  // Re-sync the pre-SD NVS mirrors with the freshly-loaded settings, covering a
+  // setting change followed by power loss without a clean sleep. (The wake
+  // verification and the Agenda wake window already ran, pre-SD, further up.)
   mirrorWakeShortPressToNvs();
+  mirrorClockUtcOffsetQToNvs();
 
   // Recovery firmware mode: hold a side button together with Power to open the
   // SD-card firmware update screen. X4 Pro uses BTN_DOWN because BTN_UP is GPIO0,
