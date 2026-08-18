@@ -307,4 +307,73 @@ TEST(WidgetGridV2Decode, RejectsUnknownWidgetType) {
   EXPECT_NE(dashboard::v2::decodeWidgetGridPackageV2(bytes.data(), length, decoded), dashboard::Status::Ok);
 }
 
+// Een groep met één item, geen kop, label "X3", waarde "50%", geen detail.
+// Handmatig uitgerekend: widget begint op 31, groepskop op 31+7=38,
+// items beginnen op 38+3=41 (kop is leeg), itemvelden 41..44, dan de tekst.
+TEST(WidgetGridV2Bytes, GroupLayoutIsAtTheExpectedOffsets) {
+  dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
+  dashboard::v2::WidgetV2 widget{};
+  widget.type = dashboard::v2::WidgetType::Group;
+  widget.column = 2;
+  widget.row = 3;
+  widget.columnSpan = 4;
+  widget.rowSpan = 5;
+  widget.groupIndex = 0;
+  dashboard::v2::GroupContent& group = package.groups[0];
+  group.shape = dashboard::v2::GROUP_SHAPE_BAR;
+  group.itemCount = 1;
+  group.items[0].fill = 79;
+  group.items[0].labelLength = 2;
+  group.items[0].labelBytes[0] = 'X';
+  group.items[0].labelBytes[1] = '3';
+  group.items[0].valueLength = 3;
+  group.items[0].valueBytes[0] = '5';
+  group.items[0].valueBytes[1] = '0';
+  group.items[0].valueBytes[2] = '%';
+  package.groupCount = 1;
+  package.widgets[0] = widget;
+  package.widgetCount = 1;
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
+
+  EXPECT_EQ(bytes[31], static_cast<uint8_t>(dashboard::v2::WidgetType::Group));
+  EXPECT_EQ(bytes[32], 2);   // column
+  EXPECT_EQ(bytes[33], 3);   // row
+  EXPECT_EQ(bytes[34], 4);   // columnSpan
+  EXPECT_EQ(bytes[35], 5);   // rowSpan
+  EXPECT_EQ(bytes[38], dashboard::v2::GROUP_SHAPE_BAR);
+  EXPECT_EQ(bytes[39], 0);   // headingLength
+  EXPECT_EQ(bytes[40], 1);   // itemCount
+  EXPECT_EQ(bytes[41], 2);   // labelLength
+  EXPECT_EQ(bytes[42], 3);   // valueLength
+  EXPECT_EQ(bytes[43], 0);   // detailLength
+  EXPECT_EQ(bytes[44], 79);  // fill
+  EXPECT_EQ(bytes[45], 'X');
+  EXPECT_EQ(bytes[46], '3');
+  EXPECT_EQ(bytes[47], '5');
+  EXPECT_EQ(bytes[48], '0');
+  EXPECT_EQ(bytes[49], '%');
+  // 31 kop + 7 widget + 3 groepskop + 4 itemkop + 5 tekst + 4 CRC = 54
+  EXPECT_EQ(length, 54u);
+}
+
+// De vulbyte staat vóór de tekst, niet erachter. Zonder deze test schuift een
+// verkeerde volgorde ongemerkt door naar de Swift-encoder.
+TEST(WidgetGridV2Bytes, FillPrecedesTheTextBytes) {
+  dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
+  package.widgets[0] = groupWidget(package, 0, 0, 1, 1, dashboard::v2::GROUP_SHAPE_ARC);
+  package.widgetCount = 1;
+  package.groups[0].items[0].fill = 42;
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
+
+  // groepskop op 38 (shape, headingLength, itemCount), itemkop op 41.
+  EXPECT_EQ(bytes[44], 42);
+  EXPECT_EQ(bytes[45], 'T');  // eerste teken van "Thuisaccu"
+}
+
 }  // namespace
