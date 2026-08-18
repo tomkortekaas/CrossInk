@@ -160,4 +160,49 @@ TEST(WidgetGridV2Validate, RejectsTooManyItems) {
   EXPECT_NE(dashboard::v2::validateWidgetV2(package, package.widgets[0]), dashboard::Status::Ok);
 }
 
+dashboard::v2::WidgetGridPackageV2 minimalPackage() {
+  dashboard::v2::WidgetGridPackageV2 package{};
+  package.packageId = 7;
+  package.generatedAt = 1000;
+  package.validUntil = 2000;
+  return package;
+}
+
+TEST(WidgetGridV2Encode, LengthFieldMatchesActualLength) {
+  dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
+  package.widgets[0] = groupWidget(package, 0, 0, 12, 1, dashboard::v2::GROUP_SHAPE_STRIP);
+  package.widgetCount = 1;
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
+
+  const uint16_t declared = static_cast<uint16_t>(bytes[6]) | (static_cast<uint16_t>(bytes[7]) << 8);
+  EXPECT_EQ(declared, length);
+  EXPECT_EQ(bytes[5], dashboard::v2::TEMPLATE_WIDGET_GRID_V2);
+  EXPECT_EQ(bytes[28], dashboard::v2::GRID_COLUMNS);
+}
+
+TEST(WidgetGridV2Encode, RejectsOverlappingWidgets) {
+  dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
+  package.widgets[0] = groupWidget(package, 0, 0, 6, 2, dashboard::v2::GROUP_SHAPE_ARC);
+  package.widgets[1] = groupWidget(package, 3, 1, 6, 2, dashboard::v2::GROUP_SHAPE_ARC);
+  package.widgetCount = 2;
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  EXPECT_NE(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
+}
+
+TEST(WidgetGridV2Encode, RejectsMissingTimestamps) {
+  dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
+  package.generatedAt = 0;
+  package.widgets[0] = groupWidget(package, 0, 0, 1, 1, dashboard::v2::GROUP_SHAPE_ARC);
+  package.widgetCount = 1;
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  EXPECT_NE(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
+}
+
 }  // namespace
