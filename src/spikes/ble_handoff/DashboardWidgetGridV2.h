@@ -157,6 +157,10 @@ struct WidgetGridPackageV2 {
 const ListContentV2* listContentFor(const WidgetGridPackageV2& package, const WidgetV2& widget);
 const GroupContent* groupContentFor(const WidgetGridPackageV2& package, const WidgetV2& widget);
 
+// Publiek zodat de tests één widget los kunnen keuren; encode en decode roepen
+// dit voor elk widget aan.
+Status validateWidgetV2(const WidgetGridPackageV2& package, const WidgetV2& widget);
+
 Status encodeWidgetGridPackageV2(const WidgetGridPackageV2& package, PackageBytes& output, size_t& outputLength);
 Status decodeWidgetGridPackageV2(const uint8_t* bytes, size_t size, WidgetGridPackageV2& output);
 
