@@ -205,4 +205,106 @@ TEST(WidgetGridV2Encode, RejectsMissingTimestamps) {
   EXPECT_NE(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
 }
 
+void rewriteCrcV2(dashboard::PackageBytes& bytes, const size_t length) {
+  const uint32_t crc = dashboard::crc32(bytes.data(), length - dashboard::CRC_SIZE);
+  for (size_t index = 0; index < dashboard::CRC_SIZE; ++index) {
+    bytes[length - dashboard::CRC_SIZE + index] = static_cast<uint8_t>(crc >> (index * 8U));
+  }
+}
+
+// De belangrijkste test van dit plan: alles wat een groep draagt moet de
+// draad overleven. Loopt de Swift-encoder ooit uit de pas, dan is dit de test
+// die het als eerste laat zien.
+TEST(WidgetGridV2Decode, GroupRoundTripsEveryField) {
+  dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
+  package.widgets[0] = groupWidget(package, 0, 1, 12, 3, dashboard::v2::GROUP_SHAPE_ARC);
+  package.widgetCount = 1;
+  dashboard::v2::GroupContent& group = package.groups[0];
+  const char* heading = "Accu's";
+  group.headingLength = static_cast<uint8_t>(std::strlen(heading));
+  std::copy_n(reinterpret_cast<const uint8_t*>(heading), group.headingLength, group.headingBytes.begin());
+  group.itemCount = 2;
+  group.items[1].fill = dashboard::v2::FILL_NONE;
+  const char* detail = "410 km";
+  group.items[1].detailLength = static_cast<uint8_t>(std::strlen(detail));
+  std::copy_n(reinterpret_cast<const uint8_t*>(detail), group.items[1].detailLength,
+              group.items[1].detailBytes.begin());
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
+
+  dashboard::v2::WidgetGridPackageV2 decoded{};
+  ASSERT_EQ(dashboard::v2::decodeWidgetGridPackageV2(bytes.data(), length, decoded), dashboard::Status::Ok);
+
+  ASSERT_EQ(decoded.widgetCount, 1);
+  ASSERT_EQ(decoded.groupCount, 1);
+  EXPECT_EQ(decoded.widgets[0].type, dashboard::v2::WidgetType::Group);
+  EXPECT_EQ(decoded.widgets[0].columnSpan, 12);
+  EXPECT_EQ(decoded.widgets[0].rowSpan, 3);
+  const dashboard::v2::GroupContent& out = decoded.groups[0];
+  EXPECT_EQ(out.shape, dashboard::v2::GROUP_SHAPE_ARC);
+  EXPECT_EQ(out.itemCount, 2);
+  EXPECT_EQ(out.headingLength, std::strlen("Accu's"));
+  EXPECT_EQ(out.items[0].fill, 50);
+  EXPECT_EQ(out.items[1].fill, dashboard::v2::FILL_NONE);
+  EXPECT_EQ(out.items[1].detailLength, std::strlen("410 km"));
+}
+
+TEST(WidgetGridV2Decode, RejectsTemplateThree) {
+  dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
+  package.widgets[0] = groupWidget(package, 0, 0, 1, 1, dashboard::v2::GROUP_SHAPE_ARC);
+  package.widgetCount = 1;
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
+  bytes[5] = 3;
+  rewriteCrcV2(bytes, length);
+
+  dashboard::v2::WidgetGridPackageV2 decoded{};
+  EXPECT_EQ(dashboard::v2::decodeWidgetGridPackageV2(bytes.data(), length, decoded),
+            dashboard::Status::UnsupportedTemplate);
+}
+
+TEST(WidgetGridV2Decode, RejectsWrongGridColumns) {
+  dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
+  package.widgets[0] = groupWidget(package, 0, 0, 1, 1, dashboard::v2::GROUP_SHAPE_ARC);
+  package.widgetCount = 1;
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
+  bytes[28] = 4;
+  rewriteCrcV2(bytes, length);
+
+  dashboard::v2::WidgetGridPackageV2 decoded{};
+  EXPECT_NE(dashboard::v2::decodeWidgetGridPackageV2(bytes.data(), length, decoded), dashboard::Status::Ok);
+}
+
+TEST(WidgetGridV2Decode, RejectsBadCrc) {
+  dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
+  package.widgets[0] = groupWidget(package, 0, 0, 1, 1, dashboard::v2::GROUP_SHAPE_ARC);
+  package.widgetCount = 1;
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
+  bytes[length - 1] ^= 0xFF;
+
+  dashboard::v2::WidgetGridPackageV2 decoded{};
+  EXPECT_EQ(dashboard::v2::decodeWidgetGridPackageV2(bytes.data(), length, decoded), dashboard::Status::InvalidCrc);
+}
+
+TEST(WidgetGridV2Decode, RejectsUnknownWidgetType) {
+  dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
+  package.widgets[0] = groupWidget(package, 0, 0, 1, 1, dashboard::v2::GROUP_SHAPE_ARC);
+  package.widgetCount = 1;
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
+  bytes[31] = 9;  // eerste byte van het eerste widget is het type
+  rewriteCrcV2(bytes, length);
+
+  dashboard::v2::WidgetGridPackageV2 decoded{};
+  EXPECT_NE(dashboard::v2::decodeWidgetGridPackageV2(bytes.data(), length, decoded), dashboard::Status::Ok);
+}
+
 }  // namespace

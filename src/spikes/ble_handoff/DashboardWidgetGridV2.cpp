@@ -184,6 +184,116 @@ size_t writeWidgetV2(uint8_t* out, const WidgetGridPackageV2& package, const Wid
   return offset;
 }
 
+// Geeft SIZE_MAX bij een structureel kapotte widget in plaats van een Status,
+// zodat "bytes op" te onderscheiden is van elke specifieke veldfout - die meldt
+// validateWidgetV2 daarna precies.
+size_t readWidgetV2(const uint8_t* bytes, size_t offset, size_t size, WidgetGridPackageV2& package,
+                    WidgetV2& widget) {
+  if (offset + 7 > size) return SIZE_MAX;
+  const uint8_t rawType = bytes[offset];
+  switch (rawType) {
+    case static_cast<uint8_t>(WidgetType::Kpi):
+    case static_cast<uint8_t>(WidgetType::List):
+    case static_cast<uint8_t>(WidgetType::Date):
+    case static_cast<uint8_t>(WidgetType::Group):
+      break;
+    default:
+      return SIZE_MAX;
+  }
+  widget.type = static_cast<WidgetType>(rawType);
+  widget.column = bytes[offset + 1];
+  widget.row = bytes[offset + 2];
+  widget.columnSpan = bytes[offset + 3];
+  widget.rowSpan = bytes[offset + 4];
+  widget.style = readU16(bytes + offset + 5);
+  offset += 7;
+
+  if (widget.type == WidgetType::Date) {
+    if (offset + 1 > size) return SIZE_MAX;
+    widget.dateField = static_cast<DateField>(bytes[offset]);
+    return offset + 1;
+  }
+
+  if (widget.type == WidgetType::Kpi) {
+    if (offset + 2 > size) return SIZE_MAX;
+    widget.kpi.labelLength = bytes[offset];
+    widget.kpi.valueLength = bytes[offset + 1];
+    offset += 2;
+    if (widget.kpi.labelLength > MAX_KPI_LABEL_SIZE || widget.kpi.valueLength > MAX_KPI_VALUE_SIZE ||
+        offset + widget.kpi.labelLength + widget.kpi.valueLength > size) {
+      return SIZE_MAX;
+    }
+    std::copy_n(bytes + offset, widget.kpi.labelLength, widget.kpi.labelBytes.begin());
+    offset += widget.kpi.labelLength;
+    std::copy_n(bytes + offset, widget.kpi.valueLength, widget.kpi.valueBytes.begin());
+    return offset + widget.kpi.valueLength;
+  }
+
+  if (widget.type == WidgetType::Group) {
+    if (offset + 3 > size) return SIZE_MAX;
+    if (package.groupCount >= MAX_GROUP_WIDGETS) return SIZE_MAX;
+    GroupContent& group = package.groups[package.groupCount];
+    group = {};
+    group.shape = bytes[offset];
+    group.headingLength = bytes[offset + 1];
+    group.itemCount = bytes[offset + 2];
+    offset += 3;
+    if (group.headingLength > MAX_GROUP_HEADING_SIZE || group.itemCount > MAX_GROUP_ITEMS) return SIZE_MAX;
+    if (offset + group.headingLength > size) return SIZE_MAX;
+    std::copy_n(bytes + offset, group.headingLength, group.headingBytes.begin());
+    offset += group.headingLength;
+    for (uint8_t index = 0; index < group.itemCount; ++index) {
+      if (offset + 4 > size) return SIZE_MAX;
+      GroupItem& item = group.items[index];
+      item.labelLength = bytes[offset];
+      item.valueLength = bytes[offset + 1];
+      item.detailLength = bytes[offset + 2];
+      item.fill = bytes[offset + 3];
+      offset += 4;
+      if (item.labelLength > MAX_GROUP_LABEL_SIZE || item.valueLength > MAX_GROUP_VALUE_SIZE ||
+          item.detailLength > MAX_GROUP_DETAIL_SIZE) {
+        return SIZE_MAX;
+      }
+      if (offset + item.labelLength + item.valueLength + item.detailLength > size) return SIZE_MAX;
+      std::copy_n(bytes + offset, item.labelLength, item.labelBytes.begin());
+      offset += item.labelLength;
+      std::copy_n(bytes + offset, item.valueLength, item.valueBytes.begin());
+      offset += item.valueLength;
+      std::copy_n(bytes + offset, item.detailLength, item.detailBytes.begin());
+      offset += item.detailLength;
+    }
+    widget.groupIndex = package.groupCount++;
+    return offset;
+  }
+
+  if (offset + 2 > size) return SIZE_MAX;
+  if (package.listCount >= MAX_LIST_WIDGETS) return SIZE_MAX;
+  ListContentV2& list = package.lists[package.listCount];
+  list = {};
+  list.headingLength = bytes[offset];
+  list.rowCount = bytes[offset + 1];
+  offset += 2;
+  if (list.headingLength > MAX_LIST_HEADING_SIZE || list.rowCount > MAX_LIST_ROWS) return SIZE_MAX;
+  if (offset + list.headingLength > size) return SIZE_MAX;
+  std::copy_n(bytes + offset, list.headingLength, list.headingBytes.begin());
+  offset += list.headingLength;
+  for (uint8_t index = 0; index < list.rowCount; ++index) {
+    if (offset + 2 > size) return SIZE_MAX;
+    ListRowV2& row = list.rows[index];
+    row.timeLength = bytes[offset];
+    row.labelLength = bytes[offset + 1];
+    offset += 2;
+    if (row.timeLength > MAX_LIST_ROW_TIME_SIZE || row.labelLength > MAX_LIST_ROW_LABEL_SIZE) return SIZE_MAX;
+    if (offset + row.timeLength + row.labelLength > size) return SIZE_MAX;
+    std::copy_n(bytes + offset, row.timeLength, row.timeBytes.begin());
+    offset += row.timeLength;
+    std::copy_n(bytes + offset, row.labelLength, row.labelBytes.begin());
+    offset += row.labelLength;
+  }
+  widget.listIndex = package.listCount++;
+  return offset;
+}
+
 }  // namespace
 
 Status validateWidgetV2(const WidgetGridPackageV2& package, const WidgetV2& widget) {
@@ -283,6 +393,62 @@ Status encodeWidgetGridPackageV2(const WidgetGridPackageV2& package, PackageByte
   const uint32_t crc = crc32(output.data(), offset);
   writeU32(output.data() + offset, crc);
   outputLength = totalLength;
+  return Status::Ok;
+}
+
+Status decodeWidgetGridPackageV2(const uint8_t* bytes, const size_t size, WidgetGridPackageV2& output) {
+  if (bytes == nullptr) return Status::InvalidArgument;
+  if (size < CONTENT_OFFSET + CRC_SIZE || size > MAX_PACKAGE_SIZE) return Status::InvalidSize;
+  if (bytes[0] != 'X' || bytes[1] != '3' || bytes[2] != 'D' || bytes[3] != 'P') return Status::InvalidMagic;
+  if (bytes[4] != SCHEMA_V2) return Status::UnsupportedSchema;
+  if (bytes[5] != TEMPLATE_WIDGET_GRID_V2) return Status::UnsupportedTemplate;
+  if (readU16(bytes + LENGTH_OFFSET) != size) return Status::InvalidLength;
+  if (bytes[GRID_COLUMNS_OFFSET] != GRID_COLUMNS) return Status::UnsupportedTemplate;
+
+  const uint32_t expectedCrc = readU32(bytes + size - CRC_SIZE);
+  if (crc32(bytes, size - CRC_SIZE) != expectedCrc) return Status::InvalidCrc;
+
+  // Static, geen stack-lokale: deze struct is 4152 bytes en de huisregel in
+  // CLAUDE.md is dat alles boven 256 bytes verantwoord moet worden. Template 3
+  // doet hetzelfde om dezelfde reden (DashboardWidgetGrid.cpp:333). Decoderen
+  // blijft tweefasig - een afgekeurd pakket mag dat van de beller niet
+  // overschrijven - en het dashboardpad is single-threaded, dus één werkruimte
+  // volstaat. Hosttests vangen dit NIET: daar is de stack ruim genoeg en valt
+  // het pas op de C3 om.
+  static WidgetGridPackageV2 candidate;
+  candidate = {};
+  candidate.schema = bytes[4];
+  candidate.templateId = bytes[5];
+  candidate.packageId = readU32(bytes + PACKAGE_ID_OFFSET);
+  candidate.generatedAt = readU64(bytes + GENERATED_AT_OFFSET);
+  candidate.validUntil = readU64(bytes + VALID_UNTIL_OFFSET);
+  candidate.style = bytes[STYLE_OFFSET];
+  candidate.widgetCount = bytes[WIDGET_COUNT_OFFSET];
+  candidate.crc = expectedCrc;
+  if (candidate.widgetCount > MAX_WIDGETS) return Status::InvalidLength;
+  if (candidate.generatedAt == 0 || candidate.validUntil < candidate.generatedAt) return Status::InvalidTimestamp;
+
+  // Twee fasen, net als template 3: eerst elk widget structureel inlezen tegen
+  // de aangegeven pakketgrootte, daarna pas de veldwaarden keuren.
+  size_t offset = CONTENT_OFFSET;
+  const size_t contentEnd = size - CRC_SIZE;
+  for (uint8_t index = 0; index < candidate.widgetCount; ++index) {
+    offset = readWidgetV2(bytes, offset, contentEnd, candidate, candidate.widgets[index]);
+    if (offset == SIZE_MAX) return Status::InvalidLength;
+  }
+  if (offset != contentEnd) return Status::InvalidLength;
+
+  for (uint8_t index = 0; index < candidate.widgetCount; ++index) {
+    const Status status = validateWidgetV2(candidate, candidate.widgets[index]);
+    if (status != Status::Ok) return status;
+  }
+  for (uint8_t a = 0; a < candidate.widgetCount; ++a) {
+    for (uint8_t b = static_cast<uint8_t>(a + 1); b < candidate.widgetCount; ++b) {
+      if (widgetsOverlapV2(candidate.widgets[a], candidate.widgets[b])) return Status::InvalidArgument;
+    }
+  }
+
+  output = candidate;
   return Status::Ok;
 }
 
