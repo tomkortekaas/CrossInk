@@ -809,13 +809,23 @@ void SleepActivity::renderDashboardSleepScreen() const {
 
 void SleepActivity::renderAgendaSleepScreen() const {
 #ifdef CROSSINK_BLE_HANDOFF_READER
-  if (BleHandoffReaderProbe::renderDashboardCard(renderer)) return;
+  BleHandoffReaderProbe::DashboardSkipReason reason =
+      BleHandoffReaderProbe::DashboardSkipReason::None;
+  if (BleHandoffReaderProbe::renderDashboardCard(renderer, &reason)) return;
 #endif
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
   renderer.clearScreen();
   const int centerY = renderer.getScreenHeight() / 2;
   renderer.drawCenteredText(UI_10_FONT_ID, centerY - 80, "AGENDA", true, EpdFontFamily::BOLD);
   renderer.drawCenteredText(UI_10_FONT_ID, centerY + 40, "No appointments");
+#ifdef CROSSINK_BLE_HANDOFF_READER
+  // De reden onderaan, klein: zonder deze regel is een afkeuring niet te
+  // onderscheiden van een toestel dat niet wakker werd.
+  const char* reasonText = BleHandoffReaderProbe::dashboardSkipReasonText(reason);
+  if (reasonText[0] != '\0') {
+    renderer.drawCenteredText(SMALL_FONT_ID, renderer.getScreenHeight() - 60, reasonText);
+  }
+#endif
   renderer.displayBuffer(HalDisplay::HALF_REFRESH, true);
 }
 

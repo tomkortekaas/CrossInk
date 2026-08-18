@@ -67,16 +67,43 @@ void logPersistedPayload() {
           status == dashboard::PersistStatus::Ok ? persisted.header.packageId : 0, persisted.length);
 }
 
-bool renderDashboardCard(GfxRenderer& renderer) {
-  if (dashboard::readLastKnownGood(persisted) != dashboard::PersistStatus::Ok) return false;
+const char* dashboardSkipReasonText(const DashboardSkipReason reason) {
+  switch (reason) {
+    case DashboardSkipReason::NoPackage:
+      return "Geen dashboard ontvangen";
+    case DashboardSkipReason::UnknownTemplate:
+      return "Dashboard nieuwer dan deze firmware";
+    case DashboardSkipReason::Undecodable:
+      return "Dashboard onleesbaar - firmware bijwerken";
+    case DashboardSkipReason::None:
+      return "";
+  }
+  return "";
+}
+
+bool renderDashboardCard(GfxRenderer& renderer, DashboardSkipReason* const reasonOut) {
+  const auto setReason = [reasonOut](const DashboardSkipReason reason) {
+    if (reasonOut != nullptr) *reasonOut = reason;
+  };
+  setReason(DashboardSkipReason::None);
+
+  if (dashboard::readLastKnownGood(persisted) != dashboard::PersistStatus::Ok) {
+    setReason(DashboardSkipReason::NoPackage);
+    return false;
+  }
   switch (persisted.header.templateId) {
     case dashboard::TEMPLATE_AGENDA:
-      return renderAgendaTemplate(renderer);
+      if (renderAgendaTemplate(renderer)) return true;
+      setReason(DashboardSkipReason::Undecodable);
+      return false;
     case dashboard::TEMPLATE_WIDGET_GRID:
-      return renderWidgetGridTemplate(renderer);
+      if (renderWidgetGridTemplate(renderer)) return true;
+      setReason(DashboardSkipReason::Undecodable);
+      return false;
     default:
-      // Unsupported template: not corrupt, just not something this build
-      // knows how to draw. The caller falls back to the existing dashboard.
+      // Niet corrupt, alleen niet iets dat deze build kan tekenen.
+      LOG_ERR("BLEPAY", "unknown templateId=%u", static_cast<unsigned>(persisted.header.templateId));
+      setReason(DashboardSkipReason::UnknownTemplate);
       return false;
   }
 }
