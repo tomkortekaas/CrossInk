@@ -49,4 +49,27 @@ TEST(WidgetGridV2Group, WidgetTypeGroupIsFour) {
   EXPECT_EQ(static_cast<uint8_t>(dashboard::v2::WidgetType::Group), 4);
 }
 
+TEST(WidgetGridV2Package, DefaultsAreSchemaTwoTemplateFour) {
+  dashboard::v2::WidgetGridPackageV2 package{};
+  EXPECT_EQ(package.schema, dashboard::SCHEMA_V2);
+  EXPECT_EQ(package.templateId, dashboard::v2::TEMPLATE_WIDGET_GRID_V2);
+}
+
+// listIndex, dateField en groupIndex delen één byte omdat een widget nooit
+// twee van de drie tegelijk is. Zou dat uit elkaar getrokken worden, dan groeit
+// WidgetV2 en daarmee de hele array.
+TEST(WidgetGridV2Package, IndexFieldsShareOneByte) {
+  dashboard::v2::WidgetV2 widget{};
+  widget.groupIndex = 3;
+  EXPECT_EQ(widget.listIndex, 3);
+  widget.listIndex = 5;
+  EXPECT_EQ(widget.groupIndex, 5);
+}
+
+// De gedecodeerde package staat static (permanent DRAM), niet op de stack.
+// Deze grens bewaakt dat het formaat niet ongemerkt opzwelt.
+TEST(WidgetGridV2Package, FitsTheMemoryBudget) {
+  EXPECT_LE(sizeof(dashboard::v2::WidgetGridPackageV2), 5120u);
+}
+
 }  // namespace

@@ -96,5 +96,69 @@ struct GroupContent {
   uint8_t itemCount = 0;
 };
 
+struct KpiContentV2 {
+  std::array<uint8_t, MAX_KPI_LABEL_SIZE> labelBytes{};
+  uint8_t labelLength = 0;
+  std::array<uint8_t, MAX_KPI_VALUE_SIZE> valueBytes{};
+  uint8_t valueLength = 0;
+};
+
+struct ListRowV2 {
+  std::array<uint8_t, MAX_LIST_ROW_TIME_SIZE> timeBytes{};
+  uint8_t timeLength = 0;
+  std::array<uint8_t, MAX_LIST_ROW_LABEL_SIZE> labelBytes{};
+  uint8_t labelLength = 0;
+};
+
+struct ListContentV2 {
+  std::array<uint8_t, MAX_LIST_HEADING_SIZE> headingBytes{};
+  uint8_t headingLength = 0;
+  std::array<ListRowV2, MAX_LIST_ROWS> rows{};
+  uint8_t rowCount = 0;
+};
+
+struct WidgetV2 {
+  WidgetType type = WidgetType::Kpi;
+  uint8_t column = 0;
+  uint8_t row = 0;
+  uint8_t columnSpan = 1;
+  uint8_t rowSpan = 1;
+  // Eén byte waarvan de betekenis het type volgt: het lijstnummer, het
+  // datumveld, of het groepsnummer. Een widget is nooit twee van de drie, en de
+  // byte delen is geen micro-optimalisatie: elk apart veld groeit ×MAX_WIDGETS.
+  union {
+    uint8_t listIndex = 0;
+    DateField dateField;
+    uint8_t groupIndex;
+  };
+  uint16_t style = 0;
+  KpiContentV2 kpi{};
+};
+
+struct WidgetGridPackageV2 {
+  uint8_t schema = SCHEMA_V2;
+  uint8_t templateId = TEMPLATE_WIDGET_GRID_V2;
+  uint32_t packageId = 0;
+  uint64_t generatedAt = 0;
+  uint64_t validUntil = 0;
+  uint8_t style = 0;
+  std::array<WidgetV2, MAX_WIDGETS> widgets{};
+  std::array<ListContentV2, MAX_LIST_WIDGETS> lists{};
+  std::array<GroupContent, MAX_GROUP_WIDGETS> groups{};
+  uint8_t widgetCount = 0;
+  uint8_t listCount = 0;
+  uint8_t groupCount = 0;
+  uint32_t crc = 0;
+};
+
+// De inhoud waar `widget` naar wijst, of nullptr als het geen widget van dat
+// type is of het nummer buiten bereik valt. Renderen en meten moet hier
+// doorheen, niet rechtstreeks in `lists`/`groups` indexeren.
+const ListContentV2* listContentFor(const WidgetGridPackageV2& package, const WidgetV2& widget);
+const GroupContent* groupContentFor(const WidgetGridPackageV2& package, const WidgetV2& widget);
+
+Status encodeWidgetGridPackageV2(const WidgetGridPackageV2& package, PackageBytes& output, size_t& outputLength);
+Status decodeWidgetGridPackageV2(const uint8_t* bytes, size_t size, WidgetGridPackageV2& output);
+
 }  // namespace v2
 }  // namespace dashboard
