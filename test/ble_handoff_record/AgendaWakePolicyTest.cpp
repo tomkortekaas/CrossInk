@@ -93,3 +93,37 @@ TEST(AgendaWakePolicy, AcceptsOnlyValidOneShotReceiverResults) {
   EXPECT_EQ(dashboard::decodeReceiverResultWord(0xA63E4DFFU), dashboard::ReceiverResult::None);
   EXPECT_EQ(dashboard::decodeReceiverResultWord(0xA73E4D01U), dashboard::ReceiverResult::None);
 }
+
+TEST(AgendaWakePolicy, UsesPhoneSuppliedIntervalAndWindow) {
+  // 10-minute interval, 08:00-20:00 window, at 08:00 -> first tick is a full 10 minutes.
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 8, 0, 10, 8, 20), 10ULL * 60ULL * 1000000ULL);
+  // At 19:55 with a 10-minute interval, only 5 minutes are left before 20:00.
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 19, 55, 10, 8, 20), 5ULL * 60ULL * 1000000ULL);
+  // At 21:00, outside the narrowed window, sleep straight through to 08:00 (11 hours).
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 21, 0, 10, 8, 20), 11ULL * 60ULL * 60ULL * 1000000ULL);
+}
+
+TEST(ClampWakeSettings, PassesThroughValidValues) {
+  const auto settings = dashboard::clampWakeSettings(10, 8, 20);
+  EXPECT_EQ(settings.intervalMinutes, 10U);
+  EXPECT_EQ(settings.windowStartHour, 8U);
+  EXPECT_EQ(settings.windowEndHour, 20U);
+}
+
+TEST(ClampWakeSettings, FallsBackToDefaultIntervalWhenOutOfRange) {
+  EXPECT_EQ(dashboard::clampWakeSettings(0, 8, 20).intervalMinutes, dashboard::AGENDA_WAKE_INTERVAL_MINUTES);
+  EXPECT_EQ(dashboard::clampWakeSettings(61, 8, 20).intervalMinutes, dashboard::AGENDA_WAKE_INTERVAL_MINUTES);
+  EXPECT_EQ(dashboard::clampWakeSettings(255, 8, 20).intervalMinutes, dashboard::AGENDA_WAKE_INTERVAL_MINUTES);
+}
+
+TEST(ClampWakeSettings, FallsBackToDefaultWindowWhenStartIsNotBeforeEnd) {
+  const auto settings = dashboard::clampWakeSettings(15, 20, 8);
+  EXPECT_EQ(settings.windowStartHour, dashboard::AGENDA_WAKE_WINDOW_START_HOUR);
+  EXPECT_EQ(settings.windowEndHour, dashboard::AGENDA_WAKE_WINDOW_END_HOUR);
+}
+
+TEST(ClampWakeSettings, FallsBackToDefaultWindowWhenAnHourIsOutOfRange) {
+  const auto settings = dashboard::clampWakeSettings(15, 24, 20);
+  EXPECT_EQ(settings.windowStartHour, dashboard::AGENDA_WAKE_WINDOW_START_HOUR);
+  EXPECT_EQ(settings.windowEndHour, dashboard::AGENDA_WAKE_WINDOW_END_HOUR);
+}
