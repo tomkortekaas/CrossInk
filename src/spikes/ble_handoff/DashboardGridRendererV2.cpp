@@ -187,12 +187,14 @@ void renderArcGroup(GfxRenderer& renderer, const WidgetRectV2& rect, const Group
     dashboard::forEachArcPixel(centerX, centerY, outerRadius, thickness, 135, fillSweep, plotArcPixel, &fillCtx);
 
     if (value[0] != '\0') {
-      const int innerDiameter = std::max(1, 2 * outerRadius - 2 * thickness);
+      // forEachArcPixel maakt van `radius` een band van radius±thickness/2; de
+      // werkelijke binnenruimte is dus 2*radius - thickness.
+      const int innerDiameter = std::max(1, 2 * outerRadius - thickness);
       const int valueMaxWidth = std::max(1, innerDiameter - 2 * ARC_VALUE_MARGIN);
       const int valueFontId = fittingGaugeFontId(renderer, value, valueMaxWidth);
       const int valueAscender = renderer.getFontAscenderSize(valueFontId);
       const WidgetRectV2 ringRect{centerX - outerRadius, blockTop, 2 * outerRadius, 2 * outerRadius};
-      const int ringPadding = thickness + ARC_VALUE_MARGIN;
+      const int ringPadding = thickness / 2 + ARC_VALUE_MARGIN;
       const int valueTop = std::max(0, centerY - ringRect.y - valueAscender / 2);
       drawTextCenteredInRect(renderer, valueFontId, ringRect, value, EpdFontFamily::BOLD, valueTop, ringPadding, true);
     }
