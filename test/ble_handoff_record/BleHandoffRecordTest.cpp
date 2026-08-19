@@ -37,10 +37,10 @@ TEST(DashboardPackage, EncodesSpecifiedLittleEndianLayoutAndRoundTrips) {
   dashboard::PackageBytes bytes{};
   size_t length = 0;
   ASSERT_EQ(dashboard::encodePackage(validPackage(), bytes, length), dashboard::Status::Ok);
-  ASSERT_EQ(length, 48U);
-  const std::array<uint8_t, 44> expectedPrefix = {
-      'X', '3', 'D', 'P', 1, 1, 48, 0, 42, 0, 0,   0,   0xE8, 3,   0,   0,   0,   0,   0,   0,   0xD0, 7,
-      0,   0,   0,   0,   0, 0, 4,  5, 0,  3, 'M', 'e', 'e',  't', '1', '0', ':', '0', '0', 'O', 'l',  'd'};
+  ASSERT_EQ(length, 51U);
+  const std::array<uint8_t, 47> expectedPrefix = {
+      'X', '3', 'D', 'P', 1, 1, 51, 0, 42, 0, 0, 0, 0xE8, 3, 0, 0, 0, 0, 0, 0, 0xD0, 7, 0, 0,
+      0,   0,   0,  0,   0, 0, 0,  4, 5,  0, 3, 'M', 'e', 'e', 't', '1', '0', ':', '0', '0', 'O', 'l', 'd'};
   EXPECT_TRUE(std::equal(expectedPrefix.begin(), expectedPrefix.end(), bytes.begin()));
 
   dashboard::Package decoded{};
@@ -57,7 +57,7 @@ TEST(DashboardPackage, RejectsCorruptionAndInconsistentSize) {
   dashboard::PackageBytes bytes{};
   size_t length = 0;
   ASSERT_EQ(dashboard::encodePackage(validPackage(), bytes, length), dashboard::Status::Ok);
-  bytes[32] ^= 1;
+  bytes[35] ^= 1;
   dashboard::Package decoded{};
   EXPECT_EQ(dashboard::decodePackage(bytes.data(), length, decoded), dashboard::Status::InvalidCrc);
   EXPECT_EQ(dashboard::decodePackage(bytes.data(), length - 1, decoded), dashboard::Status::InvalidSize);
@@ -143,6 +143,22 @@ TEST(PackageHeaderPeek, ReadsCommonFieldsWithoutDecodingTemplateContent) {
   EXPECT_EQ(header.validUntil, 2000U);
 }
 
+TEST(PackageHeaderPeek, ReadsWakeScheduleFields) {
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  auto package = validPackage();
+  package.refreshIntervalMinutes = 10;
+  package.wakeWindowStartHour = 8;
+  package.wakeWindowEndHour = 21;
+  ASSERT_EQ(dashboard::encodePackage(package, bytes, length), dashboard::Status::Ok);
+
+  dashboard::PackageHeader header{};
+  ASSERT_EQ(dashboard::peekPackageHeader(bytes.data(), length, header), dashboard::Status::Ok);
+  EXPECT_EQ(header.refreshIntervalMinutes, 10U);
+  EXPECT_EQ(header.wakeWindowStartHour, 8U);
+  EXPECT_EQ(header.wakeWindowEndHour, 21U);
+}
+
 TEST(PackageHeaderPeek, AcceptsAnUnrecognizedTemplateIdInsteadOfRejectingIt) {
   dashboard::PackageBytes bytes{};
   size_t length = 0;
@@ -171,7 +187,7 @@ TEST(PackageHeaderPeek, RejectsBadMagicSchemaAndCrc) {
   EXPECT_EQ(dashboard::peekPackageHeader(corrupted.data(), length, header), dashboard::Status::UnsupportedSchema);
 
   corrupted = bytes;
-  corrupted[32] ^= 1;
+  corrupted[35] ^= 1;
   EXPECT_EQ(dashboard::peekPackageHeader(corrupted.data(), length, header), dashboard::Status::InvalidCrc);
 }
 
