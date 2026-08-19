@@ -9,10 +9,13 @@ constexpr size_t LENGTH_OFFSET = 6;
 constexpr size_t PACKAGE_ID_OFFSET = 8;
 constexpr size_t GENERATED_AT_OFFSET = 12;
 constexpr size_t VALID_UNTIL_OFFSET = 20;
-constexpr size_t TITLE_LENGTH_OFFSET = 28;
-constexpr size_t TIME_LENGTH_OFFSET = 29;
-constexpr size_t FOOTER_LENGTH_OFFSET = 30;
-constexpr size_t STALE_LENGTH_OFFSET = 31;
+constexpr size_t REFRESH_INTERVAL_OFFSET = 28;
+constexpr size_t WAKE_WINDOW_START_HOUR_OFFSET = 29;
+constexpr size_t WAKE_WINDOW_END_HOUR_OFFSET = 30;
+constexpr size_t TITLE_LENGTH_OFFSET = 31;
+constexpr size_t TIME_LENGTH_OFFSET = 32;
+constexpr size_t FOOTER_LENGTH_OFFSET = 33;
+constexpr size_t STALE_LENGTH_OFFSET = 34;
 
 void writeU16(uint8_t* out, uint16_t value) {
   out[0] = static_cast<uint8_t>(value);
@@ -136,6 +139,9 @@ Status encodePackage(const Package& package, PackageBytes& output, size_t& outpu
   writeU32(output.data() + PACKAGE_ID_OFFSET, package.packageId);
   writeU64(output.data() + GENERATED_AT_OFFSET, package.generatedAt);
   writeU64(output.data() + VALID_UNTIL_OFFSET, package.validUntil);
+  output[REFRESH_INTERVAL_OFFSET] = package.refreshIntervalMinutes;
+  output[WAKE_WINDOW_START_HOUR_OFFSET] = package.wakeWindowStartHour;
+  output[WAKE_WINDOW_END_HOUR_OFFSET] = package.wakeWindowEndHour;
   output[TITLE_LENGTH_OFFSET] = package.title.length;
   output[TIME_LENGTH_OFFSET] = package.timeLine.length;
   output[FOOTER_LENGTH_OFFSET] = package.footer.length;
@@ -166,6 +172,9 @@ Status decodePackage(const uint8_t* bytes, const size_t size, Package& output) {
   candidate.packageId = readU32(bytes + PACKAGE_ID_OFFSET);
   candidate.generatedAt = readU64(bytes + GENERATED_AT_OFFSET);
   candidate.validUntil = readU64(bytes + VALID_UNTIL_OFFSET);
+  candidate.refreshIntervalMinutes = bytes[REFRESH_INTERVAL_OFFSET];
+  candidate.wakeWindowStartHour = bytes[WAKE_WINDOW_START_HOUR_OFFSET];
+  candidate.wakeWindowEndHour = bytes[WAKE_WINDOW_END_HOUR_OFFSET];
   candidate.title.length = bytes[TITLE_LENGTH_OFFSET];
   candidate.timeLine.length = bytes[TIME_LENGTH_OFFSET];
   candidate.footer.length = bytes[FOOTER_LENGTH_OFFSET];
@@ -206,6 +215,9 @@ Status peekPackageHeader(const uint8_t* bytes, const size_t size, PackageHeader&
   candidate.packageId = readU32(bytes + PACKAGE_ID_OFFSET);
   candidate.generatedAt = readU64(bytes + GENERATED_AT_OFFSET);
   candidate.validUntil = readU64(bytes + VALID_UNTIL_OFFSET);
+  candidate.refreshIntervalMinutes = bytes[REFRESH_INTERVAL_OFFSET];
+  candidate.wakeWindowStartHour = bytes[WAKE_WINDOW_START_HOUR_OFFSET];
+  candidate.wakeWindowEndHour = bytes[WAKE_WINDOW_END_HOUR_OFFSET];
   if (candidate.generatedAt == 0 || candidate.validUntil < candidate.generatedAt) return Status::InvalidTimestamp;
   candidate.crc = readU32(bytes + size - CRC_SIZE);
   output = candidate;
