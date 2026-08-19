@@ -110,6 +110,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #ifdef CROSSINK_BLE_HANDOFF_READER
 #include "spikes/ble_handoff/AgendaWakePolicy.h"
 #include "spikes/ble_handoff/AgendaWakeRetention.h"
+#include "spikes/ble_handoff/BleHandoffNvs.h"
 #include "spikes/ble_handoff/BleHandoffReaderProbe.h"
 #include "spikes/ble_handoff/BleHandoffTrace.h"
 #include "spikes/ble_handoff/DashboardBootSwitch.h"
@@ -753,6 +754,20 @@ void mirrorClockUtcOffsetQToNvs() {
 }
 
 // Enter deep sleep mode
+#ifdef CROSSINK_BLE_HANDOFF_READER
+// The phone's last-delivered wake interval and window, or the compiled-in
+// default when no package has ever been persisted (fresh flash) or the
+// persisted one predates this field (all-zero, which clampWakeSettings
+// treats as out of range). NVS, not the SD card, so this is safe to call
+// before the SD mount too.
+dashboard::WakeSettings resolveWakeSettings() {
+  dashboard::PersistedPackage persisted;
+  if (dashboard::readLastKnownGood(persisted) != dashboard::PersistStatus::Ok) return dashboard::WakeSettings{};
+  return dashboard::clampWakeSettings(persisted.header.refreshIntervalMinutes, persisted.header.wakeWindowStartHour,
+                                      persisted.header.wakeWindowEndHour);
+}
+#endif
+
 void enterDeepSleepInternal(const bool fromTimeout, const bool preserveLastReader) {
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   if (!preserveLastReader) APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
@@ -796,7 +811,10 @@ void enterDeepSleepInternal(const bool fromTimeout, const bool preserveLastReade
   uint8_t agendaWakeMinute = 0;
   // SETTINGS is loaded on this path, and the mirror above was just written from it.
   if (agendaSleep) resolveAgendaWakeLocalTime(agendaWakeHour, agendaWakeMinute, SETTINGS.clockUtcOffsetQ);
-  timerWakeUs = dashboard::sleepTimerIntervalUs(agendaSleep, agendaWakeHour, agendaWakeMinute);
+  const dashboard::WakeSettings wakeSettings = resolveWakeSettings();
+  timerWakeUs = dashboard::sleepTimerIntervalUs(agendaSleep, agendaWakeHour, agendaWakeMinute,
+                                                wakeSettings.intervalMinutes, wakeSettings.windowStartHour,
+                                                wakeSettings.windowEndHour);
   dashboard::retainReceiverResult(agendaSleep ? dashboard::ReceiverResult::AwaitingWindow
                                               : dashboard::ReceiverResult::None);
 #endif
@@ -958,7 +976,11 @@ void setup() {
     uint8_t agendaWakeMinute = 0;
     // Pre-SD: SETTINGS is not loaded here, so the offset comes from its NVS mirror.
     resolveAgendaWakeLocalTime(agendaWakeHour, agendaWakeMinute, readClockUtcOffsetQFromNvs());
-    powerManager.startDeepSleep(gpio, dashboard::sleepTimerIntervalUs(true, agendaWakeHour, agendaWakeMinute));
+    const dashboard::WakeSettings wakeSettings = resolveWakeSettings();
+    powerManager.startDeepSleep(gpio, dashboard::sleepTimerIntervalUs(true, agendaWakeHour, agendaWakeMinute,
+                                                                       wakeSettings.intervalMinutes,
+                                                                       wakeSettings.windowStartHour,
+                                                                       wakeSettings.windowEndHour));
   }
   if (returnedFromReceiver && retainedResult == dashboard::ReceiverResult::Accepted) {
     resumeAgendaAfterAccepted = true;
