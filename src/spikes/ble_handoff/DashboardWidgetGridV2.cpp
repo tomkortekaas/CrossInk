@@ -51,10 +51,10 @@ constexpr size_t LENGTH_OFFSET = 6;
 constexpr size_t PACKAGE_ID_OFFSET = 8;
 constexpr size_t GENERATED_AT_OFFSET = 12;
 constexpr size_t VALID_UNTIL_OFFSET = 20;
-constexpr size_t GRID_COLUMNS_OFFSET = 28;
-constexpr size_t WIDGET_COUNT_OFFSET = 29;
-constexpr size_t STYLE_OFFSET = 30;
-constexpr size_t CONTENT_OFFSET = 31;
+constexpr size_t GRID_COLUMNS_OFFSET = 31;
+constexpr size_t WIDGET_COUNT_OFFSET = 32;
+constexpr size_t STYLE_OFFSET = 33;
+constexpr size_t CONTENT_OFFSET = 34;
 
 // Eigen kopieën in plaats van delen met DashboardWidgetGrid.cpp: die staan daar
 // in een anonieme namespace, en template 3 aanraken om ze te kunnen delen zou
