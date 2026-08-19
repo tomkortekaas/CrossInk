@@ -361,7 +361,7 @@ TEST(WidgetGridV2Decode, RejectsUnknownWidgetType) {
 }
 
 // Een groep met één item, geen kop, label "X3", waarde "50%", geen detail.
-// Handmatig uitgerekend: widget begint op 31, groepskop op 31+7=38,
+// Handmatig uitgerekend: widget begint op 34, groepskop op 34+7=41,
 // items beginnen op 41+3=44 (kop is leeg), itemvelden 44..47, dan de tekst.
 TEST(WidgetGridV2Bytes, GroupLayoutIsAtTheExpectedOffsets) {
   dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
