@@ -39,6 +39,14 @@ Status validateGroup(const GroupContent& group) {
   return Status::Ok;
 }
 
+// Spiegel van validateGlobalStyle() in DashboardWidgetGrid.cpp, maar alleen
+// voor het omlijnveld: template 4 heeft geen density- of divider-bits, dus die
+// bestaan hier niet om te keuren.
+Status validateGlobalStyleV2(const uint8_t style) {
+  if (globalBorderLevel(style) > dashboard::MAX_BORDER_LEVEL) return Status::InvalidArgument;
+  return Status::Ok;
+}
+
 constexpr size_t LENGTH_OFFSET = 6;
 constexpr size_t PACKAGE_ID_OFFSET = 8;
 constexpr size_t GENERATED_AT_OFFSET = 12;
@@ -352,6 +360,10 @@ Status encodeWidgetGridPackageV2(const WidgetGridPackageV2& package, PackageByte
   if (package.generatedAt == 0 || package.validUntil < package.generatedAt) return Status::InvalidTimestamp;
   if (package.widgetCount > MAX_WIDGETS) return Status::InvalidLength;
   if (package.listCount > MAX_LIST_WIDGETS || package.groupCount > MAX_GROUP_WIDGETS) return Status::InvalidLength;
+  {
+    const Status status = validateGlobalStyleV2(package.style);
+    if (status != Status::Ok) return status;
+  }
 
   size_t contentLength = 0;
   for (uint8_t index = 0; index < package.widgetCount; ++index) {
@@ -427,6 +439,10 @@ Status decodeWidgetGridPackageV2(const uint8_t* bytes, const size_t size, Widget
   candidate.crc = expectedCrc;
   if (candidate.widgetCount > MAX_WIDGETS) return Status::InvalidLength;
   if (candidate.generatedAt == 0 || candidate.validUntil < candidate.generatedAt) return Status::InvalidTimestamp;
+  {
+    const Status status = validateGlobalStyleV2(candidate.style);
+    if (status != Status::Ok) return status;
+  }
 
   // Twee fasen, net als template 3: eerst elk widget structureel inlezen tegen
   // de aangegeven pakketgrootte, daarna pas de veldwaarden keuren.

@@ -41,6 +41,32 @@ TEST(WidgetGridV2Constants, TemplateIdIsFour) {
   EXPECT_EQ(dashboard::v2::TEMPLATE_WIDGET_GRID_V2, 4);
 }
 
+// Het globale style-byte en het per-widget style-woord gebruiken dezelfde
+// bitposities als template 3; de telefoon-app codeert die al zo en de firmware
+// mag daar niet van afwijken.
+TEST(WidgetGridV2Style, BorderLevelShiftMatchesTemplateThree) {
+  EXPECT_EQ(dashboard::v2::GLOBAL_STYLE_BORDER_LEVEL_SHIFT,
+            dashboard::GLOBAL_STYLE_BORDER_LEVEL_SHIFT);
+}
+
+TEST(WidgetGridV2Style, GlobalBorderLevelExtractsLowBits) {
+  EXPECT_EQ(dashboard::v2::globalBorderLevel(0x00), 0);
+  EXPECT_EQ(dashboard::v2::globalBorderLevel(0x05), 5);
+  EXPECT_EQ(dashboard::v2::globalBorderLevel(0x07), 7);
+}
+
+TEST(WidgetGridV2Style, WidgetSizeRungUsesTemplateThreeShift) {
+  EXPECT_EQ(dashboard::v2::WIDGET_STYLE_SIZE_RUNG_SHIFT,
+            dashboard::WIDGET_STYLE_SIZE_RUNG_SHIFT);
+}
+
+TEST(WidgetGridV2Style, WidgetSizeRungExtractsTwoBits) {
+  EXPECT_EQ(dashboard::v2::widgetSizeRung(0x0000), 0);
+  EXPECT_EQ(dashboard::v2::widgetSizeRung(0x0080), 1);
+  EXPECT_EQ(dashboard::v2::widgetSizeRung(0x0100), 2);
+  EXPECT_EQ(dashboard::v2::widgetSizeRung(0x0380), 3);
+}
+
 // MAX_WIDGETS mag niet het product van kolommen en rijen zijn: dat zou 144
 // worden en de widget-array onbetaalbaar maken.
 TEST(WidgetGridV2Constants, MaxWidgetsIsNotTheProduct) {
@@ -205,6 +231,18 @@ TEST(WidgetGridV2Encode, RejectsMissingTimestamps) {
   EXPECT_NE(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
 }
 
+TEST(WidgetGridV2Encode, RejectsBorderLevelAboveMax) {
+  dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
+  package.style = dashboard::MAX_BORDER_LEVEL + 1;
+  package.widgets[0] = groupWidget(package, 0, 0, 1, 1, dashboard::v2::GROUP_SHAPE_ARC);
+  package.widgetCount = 1;
+
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  EXPECT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length),
+            dashboard::Status::InvalidArgument);
+}
+
 void rewriteCrcV2(dashboard::PackageBytes& bytes, const size_t length) {
   const uint32_t crc = dashboard::crc32(bytes.data(), length - dashboard::CRC_SIZE);
   for (size_t index = 0; index < dashboard::CRC_SIZE; ++index) {
@@ -291,6 +329,21 @@ TEST(WidgetGridV2Decode, RejectsBadCrc) {
 
   dashboard::v2::WidgetGridPackageV2 decoded{};
   EXPECT_EQ(dashboard::v2::decodeWidgetGridPackageV2(bytes.data(), length, decoded), dashboard::Status::InvalidCrc);
+}
+
+TEST(WidgetGridV2Decode, RejectsBorderLevelAboveMax) {
+  dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
+  package.widgets[0] = groupWidget(package, 0, 0, 1, 1, dashboard::v2::GROUP_SHAPE_ARC);
+  package.widgetCount = 1;
+  dashboard::PackageBytes bytes{};
+  size_t length = 0;
+  ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
+  bytes[30] = dashboard::MAX_BORDER_LEVEL + 1;
+  rewriteCrcV2(bytes, length);
+
+  dashboard::v2::WidgetGridPackageV2 decoded{};
+  EXPECT_EQ(dashboard::v2::decodeWidgetGridPackageV2(bytes.data(), length, decoded),
+            dashboard::Status::InvalidArgument);
 }
 
 TEST(WidgetGridV2Decode, RejectsUnknownWidgetType) {

@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "BleHandoffRecord.h"
+#include "DashboardWidgetGrid.h"
 
 // Template 4: het herontworpen dashboard. Staat naast TEMPLATE_WIDGET_GRID (3)
 // in plaats van dat te vervangen, zodat de telefoon kan kiezen welke hij stuurt
@@ -17,6 +18,27 @@ namespace dashboard {
 namespace v2 {
 
 constexpr uint8_t TEMPLATE_WIDGET_GRID_V2 = 4;
+
+// Het globale style-byte gebruikt dezelfde bits als template 3. Alleen de
+// omlijn-velden zijn hier in gebruik; density en lijst-dividers bestaan niet in
+// template 4 en worden daarom niet uitgelezen. De behandelnamen zelf
+// (BORDER_NONE/HAIRLINE/LIGHT/SOLID en MAX_BORDER_LEVEL) hergebruiken we uit
+// dashboard:: in plaats van ze hier te dupliceren.
+constexpr uint8_t GLOBAL_STYLE_BORDER_LEVEL_SHIFT = 0;
+
+constexpr uint8_t globalBorderLevel(const uint8_t style) {
+  return static_cast<uint8_t>((style >> GLOBAL_STYLE_BORDER_LEVEL_SHIFT) & 0x7U);
+}
+
+// Per-widget style-woord, zelfde schema als template 3: iconId in bits 0-6,
+// sizeRung in bits 7-8, emphasis in bits 9-10. Alleen sizeRung wordt in
+// template 4 gebruikt (als bovengrens voor de meterwaarde-maat); iconId en
+// emphasis hebben hier geen renderer.
+constexpr uint8_t WIDGET_STYLE_SIZE_RUNG_SHIFT = 7;
+
+constexpr uint8_t widgetSizeRung(const uint16_t style) {
+  return static_cast<uint8_t>((style >> WIDGET_STYLE_SIZE_RUNG_SHIFT) & 0x3U);
+}
 
 // Twaalf is deelbaar door 2, 3, 4 en 6 in beide richtingen, dus halven, derden,
 // kwarten en zesden vallen zonder rest. De echte winst zit in de hoogte: rijen
