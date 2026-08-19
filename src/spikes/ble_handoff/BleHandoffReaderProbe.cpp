@@ -8,7 +8,9 @@
 
 #include "BleHandoffNvs.h"
 #include "DashboardGridRenderer.h"
+#include "DashboardGridRendererV2.h"
 #include "DashboardWidgetGrid.h"
+#include "DashboardWidgetGridV2.h"
 #include "fontIds.h"
 
 namespace BleHandoffReaderProbe {
@@ -59,6 +61,23 @@ bool renderWidgetGridTemplate(GfxRenderer& renderer) {
   return true;
 }
 
+bool renderWidgetGridV2Template(GfxRenderer& renderer) {
+  // Static for the same reason as `persisted` above: a decoded template-4
+  // package covering the whole grid is too large to place on the render task's
+  // stack.
+  static dashboard::v2::WidgetGridPackageV2 package;
+  package = {};
+  if (dashboard::v2::decodeWidgetGridPackageV2(persisted.bytes.data(), persisted.length, package) !=
+      dashboard::Status::Ok) {
+    return false;
+  }
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+  renderer.clearScreen();
+  dashboard::v2::renderWidgetGridV2(renderer, package);
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH, true);
+  return true;
+}
+
 }  // namespace
 
 void logPersistedPayload() {
@@ -98,6 +117,10 @@ bool renderDashboardCard(GfxRenderer& renderer, DashboardSkipReason* const reaso
       return false;
     case dashboard::TEMPLATE_WIDGET_GRID:
       if (renderWidgetGridTemplate(renderer)) return true;
+      setReason(DashboardSkipReason::Undecodable);
+      return false;
+    case dashboard::v2::TEMPLATE_WIDGET_GRID_V2:
+      if (renderWidgetGridV2Template(renderer)) return true;
       setReason(DashboardSkipReason::Undecodable);
       return false;
     default:
