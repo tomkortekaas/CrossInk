@@ -3,15 +3,18 @@
 #ifdef CROSSINK_BLE_HANDOFF_READER
 
 #include <GfxRenderer.h>
+#include <HalClock.h>
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <iterator>
 #include <string>
 
 #include "DashboardArc.h"
+#include "DashboardDateFields.h"
 #include "DashboardGridLayoutV2.h"
 #include "fontIds.h"
 
@@ -36,6 +39,19 @@ constexpr int HEADING_FONT_ID = LEXENDDECA_14_FONT_ID;
 // intact en gebruikt alleen reeds geregistreerde fonts.
 constexpr int LABEL_FONT_ID = LEXENDDECA_12_FONT_ID;
 constexpr int DETAIL_FONT_ID = LEXENDDECA_10_FONT_ID;
+
+// De dashboardklok wordt op dezelfde voorwaarden vertrouwd als de rest van de
+// firmware: CrossPointSettings.cpp weigert RTC-datums vóór 2025 omdat de X3-
+// hardware van vóór die migratie dateert. Een verzonnen datum op een
+// wanddisplay is erger dan een zichtbaar lege.
+constexpr uint16_t MIN_TRUSTED_YEAR = 2025;
+
+// Layoutdrempels op de binnenmaat van de tegel, niet op columnSpan/rowSpan, zodat
+// een ongebruikelijke span ergens redelijks landt. Overgenomen uit template 3;
+// in het v2-raster (cel 42x64) vallen ze ruim buiten de maten die het raster
+// werkelijk produceert, dus een tegel flipt nooit over één pixel.
+constexpr int DATE_WIDE_THRESHOLD = 200;
+constexpr int DATE_TALL_THRESHOLD = 170;
 
 // Eigen ladder voor de meterwaarden, losgekoppeld van sizeRung. Dat veld is
 // twee bits en indexeert een tabel van vier; deze ladder heeft er meer en wordt
@@ -142,6 +158,40 @@ void renderTextBlock(GfxRenderer& renderer, const WidgetRectV2& rect, const char
   if (hasDetail) {
     drawTextCenteredInRect(renderer, DETAIL_FONT_ID, rect, detail, EpdFontFamily::REGULAR, y, GROUP_TEXT_PADDING, true);
   }
+}
+
+struct TodaysDate {
+  bool valid = false;
+  uint16_t year = 0;
+  uint8_t month = 0;
+  uint8_t day = 0;
+};
+
+TodaysDate readTodaysDate() {
+  TodaysDate today{};
+  uint16_t year = 0;
+  uint8_t month = 0;
+  uint8_t day = 0;
+  uint8_t hour = 0;
+  uint8_t minute = 0;
+  if (!halClock.getDateTime(year, month, day, hour, minute)) return today;
+  if (year < MIN_TRUSTED_YEAR || !isValidDate(year, month, day)) return today;
+  today.valid = true;
+  today.year = year;
+  today.month = month;
+  today.day = day;
+  return today;
+}
+
+// Een weekdag die past, met terugval op de tweeletterafkorting in plaats van op
+// een truncatie als "donderda". Callers moeten de stijl meegeven waarin de tekst
+// straks echt getekend wordt: BOLD is breder dan REGULAR, dus in de verkeerde
+// stijl meten laat de volle naam door en trunkeert hem daarna alsnog.
+const char* fittingWeekday(const GfxRenderer& renderer, const Weekday weekday, const int fontId, const int maxWidth,
+                           const EpdFontFamily::Style style) {
+  const char* full = weekdayName(weekday);
+  if (renderer.getTextWidth(fontId, full, style) <= maxWidth) return full;
+  return weekdayAbbreviation(weekday);
 }
 
 // De boog schaalt mee met zijn item: buitendiameter ~70% van de kleinste
@@ -312,6 +362,234 @@ void renderStripGroup(GfxRenderer& renderer, const WidgetRectV2& rect, const Gro
   }
 }
 
+void renderKpiWidgetV2(GfxRenderer& renderer, const WidgetRectV2& rect, const WidgetV2& widget) {
+  constexpr int padding = GROUP_PADDING;
+
+  char value[MAX_KPI_VALUE_SIZE + 1];
+  char label[MAX_KPI_LABEL_SIZE + 1];
+  copyTextBytes(widget.kpi.valueBytes, widget.kpi.valueLength, value);
+  copyTextBytes(widget.kpi.labelBytes, widget.kpi.labelLength, label);
+
+  const bool hasValue = value[0] != '\0';
+  const bool hasLabel = label[0] != '\0';
+
+  // Waarde + label als één blok, net als renderTextBlock voor Group-items. Het
+  // label heeft een vaste maat, dus die reserveer je eerst; wat overblijft is
+  // het hoogtebudget voor de waarde.
+  const int labelAscender = hasLabel ? renderer.getFontAscenderSize(LABEL_FONT_ID) : 0;
+  const int reservedBelow = hasLabel ? labelAscender + GROUP_STACK_GAP : 0;
+  const int valueHeightBudget = std::max(1, rect.height - reservedBelow - 2 * padding);
+  const int valueFontId =
+      hasValue ? fittingGaugeFontId(renderer, value, rect.width - 2 * padding, valueHeightBudget) : 0;
+  const int valueAscender = hasValue ? renderer.getFontAscenderSize(valueFontId) : 0;
+
+  int blockHeight = 0;
+  if (hasValue) blockHeight += valueAscender;
+  if (hasValue && hasLabel) blockHeight += GROUP_STACK_GAP;
+  if (hasLabel) blockHeight += labelAscender;
+
+  int y = std::max(padding, (rect.height - blockHeight) / 2);
+  if (hasValue) {
+    drawTextCenteredInRect(renderer, valueFontId, rect, value, EpdFontFamily::BOLD, y, padding, true);
+    y += valueAscender;
+    if (hasLabel) y += GROUP_STACK_GAP;
+  }
+  if (hasLabel) {
+    drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, label, EpdFontFamily::REGULAR, y, padding, true);
+  }
+}
+
+// Een tegel vastgepind op één datumveld: de waarde zo groot als past, met daar
+// alleen een klein label boven als het getal alleen een raadsel zou zijn ("33").
+void renderDateFieldWidgetV2(GfxRenderer& renderer, const WidgetRectV2& rect, const WidgetV2& widget,
+                             const TodaysDate& today) {
+  constexpr int padding = GROUP_PADDING;
+  const int innerWidth = std::max(1, rect.width - 2 * padding);
+
+  char value[24] = {};
+  const char* label = "";
+  switch (widget.dateField) {
+    case DateField::Day:
+      std::snprintf(value, sizeof(value), "%u", static_cast<unsigned>(today.day));
+      break;
+    case DateField::Weekday:
+      // Gemeten in de kleinste maat en in BOLD, de stijl waarin deze tegel
+      // tekent: de volle naam maakt plaats voor de afkorting alleen als hij op
+      // geen enkele maat past, en fittingGaugeFontId laat daarna groeien wat won.
+      std::snprintf(value, sizeof(value), "%s",
+                    fittingWeekday(renderer, weekdayFromDate(today.year, today.month, today.day), DETAIL_FONT_ID,
+                                   innerWidth, EpdFontFamily::BOLD));
+      break;
+    case DateField::Month:
+      std::snprintf(value, sizeof(value), "%s", monthName(today.month));
+      break;
+    case DateField::Year:
+      std::snprintf(value, sizeof(value), "%u", static_cast<unsigned>(today.year));
+      break;
+    case DateField::WeekNumber:
+      std::snprintf(value, sizeof(value), "%u",
+                    static_cast<unsigned>(isoWeekFromDate(today.year, today.month, today.day).week));
+      label = "week";
+      break;
+    case DateField::Auto:
+      // renderDateAutoWidgetV2 tekent deze; de caller routeert hem nooit hierheen.
+      return;
+  }
+
+  const int labelAscender = renderer.getFontAscenderSize(LABEL_FONT_ID);
+  const int labelHeight = label[0] != '\0' ? labelAscender + GROUP_STACK_GAP : 0;
+  const int valueHeightBudget = std::max(1, rect.height - labelHeight - 2 * padding);
+  const int valueFontId = fittingGaugeFontId(renderer, value, innerWidth, valueHeightBudget);
+  const int valueAscender = renderer.getFontAscenderSize(valueFontId);
+
+  int y = std::max(padding, (rect.height - labelHeight - valueAscender) / 2);
+  if (labelHeight > 0) {
+    drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, label, EpdFontFamily::REGULAR, y, padding, true);
+    y += labelHeight;
+  }
+  drawTextCenteredInRect(renderer, valueFontId, rect, value, EpdFontFamily::BOLD, y, padding, true);
+}
+
+// DateField::Auto: de tegel laat zoveel van de datum zien als zijn vorm toelaat.
+void renderDateAutoWidgetV2(GfxRenderer& renderer, const WidgetRectV2& rect, const WidgetV2& /*widget*/,
+                            const TodaysDate& today) {
+  constexpr int padding = GROUP_PADDING;
+  const int innerWidth = std::max(1, rect.width - 2 * padding);
+  const int innerHeight = std::max(1, rect.height - 2 * padding);
+  const Weekday weekday = weekdayFromDate(today.year, today.month, today.day);
+  const IsoWeek isoWeek = isoWeekFromDate(today.year, today.month, today.day);
+  const int labelAscender = renderer.getFontAscenderSize(LABEL_FONT_ID);
+
+  char day[4] = {};
+  std::snprintf(day, sizeof(day), "%u", static_cast<unsigned>(today.day));
+  char week[12] = {};
+  std::snprintf(week, sizeof(week), "week %u", static_cast<unsigned>(isoWeek.week));
+
+  const bool wide = innerWidth >= DATE_WIDE_THRESHOLD;
+  const bool tall = innerHeight >= DATE_TALL_THRESHOLD;
+
+  if (wide && !tall) {
+    // Eén regel: "za 15 aug", met het weeknummer eronder als er ruimte is. v2
+    // kent geen iconen, dus de volle binnenbreedte is voor de tekst.
+    char line[32] = {};
+    std::snprintf(line, sizeof(line), "%s %u %s", weekdayAbbreviation(weekday),
+                  static_cast<unsigned>(today.day), monthAbbreviation(today.month));
+    const int lineFontId = fittingGaugeFontId(renderer, line, innerWidth, innerHeight);
+    const int lineAscender = renderer.getFontAscenderSize(lineFontId);
+    const bool showWeek = lineAscender + GROUP_STACK_GAP + labelAscender <= innerHeight;
+    const int blockHeight = lineAscender + (showWeek ? GROUP_STACK_GAP + labelAscender : 0);
+    int y = std::max(padding, (rect.height - blockHeight) / 2);
+    drawTextCenteredInRect(renderer, lineFontId, rect, line, EpdFontFamily::BOLD, y, padding, true);
+    if (showWeek) {
+      y += lineAscender + GROUP_STACK_GAP;
+      drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, week, EpdFontFamily::REGULAR, y, padding, true);
+    }
+    return;
+  }
+
+  if (wide && tall) {
+    // Het volle blad: een zwarte kopbalk met maand en jaar, het dagnummer groot,
+    // de weekdag voluit en het weeknummer als voetnoot.
+    char header[24] = {};
+    std::snprintf(header, sizeof(header), "%s %u", monthName(today.month), static_cast<unsigned>(today.year));
+    const int headerHeight = labelAscender + 2 * GROUP_STACK_GAP;
+    renderer.fillRect(rect.x, rect.y, rect.width, headerHeight, true);
+    drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, header, EpdFontFamily::BOLD, GROUP_STACK_GAP, padding, false);
+
+    const int dayHeightBudget =
+        std::max(1, innerHeight - labelAscender - GROUP_STACK_GAP - labelAscender - GROUP_STACK_GAP);
+    const int dayFontId = fittingGaugeFontId(renderer, day, innerWidth, dayHeightBudget);
+    const int dayAscender = renderer.getFontAscenderSize(dayFontId);
+    const char* weekdayText = fittingWeekday(renderer, weekday, LABEL_FONT_ID, innerWidth, EpdFontFamily::REGULAR);
+    const int blockHeight = dayAscender + GROUP_STACK_GAP + labelAscender + GROUP_STACK_GAP + labelAscender;
+    int y = headerHeight + std::max(padding, (rect.height - headerHeight - blockHeight) / 2);
+    drawTextCenteredInRect(renderer, dayFontId, rect, day, EpdFontFamily::BOLD, y, padding, true);
+    y += dayAscender + GROUP_STACK_GAP;
+    drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, weekdayText, EpdFontFamily::REGULAR, y, padding, true);
+    y += labelAscender + GROUP_STACK_GAP;
+    drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, week, EpdFontFamily::REGULAR, y, padding, true);
+    return;
+  }
+
+  // Smal: weekdag boven het dagnummer, met de afgekorte maand eronder alleen
+  // als de tegel hoog genoeg is voor een derde regel.
+  const char* weekdayText = fittingWeekday(renderer, weekday, LABEL_FONT_ID, innerWidth, EpdFontFamily::REGULAR);
+  const int dayHeightBudget =
+      std::max(1, innerHeight - labelAscender - GROUP_STACK_GAP - (tall ? labelAscender + GROUP_STACK_GAP : 0));
+  const int dayFontId = fittingGaugeFontId(renderer, day, innerWidth, dayHeightBudget);
+  const int dayAscender = renderer.getFontAscenderSize(dayFontId);
+  const bool showMonth =
+      tall && labelAscender + GROUP_STACK_GAP + dayAscender + GROUP_STACK_GAP + labelAscender <= innerHeight;
+  const int blockHeight =
+      labelAscender + GROUP_STACK_GAP + dayAscender + (showMonth ? GROUP_STACK_GAP + labelAscender : 0);
+  int y = std::max(padding, (rect.height - blockHeight) / 2);
+  drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, weekdayText, EpdFontFamily::REGULAR, y, padding, true);
+  y += labelAscender + GROUP_STACK_GAP;
+  drawTextCenteredInRect(renderer, dayFontId, rect, day, EpdFontFamily::BOLD, y, padding, true);
+  if (showMonth) {
+    y += dayAscender + GROUP_STACK_GAP;
+    drawTextCenteredInRect(renderer, LABEL_FONT_ID, rect, monthAbbreviation(today.month), EpdFontFamily::REGULAR, y,
+                           padding, true);
+  }
+}
+
+// Wat een datumtegel toont als de RTC niet te vertrouwen is. Een streepje leest
+// op armlengte als "geen data"; een verkeerde datum doet dat niet.
+void renderDatePlaceholderV2(GfxRenderer& renderer, const WidgetRectV2& rect) {
+  constexpr int padding = GROUP_PADDING;
+  const int fontId = LABEL_FONT_ID;
+  const int ascender = renderer.getFontAscenderSize(fontId);
+  const int y = std::max(padding, (rect.height - ascender) / 2);
+  drawTextCenteredInRect(renderer, fontId, rect, "—", EpdFontFamily::REGULAR, y, padding, true);
+}
+
+void renderDateWidgetV2(GfxRenderer& renderer, const WidgetRectV2& rect, const WidgetV2& widget,
+                        const TodaysDate& today) {
+  if (!today.valid) {
+    renderDatePlaceholderV2(renderer, rect);
+  } else if (widget.dateField == DateField::Auto) {
+    renderDateAutoWidgetV2(renderer, rect, widget, today);
+  } else {
+    renderDateFieldWidgetV2(renderer, rect, widget, today);
+  }
+}
+
+void renderListWidgetV2(GfxRenderer& renderer, const WidgetRectV2& rect, const WidgetV2& /*widget*/,
+                        const ListContentV2& list) {
+  constexpr int padding = GROUP_PADDING;
+  const int rowFontId = LABEL_FONT_ID;
+
+  int y = padding;
+  if (list.headingLength > 0) {
+    char heading[MAX_LIST_HEADING_SIZE + 1];
+    copyTextBytes(list.headingBytes, list.headingLength, heading);
+    renderer.drawText(LABEL_FONT_ID, rect.x + padding, rect.y + y, heading, true, EpdFontFamily::BOLD);
+    y += renderer.getLineHeight(LABEL_FONT_ID);
+  }
+
+  const int lineHeight = renderer.getLineHeight(rowFontId);
+  // time + twee spaties + label, ruim onder de stackgrens (CLAUDE.md #1), ook
+  // op de maximale veldlengte.
+  char line[MAX_LIST_ROW_TIME_SIZE + 2 + MAX_LIST_ROW_LABEL_SIZE + 1];
+  for (uint8_t index = 0; index < list.rowCount && y + lineHeight <= rect.height - padding; ++index) {
+    const ListRowV2& row = list.rows[index];
+    size_t offset = 0;
+    std::copy_n(row.timeBytes.begin(), row.timeLength, line + offset);
+    offset += row.timeLength;
+    line[offset++] = ' ';
+    line[offset++] = ' ';
+    std::copy_n(row.labelBytes.begin(), row.labelLength, line + offset);
+    offset += row.labelLength;
+    line[offset] = '\0';
+
+    // De eerste regel is vet als ankerpunt voor het oog; de rest regulier.
+    const EpdFontFamily::Style rowStyle = index == 0 ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+    const std::string bounded = renderer.truncatedText(rowFontId, line, rect.width - 2 * padding, rowStyle);
+    renderer.drawText(rowFontId, rect.x + padding, rect.y + y, bounded.c_str(), true, rowStyle);
+    y += lineHeight;
+  }
+}
+
 int drawGroupHeading(GfxRenderer& renderer, const WidgetRectV2& rect, const char* heading) {
   if (heading[0] == '\0') return rect.y + GROUP_PADDING;
   const int headingAscender = renderer.getFontAscenderSize(HEADING_FONT_ID);
@@ -363,11 +641,28 @@ void renderWidgetGridV2(GfxRenderer& renderer, const WidgetGridPackageV2& packag
   std::array<WidgetRectV2, MAX_WIDGETS> rects{};
   computeGridLayoutV2(package, canvasWidth, canvasHeight, rects, originX, originY);
 
+  // Read once for the whole grid, not once per tile: two date tiles drawn either
+  // side of midnight would otherwise disagree about what day it is.
+  const TodaysDate today = readTodaysDate();
   for (uint8_t index = 0; index < package.widgetCount; ++index) {
     const WidgetV2& widget = package.widgets[index];
-    if (widget.type != WidgetType::Group) continue;
-    if (const GroupContent* content = groupContentFor(package, widget); content != nullptr) {
-      renderGroupWidget(renderer, rects[index], *content);
+    switch (widget.type) {
+      case WidgetType::Group:
+        if (const GroupContent* content = groupContentFor(package, widget); content != nullptr) {
+          renderGroupWidget(renderer, rects[index], *content);
+        }
+        break;
+      case WidgetType::Kpi:
+        renderKpiWidgetV2(renderer, rects[index], widget);
+        break;
+      case WidgetType::List:
+        if (const ListContentV2* list = listContentFor(package, widget); list != nullptr) {
+          renderListWidgetV2(renderer, rects[index], widget, *list);
+        }
+        break;
+      case WidgetType::Date:
+        renderDateWidgetV2(renderer, rects[index], widget, today);
+        break;
     }
   }
 }
