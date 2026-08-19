@@ -87,14 +87,14 @@ dashboard::Widget dateWidget(uint8_t column, uint8_t row, dashboard::DateField f
 
 }  // namespace
 
-TEST(DashboardWidgetGrid, EncodesSchemaV2WithGlobalStyleAndContentAtOffset31) {
+TEST(DashboardWidgetGrid, EncodesSchemaV2WithGlobalStyleAndContentAtOffset34) {
   auto package = validPackage();
   dashboard::PackageBytes bytes{};
   size_t length = 0;
   ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
   EXPECT_EQ(bytes[4], 2);   // TEMPLATE_WIDGET_GRID moved to schema 2
-  EXPECT_EQ(bytes[30], 0);  // global style byte defaults to zero
-  EXPECT_EQ(bytes[31], static_cast<uint8_t>(dashboard::WidgetType::Kpi));
+  EXPECT_EQ(bytes[33], 0);  // global style byte defaults to zero
+  EXPECT_EQ(bytes[34], static_cast<uint8_t>(dashboard::WidgetType::Kpi));
 }
 
 TEST(DashboardWidgetGrid, RoundTripsGlobalAndPerWidgetStyle) {
@@ -129,7 +129,7 @@ TEST(DashboardWidgetGrid, RejectsReservedBitsInGlobalStyle) {
 
   package.style = 0;
   ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
-  bytes[30] |= 0x80;
+  bytes[33] |= 0x80;
   rewriteCrc(bytes, length);
   dashboard::WidgetGridPackage decoded{};
   EXPECT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::InvalidArgument);
@@ -144,9 +144,9 @@ TEST(DashboardWidgetGrid, RejectsReservedBitsInWidgetStyle) {
 
   package.widgets[0].style = 0;
   ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
-  // Widget 0's style word sits at offsets 36-37 (content starts at 31, header
+  // Widget 0's style word sits at offsets 39-40 (content starts at 34, header
   // is 7); reserved bits live in the high byte.
-  bytes[37] |= 0x80;
+  bytes[40] |= 0x80;
   rewriteCrc(bytes, length);
   dashboard::WidgetGridPackage decoded{};
   EXPECT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::InvalidArgument);
@@ -161,7 +161,7 @@ TEST(DashboardWidgetGrid, RejectsIconIdAbove64) {
 
   package.widgets[0].style = 0;
   ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
-  bytes[36] = 65;
+  bytes[39] = 65;
   rewriteCrc(bytes, length);
   dashboard::WidgetGridPackage decoded{};
   EXPECT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::InvalidArgument);
@@ -178,7 +178,7 @@ TEST(DashboardWidgetGrid, EncodesAndRoundTripsMixedWidgets) {
   size_t length = 0;
   ASSERT_EQ(dashboard::encodeWidgetGridPackage(validPackage(), bytes, length), dashboard::Status::Ok);
   EXPECT_EQ(bytes[5], dashboard::TEMPLATE_WIDGET_GRID);
-  EXPECT_EQ(bytes[28], dashboard::GRID_COLUMNS);
+  EXPECT_EQ(bytes[31], dashboard::GRID_COLUMNS);
 
   dashboard::WidgetGridPackage decoded{};
   ASSERT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::Ok);
@@ -372,7 +372,7 @@ TEST(DashboardWidgetGrid, PeekAcceptsWidgetGridPackageWithoutWidgets) {
   dashboard::PackageBytes bytes{};
   size_t length = 0;
   ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
-  ASSERT_EQ(length, 35u);
+  ASSERT_EQ(length, 38u);
 
   dashboard::PackageHeader header{};
   EXPECT_EQ(dashboard::peekPackageHeader(bytes.data(), length, header), dashboard::Status::Ok);
@@ -401,7 +401,7 @@ TEST(DashboardWidgetGrid, WidgetSlotsAreCheapEnoughToCoverTheWholeGrid) {
 // does not control.
 TEST(DashboardWidgetGrid, DecodeRejectsMoreListsThanTheDecodedFormCanHold) {
   constexpr size_t widgetCount = dashboard::MAX_LIST_WIDGETS + 1;
-  constexpr size_t total = 31 + widgetCount * 9 + dashboard::CRC_SIZE;
+  constexpr size_t total = 34 + widgetCount * 9 + dashboard::CRC_SIZE;
   ASSERT_LE(widgetCount, dashboard::GRID_COLUMNS);  // one 1x1 list per column, no overlaps
 
   std::array<uint8_t, dashboard::MAX_PACKAGE_SIZE> bytes{};
@@ -415,11 +415,11 @@ TEST(DashboardWidgetGrid, DecodeRejectsMoreListsThanTheDecodedFormCanHold) {
   bytes[8] = 9;     // packageId
   bytes[12] = 100;  // generatedAt
   bytes[20] = 200;  // validUntil
-  bytes[28] = dashboard::GRID_COLUMNS;
-  bytes[29] = static_cast<uint8_t>(widgetCount);
-  bytes[30] = 0;  // global style byte
+  bytes[31] = dashboard::GRID_COLUMNS;
+  bytes[32] = static_cast<uint8_t>(widgetCount);
+  bytes[33] = 0;  // global style byte
   for (size_t index = 0; index < widgetCount; ++index) {
-    uint8_t* widget = bytes.data() + 31 + index * 9;
+    uint8_t* widget = bytes.data() + 34 + index * 9;
     widget[0] = static_cast<uint8_t>(dashboard::WidgetType::List);
     widget[1] = static_cast<uint8_t>(index);  // column
     widget[2] = 0;                            // row
@@ -543,8 +543,8 @@ TEST(DashboardWidgetGrid, DateWidgetCostsEightBytes) {
   dashboard::PackageBytes bytes{};
   size_t length = 0;
   ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
-  // 31-byte prefix + 8-byte date widget + 4-byte CRC.
-  EXPECT_EQ(length, 43u);
+  // 34-byte prefix + 8-byte date widget + 4-byte CRC.
+  EXPECT_EQ(length, 46u);
 }
 
 TEST(DashboardWidgetGrid, DateWidgetRoundTripsEveryField) {
@@ -601,7 +601,7 @@ TEST(DashboardWidgetGrid, DateWidgetMatchesHandDerivedBytes) {
   size_t length = 0;
   ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
 
-  // The widget's own 8 bytes start right after the 31-byte prefix.
+  // The widget's own 8 bytes start right after the 34-byte prefix.
   const uint8_t expected[] = {
       3,          // type = Date
       2,          // column
@@ -612,7 +612,7 @@ TEST(DashboardWidgetGrid, DateWidgetMatchesHandDerivedBytes) {
       5,          // field = WeekNumber
   };
   for (size_t index = 0; index < sizeof(expected); ++index) {
-    EXPECT_EQ(bytes[31 + index], expected[index]) << "byte " << index;
+    EXPECT_EQ(bytes[34 + index], expected[index]) << "byte " << index;
   }
 }
 
@@ -622,7 +622,7 @@ TEST(DashboardWidgetGrid, DateWidgetMatchesHandDerivedBytes) {
 // readWidget - a truncated payload, a field value the encoder would never
 // emit - is invisible to an encode/decode round trip.
 TEST(DashboardWidgetGrid, DecodesDateWidgetFromBytesItDidNotProduce) {
-  constexpr size_t total = 31 + 8 + dashboard::CRC_SIZE;
+  constexpr size_t total = 34 + 8 + dashboard::CRC_SIZE;
 
   auto buildDatePackage = [](uint8_t fieldByte, size_t length) {
     std::array<uint8_t, dashboard::MAX_PACKAGE_SIZE> bytes{};
@@ -636,10 +636,10 @@ TEST(DashboardWidgetGrid, DecodesDateWidgetFromBytesItDidNotProduce) {
     bytes[8] = 9;     // packageId
     bytes[12] = 100;  // generatedAt
     bytes[20] = 200;  // validUntil
-    bytes[28] = dashboard::GRID_COLUMNS;
-    bytes[29] = 1;  // widgetCount
-    bytes[30] = 0;  // global style byte
-    uint8_t* widget = bytes.data() + 31;
+    bytes[31] = dashboard::GRID_COLUMNS;
+    bytes[32] = 1;  // widgetCount
+    bytes[33] = 0;  // global style byte
+    uint8_t* widget = bytes.data() + 34;
     widget[0] = static_cast<uint8_t>(dashboard::WidgetType::Date);
     widget[1] = 2;  // column
     widget[2] = 3;  // row
