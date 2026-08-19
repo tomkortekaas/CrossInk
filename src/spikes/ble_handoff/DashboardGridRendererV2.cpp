@@ -69,13 +69,20 @@ void drawTextCenteredInRect(GfxRenderer& renderer, const int fontId, const Widge
   renderer.drawText(fontId, x, rect.y + y, bounded.c_str(), ink, style);
 }
 
-// De grootste maat uit de ladder waarvan `text` nog binnen `maxWidth` past.
-// Valt terug op de kleinste maat, waarna de caller (drawTextCenteredInRect)
-// zo nodig trunkeert - dezelfde fallback als template 3.
-int fittingGaugeFontId(const GfxRenderer& renderer, const char* text, const int maxWidth) {
+// De grootste maat uit de ladder waarvan `text` binnen `maxWidth` EN `maxHeight`
+// past. Valt terug op de kleinste maat, waarna de caller
+// (drawTextCenteredInRect) zo nodig trunkeert - dezelfde fallback als template 3.
+//
+// De hoogte moet mee: op alleen breedte kiezen betekent dat een strip van 64 px
+// hoog met een item van 252 px breed rustig een maat van 34 px pakt, waarna het
+// label eronder van het paneel valt. Dat is precies wat er de eerste keer op
+// hardware gebeurde.
+int fittingGaugeFontId(const GfxRenderer& renderer, const char* text, const int maxWidth, const int maxHeight) {
   for (int index = static_cast<int>(std::size(GAUGE_FONT_LADDER)) - 1; index >= 0; --index) {
-    if (renderer.getTextWidth(GAUGE_FONT_LADDER[index], text, EpdFontFamily::BOLD) <= maxWidth) {
-      return GAUGE_FONT_LADDER[index];
+    const int fontId = GAUGE_FONT_LADDER[index];
+    if (renderer.getTextWidth(fontId, text, EpdFontFamily::BOLD) <= maxWidth &&
+        renderer.getFontAscenderSize(fontId) <= maxHeight) {
+      return fontId;
     }
   }
   return GAUGE_FONT_LADDER[0];
@@ -101,10 +108,18 @@ void renderTextBlock(GfxRenderer& renderer, const WidgetRectV2& rect, const char
   const bool hasLabel = label[0] != '\0';
   const bool hasDetail = detail[0] != '\0';
 
-  const int valueFontId = hasValue ? fittingGaugeFontId(renderer, value, rect.width - 2 * GROUP_TEXT_PADDING) : 0;
-  const int valueAscender = hasValue ? renderer.getFontAscenderSize(valueFontId) : 0;
+  // Label en detail staan op vaste maten, dus hun hoogte is vooraf bekend. Wat
+  // daarna overblijft is het hoogtebudget voor de waarde - anders kiest die een
+  // maat die de rest van het blok van de tegel duwt.
   const int labelAscender = hasLabel ? renderer.getFontAscenderSize(LABEL_FONT_ID) : 0;
   const int detailAscender = hasDetail ? renderer.getFontAscenderSize(DETAIL_FONT_ID) : 0;
+  const int reservedBelow = (hasLabel ? labelAscender + GROUP_STACK_GAP : 0) +
+                            (hasDetail ? detailAscender + GROUP_STACK_GAP : 0);
+  const int valueHeightBudget = std::max(1, rect.height - reservedBelow - 2 * GROUP_TEXT_PADDING);
+
+  const int valueFontId =
+      hasValue ? fittingGaugeFontId(renderer, value, rect.width - 2 * GROUP_TEXT_PADDING, valueHeightBudget) : 0;
+  const int valueAscender = hasValue ? renderer.getFontAscenderSize(valueFontId) : 0;
 
   int blockHeight = 0;
   if (hasValue) blockHeight += valueAscender;
@@ -191,7 +206,9 @@ void renderArcGroup(GfxRenderer& renderer, const WidgetRectV2& rect, const Group
       // werkelijke binnenruimte is dus 2*radius - thickness.
       const int innerDiameter = std::max(1, 2 * outerRadius - thickness);
       const int valueMaxWidth = std::max(1, innerDiameter - 2 * ARC_VALUE_MARGIN);
-      const int valueFontId = fittingGaugeFontId(renderer, value, valueMaxWidth);
+      // De ruimte binnen de ring is rond, dus het hoogtebudget is hetzelfde als
+      // het breedtebudget.
+      const int valueFontId = fittingGaugeFontId(renderer, value, valueMaxWidth, valueMaxWidth);
       const int valueAscender = renderer.getFontAscenderSize(valueFontId);
       const WidgetRectV2 ringRect{centerX - outerRadius, blockTop, 2 * outerRadius, 2 * outerRadius};
       const int ringPadding = thickness / 2 + ARC_VALUE_MARGIN;
@@ -228,7 +245,10 @@ void renderBarRow(GfxRenderer& renderer, const WidgetRectV2& rect, const GroupIt
 
   const int labelWidth = hasLabel ? renderer.getTextWidth(LABEL_FONT_ID, label, EpdFontFamily::REGULAR) : 0;
   const int valueMaxWidth = std::max(1, innerWidth - (hasLabel ? labelWidth + BAR_VALUE_LABEL_GAP : 0));
-  const int valueFontId = hasValue ? fittingGaugeFontId(renderer, value, valueMaxWidth) : 0;
+  // De waarderegel deelt de rij met de balk en de bijschriften eronder, dus
+  // hooguit de helft van de rijhoogte.
+  const int valueHeightBudget = std::max(1, rowHeight / 2);
+  const int valueFontId = hasValue ? fittingGaugeFontId(renderer, value, valueMaxWidth, valueHeightBudget) : 0;
   const int valueAscender = hasValue ? renderer.getFontAscenderSize(valueFontId) : 0;
   const int labelAscender = hasLabel ? renderer.getFontAscenderSize(LABEL_FONT_ID) : 0;
 
