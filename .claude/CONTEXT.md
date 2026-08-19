@@ -78,3 +78,30 @@ Refer to https://freeink.org/llms.txt for guidance.
   own `lib_deps` lists. Anything in `src/spikes/ble_handoff/` that includes
   `<Logging.h>` needs `BoardConfig` there, or the build fails with
   `fatal error: BoardConfig.h: No such file or directory`.
+
+## Fonts: do not regenerate `src/fontIds.h`
+
+`lib/EpdFont/scripts/build-font-ids.sh` carries a hardcoded font list, and the
+checked-in `src/fontIds.h` is older than the script. Running it as the
+`custom-fonts` skill instructs (step 3) **rewrites three existing ids** —
+`UI_10`, `UI_12` and `SMALL` — which silently repoints every caller that looks a
+font up by id. Add a new font's id by hand with the same SHA-256 algorithm
+instead, next to the existing defines.
+
+Measured 2026-08-19 while sizing the dashboard font ladder.
+
+## Fonts: subsetting is what makes large sizes affordable
+
+A Lexend size at the default intervals costs ~243 KB in flash for four styles,
+and a single unsubsetted 34 px bold face pushes `-e default` **3,840 bytes past
+the OTA partition**. The same face restricted to the characters a dashboard
+value actually uses costs ~16 KB — a 4x saving on one face.
+
+Restrict with `--font-include-intervals 0:32,126`. Note that
+`--additional-intervals` does **not** work alongside it: `--font-include-intervals`
+blocks face 0 outside its interval, so a code point added the other way
+(e.g. `°` at 176) is exported but then fails to load and ends up an empty glyph.
+Add a second include interval instead: `--font-include-intervals 0:176,176`.
+
+`fontconvert.py` needs `freetype-py` and `fontTools`, which are not in the
+system Python.
