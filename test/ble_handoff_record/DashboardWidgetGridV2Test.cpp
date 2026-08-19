@@ -206,7 +206,7 @@ TEST(WidgetGridV2Encode, LengthFieldMatchesActualLength) {
   const uint16_t declared = static_cast<uint16_t>(bytes[6]) | (static_cast<uint16_t>(bytes[7]) << 8);
   EXPECT_EQ(declared, length);
   EXPECT_EQ(bytes[5], dashboard::v2::TEMPLATE_WIDGET_GRID_V2);
-  EXPECT_EQ(bytes[28], dashboard::v2::GRID_COLUMNS);
+  EXPECT_EQ(bytes[31], dashboard::v2::GRID_COLUMNS);
 }
 
 TEST(WidgetGridV2Encode, RejectsOverlappingWidgets) {
@@ -311,7 +311,7 @@ TEST(WidgetGridV2Decode, RejectsWrongGridColumns) {
   dashboard::PackageBytes bytes{};
   size_t length = 0;
   ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
-  bytes[28] = 4;
+  bytes[31] = 4;
   rewriteCrcV2(bytes, length);
 
   dashboard::v2::WidgetGridPackageV2 decoded{};
@@ -338,7 +338,7 @@ TEST(WidgetGridV2Decode, RejectsBorderLevelAboveMax) {
   dashboard::PackageBytes bytes{};
   size_t length = 0;
   ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
-  bytes[30] = dashboard::MAX_BORDER_LEVEL + 1;
+  bytes[33] = dashboard::MAX_BORDER_LEVEL + 1;
   rewriteCrcV2(bytes, length);
 
   dashboard::v2::WidgetGridPackageV2 decoded{};
@@ -353,7 +353,7 @@ TEST(WidgetGridV2Decode, RejectsUnknownWidgetType) {
   dashboard::PackageBytes bytes{};
   size_t length = 0;
   ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
-  bytes[31] = 9;  // eerste byte van het eerste widget is het type
+  bytes[34] = 9;  // eerste byte van het eerste widget is het type
   rewriteCrcV2(bytes, length);
 
   dashboard::v2::WidgetGridPackageV2 decoded{};
@@ -362,7 +362,7 @@ TEST(WidgetGridV2Decode, RejectsUnknownWidgetType) {
 
 // Een groep met één item, geen kop, label "X3", waarde "50%", geen detail.
 // Handmatig uitgerekend: widget begint op 31, groepskop op 31+7=38,
-// items beginnen op 38+3=41 (kop is leeg), itemvelden 41..44, dan de tekst.
+// items beginnen op 41+3=44 (kop is leeg), itemvelden 44..47, dan de tekst.
 TEST(WidgetGridV2Bytes, GroupLayoutIsAtTheExpectedOffsets) {
   dashboard::v2::WidgetGridPackageV2 package = minimalPackage();
   dashboard::v2::WidgetV2 widget{};
@@ -391,25 +391,25 @@ TEST(WidgetGridV2Bytes, GroupLayoutIsAtTheExpectedOffsets) {
   size_t length = 0;
   ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
 
-  EXPECT_EQ(bytes[31], static_cast<uint8_t>(dashboard::v2::WidgetType::Group));
-  EXPECT_EQ(bytes[32], 2);   // column
-  EXPECT_EQ(bytes[33], 3);   // row
-  EXPECT_EQ(bytes[34], 4);   // columnSpan
-  EXPECT_EQ(bytes[35], 5);   // rowSpan
-  EXPECT_EQ(bytes[38], dashboard::v2::GROUP_SHAPE_BAR);
-  EXPECT_EQ(bytes[39], 0);   // headingLength
-  EXPECT_EQ(bytes[40], 1);   // itemCount
-  EXPECT_EQ(bytes[41], 2);   // labelLength
-  EXPECT_EQ(bytes[42], 3);   // valueLength
-  EXPECT_EQ(bytes[43], 0);   // detailLength
-  EXPECT_EQ(bytes[44], 79);  // fill
-  EXPECT_EQ(bytes[45], 'X');
-  EXPECT_EQ(bytes[46], '3');
-  EXPECT_EQ(bytes[47], '5');
-  EXPECT_EQ(bytes[48], '0');
-  EXPECT_EQ(bytes[49], '%');
-  // 31 kop + 7 widget + 3 groepskop + 4 itemkop + 5 tekst + 4 CRC = 54
-  EXPECT_EQ(length, 54u);
+  EXPECT_EQ(bytes[34], static_cast<uint8_t>(dashboard::v2::WidgetType::Group));
+  EXPECT_EQ(bytes[35], 2);   // column
+  EXPECT_EQ(bytes[36], 3);   // row
+  EXPECT_EQ(bytes[37], 4);   // columnSpan
+  EXPECT_EQ(bytes[38], 5);   // rowSpan
+  EXPECT_EQ(bytes[41], dashboard::v2::GROUP_SHAPE_BAR);
+  EXPECT_EQ(bytes[42], 0);   // headingLength
+  EXPECT_EQ(bytes[43], 1);   // itemCount
+  EXPECT_EQ(bytes[44], 2);   // labelLength
+  EXPECT_EQ(bytes[45], 3);   // valueLength
+  EXPECT_EQ(bytes[46], 0);   // detailLength
+  EXPECT_EQ(bytes[47], 79);  // fill
+  EXPECT_EQ(bytes[48], 'X');
+  EXPECT_EQ(bytes[49], '3');
+  EXPECT_EQ(bytes[50], '5');
+  EXPECT_EQ(bytes[51], '0');
+  EXPECT_EQ(bytes[52], '%');
+  // 34 kop + 7 widget + 3 groepskop + 4 itemkop + 5 tekst + 4 CRC = 57
+  EXPECT_EQ(length, 57u);
 }
 
 // De vulbyte staat vóór de tekst, niet erachter. Zonder deze test schuift een
@@ -424,9 +424,9 @@ TEST(WidgetGridV2Bytes, FillPrecedesTheTextBytes) {
   size_t length = 0;
   ASSERT_EQ(dashboard::v2::encodeWidgetGridPackageV2(package, bytes, length), dashboard::Status::Ok);
 
-  // groepskop op 38 (shape, headingLength, itemCount), itemkop op 41.
-  EXPECT_EQ(bytes[44], 42);
-  EXPECT_EQ(bytes[45], 'T');  // eerste teken van "Thuisaccu"
+  // groepskop op 41 (shape, headingLength, itemCount), itemkop op 44.
+  EXPECT_EQ(bytes[47], 42);
+  EXPECT_EQ(bytes[48], 'T');  // eerste teken van "Thuisaccu"
 }
 
 }  // namespace
