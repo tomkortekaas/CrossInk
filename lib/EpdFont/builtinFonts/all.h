@@ -51,3 +51,10 @@
 #include <builtinFonts/inter_12_bold.h>
 #include <builtinFonts/inter_12_regular.h>
 #include <builtinFonts/inter_8_regular.h>
+
+// Dashboard gauge fonts - subsetted bold ladder, kept separate from the full
+// reading fonts of the same size by the _dash suffix.
+#include <builtinFonts/lexenddeca_18_bold_dash.h>
+#include <builtinFonts/lexenddeca_22_bold_dash.h>
+#include <builtinFonts/lexenddeca_28_bold_dash.h>
+#include <builtinFonts/lexenddeca_34_bold_dash.h>

@@ -194,6 +194,23 @@ EpdFont ui12RegularFont(&inter_12_regular);
 EpdFont ui12BoldFont(&inter_12_bold);
 EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont);
 
+// Dashboard gauge fonts - subsetted bold ladder. Alle vier de stijlen wijzen
+// naar dezelfde vette face: op deze maten staan alleen meterwaarden, en die zijn
+// altijd vet. Een cursieve variant zou de maat verdubbelen voor tekst die nooit
+// getekend wordt.
+EpdFont lexenddeca18BoldDashFont(&lexenddeca_18_bold_dash);
+EpdFontFamily lexenddeca18DashFontFamily(&lexenddeca18BoldDashFont, &lexenddeca18BoldDashFont,
+                                         &lexenddeca18BoldDashFont, &lexenddeca18BoldDashFont);
+EpdFont lexenddeca22BoldDashFont(&lexenddeca_22_bold_dash);
+EpdFontFamily lexenddeca22DashFontFamily(&lexenddeca22BoldDashFont, &lexenddeca22BoldDashFont,
+                                         &lexenddeca22BoldDashFont, &lexenddeca22BoldDashFont);
+EpdFont lexenddeca28BoldDashFont(&lexenddeca_28_bold_dash);
+EpdFontFamily lexenddeca28DashFontFamily(&lexenddeca28BoldDashFont, &lexenddeca28BoldDashFont,
+                                         &lexenddeca28BoldDashFont, &lexenddeca28BoldDashFont);
+EpdFont lexenddeca34BoldDashFont(&lexenddeca_34_bold_dash);
+EpdFontFamily lexenddeca34DashFontFamily(&lexenddeca34BoldDashFont, &lexenddeca34BoldDashFont,
+                                         &lexenddeca34BoldDashFont, &lexenddeca34BoldDashFont);
+
 // measurement of power button press duration calibration value
 unsigned long t1 = 0;
 unsigned long t2 = 0;
@@ -832,6 +849,10 @@ void setupDisplayAndFonts(const bool seamless = false, const bool loadReaderReso
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
+  renderer.insertFont(LEXENDDECA_18_BOLD_DASH_FONT_ID, lexenddeca18DashFontFamily);
+  renderer.insertFont(LEXENDDECA_22_BOLD_DASH_FONT_ID, lexenddeca22DashFontFamily);
+  renderer.insertFont(LEXENDDECA_28_BOLD_DASH_FONT_ID, lexenddeca28DashFontFamily);
+  renderer.insertFont(LEXENDDECA_34_BOLD_DASH_FONT_ID, lexenddeca34DashFontFamily);
 
   if (loadReaderResources) {
     sdFontSystem.begin(renderer);

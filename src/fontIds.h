@@ -121,6 +121,10 @@
 #else
 #define BITTER_20_FONT_ID (1392022129)
 #endif
+#define LEXENDDECA_18_BOLD_DASH_FONT_ID (35080712)
+#define LEXENDDECA_22_BOLD_DASH_FONT_ID (249369102)
+#define LEXENDDECA_28_BOLD_DASH_FONT_ID (92475151)
+#define LEXENDDECA_34_BOLD_DASH_FONT_ID (-1236350194)
 #define UI_10_FONT_ID (-227549249)
 #define UI_12_FONT_ID (652043988)
 #define SMALL_FONT_ID (-1760306835)
@@ -151,6 +155,10 @@ static_assert(BITTER_14_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(BITTER_16_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(BITTER_18_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(BITTER_20_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(LEXENDDECA_18_BOLD_DASH_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(LEXENDDECA_22_BOLD_DASH_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(LEXENDDECA_28_BOLD_DASH_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(LEXENDDECA_34_BOLD_DASH_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UI_10_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UI_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(SMALL_FONT_ID != 0, "Font ID collision with sentinel");
