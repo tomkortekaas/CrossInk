@@ -133,6 +133,13 @@ Project: Open-source e-reader firmware for ESP32-C3 and ESP32-S3 devices.
 
 ## Git Workflow
 
+- Issue-driven agent work uses its own convention on top of the branch
+  prefixes below: `app start <issue-number>` creates a branch named
+  `issue-<number>-<slug>` in its own `git worktree` (see the top-level
+  `app` CLI, shared across repos). Work on an Issue happens only inside
+  that worktree; never touch another worktree's files. `app finish` always
+  runs `pio run -e default` before allowing a commit/push/PR, and never
+  merges — a human reviews and merges every PR.
 - Check `git status --short` before edits and before reporting results. Preserve unrelated user changes.
 - When resolving merge, rebase, or cherry-pick conflicts, inspect the relevant commit messages for upstream PR references such as `#2608`. Open the PR in its source repository and read its description and changed files before resolving the conflict so the intended behavior is understood.
 - Do not resolve conflicts by automatically keeping CrossInk's current implementation or by discarding the upstream change wholesale. Preserve or adapt the upstream intent unless it is already fully implemented, would introduce a regression, or would substantially and unjustifiably change CrossInk's UX or behavior. When rejecting an upstream change, state the concrete reason.
