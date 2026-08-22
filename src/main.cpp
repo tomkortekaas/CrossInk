@@ -184,6 +184,18 @@ EpdFont bitter16ItalicFont(&bitter_16_italic);
 EpdFont bitter16BoldItalicFont(&bitter_16_bolditalic);
 EpdFontFamily bitter16FontFamily(&bitter16RegularFont, &bitter16BoldFont, &bitter16ItalicFont, &bitter16BoldItalicFont);
 
+// Maten 8 en 9 zijn bestemd voor de lettertypes-testkaart, niet voor leeswerk.
+// Daarom wijzen alle vier de stijlen naar dezelfde vette face: de kaart test
+// leesbaarheid van dik/dun op deze kleine maten en trekt nooit cursief/regulier.
+EpdFont lexenddeca8BoldFont(&lexenddeca_8_bold);
+EpdFontFamily lexenddeca8FontFamily(&lexenddeca8BoldFont, &lexenddeca8BoldFont, &lexenddeca8BoldFont, &lexenddeca8BoldFont);
+EpdFont lexenddeca9BoldFont(&lexenddeca_9_bold);
+EpdFontFamily lexenddeca9FontFamily(&lexenddeca9BoldFont, &lexenddeca9BoldFont, &lexenddeca9BoldFont, &lexenddeca9BoldFont);
+EpdFont bitter8BoldFont(&bitter_8_bold);
+EpdFontFamily bitter8FontFamily(&bitter8BoldFont, &bitter8BoldFont, &bitter8BoldFont, &bitter8BoldFont);
+EpdFont bitter9BoldFont(&bitter_9_bold);
+EpdFontFamily bitter9FontFamily(&bitter9BoldFont, &bitter9BoldFont, &bitter9BoldFont, &bitter9BoldFont);
+
 EpdFont smallFont(&inter_8_regular);
 EpdFontFamily smallFontFamily(&smallFont);
 
@@ -864,6 +876,11 @@ void setupDisplayAndFonts(const bool seamless = false, const bool loadReaderReso
   renderer.insertFont(BITTER_12_FONT_ID, bitter12FontFamily);
   renderer.insertFont(BITTER_14_FONT_ID, bitter14FontFamily);
   renderer.insertFont(BITTER_16_FONT_ID, bitter16FontFamily);
+  // Maten 8/9: alleen voor de lettertypes-testkaart (bold-only families).
+  renderer.insertFont(LEXENDDECA_8_FONT_ID, lexenddeca8FontFamily);
+  renderer.insertFont(LEXENDDECA_9_FONT_ID, lexenddeca9FontFamily);
+  renderer.insertFont(BITTER_8_FONT_ID, bitter8FontFamily);
+  renderer.insertFont(BITTER_9_FONT_ID, bitter9FontFamily);
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);

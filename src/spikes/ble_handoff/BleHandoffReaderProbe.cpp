@@ -30,37 +30,46 @@ struct FontTestRow {
   const char* sample;
 };
 
-// De ladder die de agenda/berichten werkelijk gebruikt: Lexend (regulier en vet)
-// en Bitter voor leestekst op 10-16, plus de vette metermaattrap voor waarden.
-// Volgorde is oplopend in maat zodat Tom de kleinste het eerst ziet en kan
-// aflezen waar hij stopt met kunnen lezen.
+// Twee kolommen: links Lexend, rechts Bitter. Binnen elke kolom loopt de maat
+// oplopend 8 t/m 16 (regulier op de bovenste, vet net daaronder), zodat je de
+// minimaal leesbare maat in één oogopslag naast het standaardminimum ziet.
+// Volgorde is oplopend in maat zodat Tom de kleinste het eerst ziet.
 constexpr FontTestRow FONT_TEST_ROWS[] = {
-    {LEXENDDECA_10_FONT_ID, EpdFontFamily::REGULAR, "Lx R 10", "09:30 Teamoverleg"},
-    {LEXENDDECA_10_FONT_ID, EpdFontFamily::BOLD, "Lx B 10", "09:30 Teamoverleg"},
-    {LEXENDDECA_12_FONT_ID, EpdFontFamily::REGULAR, "Lx R 12", "09:30 Teamoverleg"},
-    {LEXENDDECA_12_FONT_ID, EpdFontFamily::BOLD, "Lx B 12", "09:30 Teamoverleg"},
-    {LEXENDDECA_14_FONT_ID, EpdFontFamily::REGULAR, "Lx R 14", "09:30 Teamoverleg"},
-    {LEXENDDECA_14_FONT_ID, EpdFontFamily::BOLD, "Lx B 14", "09:30 Teamoverleg"},
-    {LEXENDDECA_16_FONT_ID, EpdFontFamily::REGULAR, "Lx R 16", "09:30 Teamoverleg"},
-    {LEXENDDECA_16_FONT_ID, EpdFontFamily::BOLD, "Lx B 16", "09:30 Teamoverleg"},
+    {LEXENDDECA_8_FONT_ID, EpdFontFamily::REGULAR, "Lx 8R", "09:30"},
+    {LEXENDDECA_8_FONT_ID, EpdFontFamily::BOLD, "Lx 8B", "09:30"},
+    {LEXENDDECA_9_FONT_ID, EpdFontFamily::REGULAR, "Lx 9R", "09:30"},
+    {LEXENDDECA_9_FONT_ID, EpdFontFamily::BOLD, "Lx 9B", "09:30"},
+    {LEXENDDECA_10_FONT_ID, EpdFontFamily::REGULAR, "Lx 10R", "09:30 Appt"},
+    {LEXENDDECA_10_FONT_ID, EpdFontFamily::BOLD, "Lx 10B", "09:30 Appt"},
+    {LEXENDDECA_12_FONT_ID, EpdFontFamily::REGULAR, "Lx 12R", "09:30 Appt"},
+    {LEXENDDECA_12_FONT_ID, EpdFontFamily::BOLD, "Lx 12B", "09:30 Appt"},
+    {LEXENDDECA_14_FONT_ID, EpdFontFamily::REGULAR, "Lx 14R", "09:30 Appt"},
+    {LEXENDDECA_14_FONT_ID, EpdFontFamily::BOLD, "Lx 14B", "09:30 Appt"},
+    {LEXENDDECA_16_FONT_ID, EpdFontFamily::REGULAR, "Lx 16R", "09:30 Appt"},
+    {LEXENDDECA_16_FONT_ID, EpdFontFamily::BOLD, "Lx 16B", "09:30 Appt"},
 
-    {BITTER_10_FONT_ID, EpdFontFamily::REGULAR, "Bt R 10", "09:30 Teamoverleg"},
-    {BITTER_10_FONT_ID, EpdFontFamily::BOLD, "Bt B 10", "09:30 Teamoverleg"},
-    {BITTER_12_FONT_ID, EpdFontFamily::REGULAR, "Bt R 12", "09:30 Teamoverleg"},
-    {BITTER_12_FONT_ID, EpdFontFamily::BOLD, "Bt B 12", "09:30 Teamoverleg"},
-    {BITTER_14_FONT_ID, EpdFontFamily::REGULAR, "Bt R 14", "09:30 Teamoverleg"},
-    {BITTER_14_FONT_ID, EpdFontFamily::BOLD, "Bt B 14", "09:30 Teamoverleg"},
-    {BITTER_16_FONT_ID, EpdFontFamily::REGULAR, "Bt R 16", "09:30 Teamoverleg"},
-    {BITTER_16_FONT_ID, EpdFontFamily::BOLD, "Bt B 16", "09:30 Teamoverleg"},
+    {BITTER_8_FONT_ID, EpdFontFamily::REGULAR, "Bt 8R", "09:30"},
+    {BITTER_8_FONT_ID, EpdFontFamily::BOLD, "Bt 8B", "09:30"},
+    {BITTER_9_FONT_ID, EpdFontFamily::REGULAR, "Bt 9R", "09:30"},
+    {BITTER_9_FONT_ID, EpdFontFamily::BOLD, "Bt 9B", "09:30"},
+    {BITTER_10_FONT_ID, EpdFontFamily::REGULAR, "Bt 10R", "09:30 Appt"},
+    {BITTER_10_FONT_ID, EpdFontFamily::BOLD, "Bt 10B", "09:30 Appt"},
+    {BITTER_12_FONT_ID, EpdFontFamily::REGULAR, "Bt 12R", "09:30 Appt"},
+    {BITTER_12_FONT_ID, EpdFontFamily::BOLD, "Bt 12B", "09:30 Appt"},
+    {BITTER_14_FONT_ID, EpdFontFamily::REGULAR, "Bt 14R", "09:30 Appt"},
+    {BITTER_14_FONT_ID, EpdFontFamily::BOLD, "Bt 14B", "09:30 Appt"},
+    {BITTER_16_FONT_ID, EpdFontFamily::REGULAR, "Bt 16R", "09:30 Appt"},
+    {BITTER_16_FONT_ID, EpdFontFamily::BOLD, "Bt 16B", "09:30 Appt"},
 
-    {LEXENDDECA_22_BOLD_DASH_FONT_ID, EpdFontFamily::BOLD, "Lx 22", "09:30"},
-    {LEXENDDECA_28_BOLD_DASH_FONT_ID, EpdFontFamily::BOLD, "Lx 28", "09:30"},
+    {LEXENDDECA_22_BOLD_DASH_FONT_ID, EpdFontFamily::BOLD, "Lx 22", "42 800"},
+    {LEXENDDECA_28_BOLD_DASH_FONT_ID, EpdFontFamily::BOLD, "Lx 28", "42 800"},
 };
+// De kaart splitst de rij-ladder hard in blokken (Lexend|Bitter|waarden); pas de
+// constanten in de renderer aan als je deze volgorde/het aantal verandert.
+static_assert(sizeof(FONT_TEST_ROWS) / sizeof(FONT_TEST_ROWS[0]) == 26, "font test ladder changed shape");
 
-// Een kleine markering in de marge als visuele anker per kolom, zodat op de foto
-// duidelijk is dat de tekstgrootte (niet de annotatie) de test is.
-constexpr int LABEL_COLUMN_WIDTH = 78;
-constexpr int FONT_TEST_LETTER_SPACING = 8;  // horizontale marge rond het fragment
+// Vaste siermaten voor de kaart zelf (annotaties kop/voet).
+constexpr int FONT_TEST_LETTER_SPACING = 8;   // horizontale marge rond het fragment
 
 static dashboard::PersistedPackage persisted;
 static char title[dashboard::MAX_TITLE_SIZE + 1];
@@ -125,45 +134,109 @@ bool renderWidgetGridV2Template(GfxRenderer& renderer) {
   return true;
 }
 
-// Tekent de lettertypes-testkaart: elke rij toont een realistisch agenda-fragment
-// op één font/maat/gewicht, met een kleine annotatie links. Zo kan Tom het paneel
-// fotograferen en per rij aflezen waar de leesbaarheid stopt.
+// Tekent een druk-/voordruk-kaart op één scherm, in vier banden:
+//   1) LETTERS  — een ladder klein→groot (8..16) in twee kolommen (Lexend/Bitter),
+//      inclusief de nieuw toegevoegde maten 8/9;
+//   2) WAARDEN  — de vette metermaattrap (22/28) zoals een KPI-cijfer;
+//   3) LIJNEN   — horizontale lijnen van 1, 2 en 3 px dik;
+//   4) KPI      — een nagebootste metertegel: groot vet cijfer met dun label.
+// Zo fotografeert Tom het paneel en leest per rij af wat leesbaar is en wat niet.
 void renderFontTestCardInternal(GfxRenderer& renderer) {
   const int width = renderer.getScreenWidth();
 
   constexpr int topMargin = 8;
   constexpr int rowGap = 4;
-  constexpr int titleGap = 6;
-  constexpr int annotationFontId = SMALL_FONT_ID;
+  constexpr int bandGap = 10;
+  constexpr int sectionFontId = SMALL_FONT_ID;   // bandkoppen
   constexpr int titleFontId = UI_12_FONT_ID;
+  constexpr int valueFontId = LEXENDDECA_28_BOLD_DASH_FONT_ID;
+  constexpr int labelRowFontId = SMALL_FONT_ID;      // annotaties links van fragment
+  constexpr int kpiLabelFontId = UI_10_FONT_ID;      // dun label vóór KPI-cijfer
+
+  constexpr int leftColumnX = 8;
+  constexpr int rightColumnX = 248;
+  constexpr int rowLabelX = 6;
+  constexpr int rowSampleXOffset = 46;
 
   const int titleAscender = renderer.getFontAscenderSize(titleFontId);
+  const int sectionAscender = renderer.getFontAscenderSize(sectionFontId);
 
-  // `y` is de bovenkant van een tekstblok (de renderer telt de ascender er zelf
-  // bij op).
   int y = topMargin;
 
+  // Titel
   renderer.drawText(titleFontId, 0, y, tr(STR_FONT_TEST), true, EpdFontFamily::BOLD);
-  y += titleAscender + titleGap;
+  y += titleAscender + rowGap;
 
-  const int labelX = 0;
-  const int sampleX = LABEL_COLUMN_WIDTH;
+  // ------ Band 1: LETTERS ------
+  renderer.drawText(sectionFontId, 2, y, "LETTERS (klein->groot)", true, EpdFontFamily::BOLD);
+  y += sectionAscender + rowGap;
+  renderer.drawLine(2, y - rowGap, width - FONT_TEST_LETTER_SPACING, y - rowGap, true);
 
-  // Horizontale scheidingslijn onder de tittel, links-vrij zodat annotaties de
-  // linkerrand raken en het fragment duidelijk rechts begint.
-  renderer.drawLine(LABEL_COLUMN_WIDTH, y - titleGap / 2, width - FONT_TEST_LETTER_SPACING, y - titleGap / 2, true);
+  // De eerste 12 rijen = Lexend (linkerkolom), de volgende 12 = Bitter (rechterkolom).
+  constexpr int kRowsPerColumn = 12;
+  constexpr int kFirstBitterRow = kRowsPerColumn;
+  for (int i = 0; i < kRowsPerColumn; ++i) {
+    const FontTestRow& lx = FONT_TEST_ROWS[i];
+    const FontTestRow& bt = FONT_TEST_ROWS[kFirstBitterRow + i];
 
-  // Plak de fragmenten aan de linkerkant van hun regel (niet gecentreerd), zodat
-  // kolomvreemde witruimte de vergelijking niet verstoort en een lang fragment
-  // dezelfde startkant houdt.
-  for (const FontTestRow& row : FONT_TEST_ROWS) {
-    renderer.drawText(annotationFontId, labelX, y, row.label, true, EpdFontFamily::REGULAR);
-    // Alle fragmenten zijn vaste korte reeksen die ruim binnen `sampleWidth`
-    // passen, dus er is geen ellipsis/allocatie nodig; `drawText` zelf alloceert
-    // niets, wat dit op de render-taak heap-veilig houdt.
-    renderer.drawText(row.fontId, labelX + sampleX, y, row.sample, true, row.style);
-    y += renderer.getLineHeight(row.fontId) + rowGap;
+    const int rowHeightLx = renderer.getLineHeight(lx.fontId) + rowGap;
+    const int rowHeightBt = renderer.getLineHeight(bt.fontId) + rowGap;
+
+    // Linkerkolom: Lexend
+    renderer.drawText(labelRowFontId, rowLabelX, y, lx.label, true, EpdFontFamily::REGULAR);
+    renderer.drawText(lx.fontId, rowLabelX + rowSampleXOffset, y, lx.sample, true, lx.style);
+
+    // Rechterkolom: Bitter
+    renderer.drawText(labelRowFontId, rightColumnX + rowLabelX, y, bt.label, true, EpdFontFamily::REGULAR);
+    renderer.drawText(bt.fontId, rightColumnX + rowLabelX + rowSampleXOffset, y, bt.sample, true, bt.style);
+
+    y += (rowHeightLx > rowHeightBt ? rowHeightLx : rowHeightBt);
   }
+
+  // ------ Band 2: WAARDEN (vette metertrap) ------
+  y += bandGap;
+  renderer.drawText(sectionFontId, 2, y, "WAARDEN (KPI-cijfer)", true, EpdFontFamily::BOLD);
+  y += sectionAscender + rowGap;
+  renderer.drawLine(2, y - rowGap, width - FONT_TEST_LETTER_SPACING, y - rowGap, true);
+  const FontTestRow& v22 = FONT_TEST_ROWS[24];
+  const FontTestRow& v28 = FONT_TEST_ROWS[25];
+  const int v22h = renderer.getLineHeight(v22.fontId) + rowGap;
+  renderer.drawText(labelRowFontId, rowLabelX, y, v22.label, true, EpdFontFamily::REGULAR);
+  renderer.drawText(v22.fontId, rowLabelX + rowSampleXOffset, y, v22.sample, true, v22.style);
+  renderer.drawText(labelRowFontId, rightColumnX + rowLabelX, y, v28.label, true, EpdFontFamily::REGULAR);
+  renderer.drawText(v28.fontId, rightColumnX + rowLabelX + rowSampleXOffset, y, v28.sample, true, v28.style);
+  y += v22h;
+
+  // ------ Band 3: LIJNEN ------
+  y += bandGap;
+  renderer.drawText(sectionFontId, 2, y, "LIJNEN (dikte in beeldpunten)", true, EpdFontFamily::BOLD);
+  y += sectionAscender + rowGap;
+  constexpr int lineY = 12;
+  constexpr int lineRun = 260;
+  const int labelX = rowLabelX;
+  const int my = y + lineY;
+  renderer.drawText(labelRowFontId, labelX, my - 4, "1px", true, EpdFontFamily::REGULAR);
+  renderer.drawLine(labelX + 32, my, labelX + 32 + lineRun, my, true);            // 1 px
+  renderer.drawText(labelRowFontId, labelX, my + lineY - 2, "2px", true, EpdFontFamily::REGULAR);
+  renderer.drawLine(labelX + 32, my + lineY - 2, labelX + 32 + lineRun, my + lineY - 2, 2, true);  // 2 px
+  renderer.drawText(labelRowFontId, labelX, my + 2 * lineY, "3px", true, EpdFontFamily::REGULAR);
+  renderer.drawLine(labelX + 32, my + 2 * lineY, labelX + 32 + lineRun, my + 2 * lineY, 3, true); // 3 px
+  y += 3 * lineY + rowGap + 8;
+
+  // ------ Band 4: KPI ------
+  y += bandGap;
+  renderer.drawText(sectionFontId, 2, y, "KPI (groot vet cijfer, dun label)", true, EpdFontFamily::BOLD);
+  y += sectionAscender + rowGap;
+  renderer.drawLine(2, y - rowGap, width - FONT_TEST_LETTER_SPACING, y - rowGap, true);
+  // Dun label erboven / naast het cijfer.
+  renderer.drawText(kpiLabelFontId, 2, y, "STAPPEN VANDAAG", true, EpdFontFamily::REGULAR);
+  const int valTop = y + renderer.getLineHeight(kpiLabelFontId) + rowGap;
+  renderer.drawText(valueFontId, 2, valTop, "42800", true, EpdFontFamily::BOLD);
+  // Dunne - vet A/B-vergelijking op één maat, op een eigen rij eronder.
+  const int abY = valTop + renderer.getLineHeight(valueFontId) + rowGap;
+  renderer.drawText(kpiLabelFontId, 2, abY, "DUN", true, EpdFontFamily::REGULAR);
+  renderer.drawText(kpiLabelFontId, 2 + 48, abY, "VET", true, EpdFontFamily::BOLD);
+  y = abY;
 }
 
 }  // namespace

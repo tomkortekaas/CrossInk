@@ -9,6 +9,14 @@
 #define BUILTIN_READING_FONT_HEADER(name) <builtinFonts/name.h>
 #endif
 
+#include BUILTIN_READING_FONT_HEADER(bitter_8_bold)
+#include BUILTIN_READING_FONT_HEADER(bitter_8_bolditalic)
+#include BUILTIN_READING_FONT_HEADER(bitter_8_italic)
+#include BUILTIN_READING_FONT_HEADER(bitter_8_regular)
+#include BUILTIN_READING_FONT_HEADER(bitter_9_bold)
+#include BUILTIN_READING_FONT_HEADER(bitter_9_bolditalic)
+#include BUILTIN_READING_FONT_HEADER(bitter_9_italic)
+#include BUILTIN_READING_FONT_HEADER(bitter_9_regular)
 #include BUILTIN_READING_FONT_HEADER(bitter_10_bold)
 #include BUILTIN_READING_FONT_HEADER(bitter_10_bolditalic)
 #include BUILTIN_READING_FONT_HEADER(bitter_10_italic)
@@ -26,6 +34,14 @@
 #include BUILTIN_READING_FONT_HEADER(bitter_16_italic)
 #include BUILTIN_READING_FONT_HEADER(bitter_16_regular)
 
+#include BUILTIN_READING_FONT_HEADER(lexenddeca_8_bold)
+#include BUILTIN_READING_FONT_HEADER(lexenddeca_8_bolditalic)
+#include BUILTIN_READING_FONT_HEADER(lexenddeca_8_italic)
+#include BUILTIN_READING_FONT_HEADER(lexenddeca_8_regular)
+#include BUILTIN_READING_FONT_HEADER(lexenddeca_9_bold)
+#include BUILTIN_READING_FONT_HEADER(lexenddeca_9_bolditalic)
+#include BUILTIN_READING_FONT_HEADER(lexenddeca_9_italic)
+#include BUILTIN_READING_FONT_HEADER(lexenddeca_9_regular)
 #include BUILTIN_READING_FONT_HEADER(lexenddeca_10_bold)
 #include BUILTIN_READING_FONT_HEADER(lexenddeca_10_bolditalic)
 #include BUILTIN_READING_FONT_HEADER(lexenddeca_10_italic)

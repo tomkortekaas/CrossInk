@@ -2,7 +2,7 @@
 
 ### Added
 
-- A new sleep-screen mode, "Font Test", shows the agenda's own text at every typeface, weight and size it can draw. By photographing the panel you can read off the smallest size that stays legible, which is the basis for deciding whether the agenda and message tiles can be set smaller.
+- A new sleep-screen mode, "Font Test", shows a single print/ink test sheet on the panel: the agenda's text at every typeface and weight from size 8 to 28 (the smallest sizes 8 and 9 are added to firmware purely for this card), plus a draft-quality gauge of 1-, 2- and 3-pixel rules and a mock value tile with a thin label. By photographing the panel you read off, in one shot, the smallest size and thinnest rule that stay legible — the basis for deciding whether agenda, messages and dashboard values can be set smaller.
 - The BLE dashboard receiver now reports why it refused a package, not just that it did, so a rejected dashboard update can be diagnosed from the phone instead of from a USB serial capture.
 - Dashboard tiles can carry an icon, chosen from a set of 64, and can be emphasised with a light or dark shade or reversed to white on black — so one tile can stand out the way a colour would on a colour screen.
 - The dashboard wake cycle now records one line per wake to `/crossink-ble-trace.txt` on the SD card, so a device left on battery overnight can be checked afterwards. Previously the only way to observe a wake was a USB cable, which itself changes how the device behaves when idle.
