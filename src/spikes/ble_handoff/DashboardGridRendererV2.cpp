@@ -574,7 +574,7 @@ void renderDateWidgetV2(GfxRenderer& renderer, const WidgetRectV2& rect, const W
 void renderListWidgetV2(GfxRenderer& renderer, const WidgetRectV2& rect, const WidgetV2& /*widget*/,
                         const ListContentV2& list) {
   constexpr int padding = GROUP_PADDING;
-  const int rowFontId = LABEL_FONT_ID;
+  const int rowFontId = LEXENDDECA_8_FONT_ID;
 
   int y = padding;
   if (list.headingLength > 0) {

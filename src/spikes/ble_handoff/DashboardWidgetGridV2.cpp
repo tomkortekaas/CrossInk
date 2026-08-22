@@ -5,8 +5,8 @@
 namespace dashboard {
 namespace v2 {
 
-// Uitgerekend: 16 widgets à 58 = 928, 3 lijsten à 498 = 1494, 5 groepen à 339
-// = 1695, plus de kop. Samen ongeveer 4,2 KB. Die staat permanent in DRAM
+// Uitgerekend: 16 widgets à 58 = 928, 3 lijsten à 730 = 2190, 5 groepen à 339
+// = 1695, plus de kop. Samen ongeveer 4,9 KB. Die staat permanent in DRAM
 // omdat renderWidgetGridTemplate zijn pakket static houdt - te groot voor de
 // renderstack. 5 KB is de grens met wat lucht; loopt dit erover, verklein dan
 // MAX_GROUP_WIDGETS of MAX_LIST_ROWS in plaats van de grens op te rekken.

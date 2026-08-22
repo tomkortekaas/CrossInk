@@ -94,7 +94,7 @@ constexpr size_t MAX_KPI_LABEL_SIZE = 32;
 constexpr size_t MAX_KPI_VALUE_SIZE = 16;
 
 constexpr size_t MAX_LIST_HEADING_SIZE = 32;
-constexpr size_t MAX_LIST_ROWS = 8;
+constexpr size_t MAX_LIST_ROWS = 12;
 constexpr size_t MAX_LIST_ROW_TIME_SIZE = 16;
 constexpr size_t MAX_LIST_ROW_LABEL_SIZE = 40;
 constexpr size_t MAX_LIST_WIDGETS = 3;
