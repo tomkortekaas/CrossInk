@@ -19,5 +19,9 @@ enum class DashboardSkipReason : uint8_t {
 
 const char* dashboardSkipReasonText(DashboardSkipReason reason);
 bool renderDashboardCard(GfxRenderer& renderer, DashboardSkipReason* reasonOut = nullptr);
+// Standalone lettertypes-testkaart, onafhankelijk van een ontvangen pakket.
+// Toont alle beschikbare agenda-fonts op hun maat zodat Tom op het paneel kan
+// aflezen wat de minimale leesbaarheid is.
+void renderFontTestCard(GfxRenderer& renderer);
 }  // namespace BleHandoffReaderProbe
 #endif

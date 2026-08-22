@@ -513,6 +513,8 @@ void SleepActivity::onEnter() {
       return renderDashboardSleepScreen();
     case (CrossPointSettings::SLEEP_SCREEN_MODE::AGENDA_SLEEP):
       return renderAgendaSleepScreen();
+    case (CrossPointSettings::SLEEP_SCREEN_MODE::FONT_TEST_SLEEP):
+      return renderFontTestSleepScreen();
     default:
       return renderDefaultSleepScreen();
   }
@@ -827,6 +829,20 @@ void SleepActivity::renderAgendaSleepScreen() const {
   }
 #endif
   renderer.displayBuffer(HalDisplay::HALF_REFRESH, true);
+}
+
+void SleepActivity::renderFontTestSleepScreen() const {
+#ifdef CROSSINK_BLE_HANDOFF_READER
+  BleHandoffReaderProbe::renderFontTestCard(renderer);
+#else
+  // Zonder BLE-reader is de eigenlijke lettertypes-test niet beschikbaar; geef
+  // toch een scherm (geen leeg/oud beeld) op dezelfde manier als de agenda-sluit.
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+  renderer.clearScreen();
+  const int centerY = renderer.getScreenHeight() / 2;
+  renderer.drawCenteredText(UI_10_FONT_ID, centerY, tr(STR_FONT_TEST), true, EpdFontFamily::BOLD);
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH, true);
+#endif
 }
 
 void SleepActivity::renderLastScreenSleepScreen() const {

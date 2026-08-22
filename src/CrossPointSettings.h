@@ -35,6 +35,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     MINIMAL_STATS_SLEEP = 10,
     DASHBOARD_SLEEP = 11,
     AGENDA_SLEEP = 12,
+    FONT_TEST_SLEEP = 13,
     SLEEP_SCREEN_MODE_COUNT
   };
   enum SLEEP_SCREEN_COVER_MODE { FIT = 0, CROP = 1, SLEEP_SCREEN_COVER_MODE_COUNT };
