@@ -18,6 +18,7 @@ struct Operation {
   dashboard::v3::Rect bounds;
   std::string text;
   bool black = true;
+  uint8_t iconId = 0;
 };
 
 class RecordingCanvas final : public dashboard::v3::DashboardV3Canvas {
@@ -43,8 +44,8 @@ class RecordingCanvas final : public dashboard::v3::DashboardV3Canvas {
     operations.push_back({Operation::Kind::Text, spec.bounds, value, spec.black});
   }
 
-  void icon(const uint8_t, const dashboard::v3::Rect bounds, const bool black) override {
-    operations.push_back({Operation::Kind::Icon, bounds, {}, black});
+  void icon(const uint8_t iconId, const dashboard::v3::Rect bounds, const bool black) override {
+    operations.push_back({Operation::Kind::Icon, bounds, {}, black, iconId});
   }
 
   std::vector<Operation> operations;
@@ -93,6 +94,15 @@ const Operation* findTextOperation(const RecordingCanvas& canvas, const std::str
   return nullptr;
 }
 
+const Operation* findIconOperation(const RecordingCanvas& canvas, const uint8_t iconId) {
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind == Operation::Kind::Icon && operation.iconId == iconId) {
+      return &operation;
+    }
+  }
+  return nullptr;
+}
+
 void expectOperationsInsideCanvas(const RecordingCanvas& canvas) {
   for (const auto& operation : canvas.operations) {
     EXPECT_GE(operation.bounds.x, 0);
@@ -124,6 +134,9 @@ dashboard::v3::DashboardV3Package sunSelectionPackage() {
 dashboard::v3::DashboardV3Package maximumContentPackage() {
   dashboard::v3::DashboardV3Package package{};
 
+  // A decoded V3 package always carries a timestamp; use a fixed one so the
+  // header date column renders a real date (2026-08-25, a Tuesday).
+  package.generatedAt = 1787616000ULL;
   package.weather.currentCelsius = 21;
   package.weather.minimumCelsius = 17;
   package.weather.maximumCelsius = 24;
@@ -221,6 +234,118 @@ TEST(DashboardV3Renderer, SunColumnAfterSunsetShowsTomorrowSunriseAndMorgenOp) {
   EXPECT_GE(caption->bounds.x, 3 * canvas.width() / 4);
 }
 
+// --- Header hierarchy ------------------------------------------------------
+//
+// The header has no date field of its own; the only date the package carries
+// is the shared-prefix generatedAt timestamp. The renderer must show that
+// date in a compact Dutch form instead of the literal "DATUM" placeholder,
+// and must never invent a weather description the package does not carry.
+
+TEST(DashboardV3Renderer, HeaderShowsPackageDateInProminentDutchForm) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.generatedAt = 1787616000ULL;  // 2026-08-25 00:00 UTC -> dinsdag 25 augustus
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  const Operation* day = findTextOperation(canvas, "25");
+  const Operation* dateLabel = findTextOperation(canvas, "DI AUG");
+  ASSERT_NE(day, nullptr);
+  ASSERT_NE(dateLabel, nullptr);
+  EXPECT_LT(day->bounds.x, 132) << "the day must sit in the first header column";
+  EXPECT_LT(dateLabel->bounds.x, 132);
+  EXPECT_FALSE(day->black) << "header text stays white on the black band";
+  EXPECT_FALSE(dateLabel->black);
+}
+
+TEST(DashboardV3Renderer, HeaderWithoutTimestampShowsDashesInsteadOfADate) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.generatedAt = 0;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  const Operation* day = findTextOperation(canvas, "—");
+  const Operation* dateLabel = findTextOperation(canvas, "— —");
+  ASSERT_NE(day, nullptr);
+  ASSERT_NE(dateLabel, nullptr);
+  EXPECT_LT(day->bounds.x, 132);
+  EXPECT_LT(dateLabel->bounds.x, 132);
+  EXPECT_EQ(findTextOperation(canvas, "25"), nullptr);
+}
+
+TEST(DashboardV3Renderer, HeaderEstablishesFourIconColumnsForDateWeatherWindSun) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  constexpr int columnWidth = 528 / 4;
+  const Operation* calendar = findIconOperation(canvas, 42);
+  const Operation* condition = findIconOperation(canvas, 3);
+  const Operation* wind = findIconOperation(canvas, 6);
+  const Operation* sunset = findIconOperation(canvas, 12);  // daylight -> today's sunset
+  ASSERT_NE(calendar, nullptr);
+  ASSERT_NE(condition, nullptr);
+  ASSERT_NE(wind, nullptr);
+  ASSERT_NE(sunset, nullptr);
+  EXPECT_LT(calendar->bounds.x, columnWidth);
+  EXPECT_GE(condition->bounds.x, columnWidth);
+  EXPECT_LT(condition->bounds.x, 2 * columnWidth);
+  EXPECT_GE(wind->bounds.x, 2 * columnWidth);
+  EXPECT_LT(wind->bounds.x, 3 * columnWidth);
+  EXPECT_GE(sunset->bounds.x, 3 * columnWidth);
+
+  EXPECT_NE(findTextOperation(canvas, "KM/U"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "ZON ONDER"), nullptr);
+}
+
+TEST(DashboardV3Renderer, WeatherColumnShowsOnlySupportedFields) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  // The package carries no free-text weather description, so the weather
+  // column may draw only the condition icon, the current temperature and the
+  // min/max range - never a made-up word like "ZONNIG".
+  std::vector<std::string> weatherTexts;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind == Operation::Kind::Text && operation.bounds.x >= 132 && operation.bounds.x < 264) {
+      weatherTexts.push_back(operation.text);
+    }
+  }
+  const std::vector<std::string> expected = {"21°", "17° / 24°"};
+  EXPECT_EQ(weatherTexts, expected);
+}
+
+TEST(DashboardV3Renderer, WeatherColumnFallsBackToSubjectLabelWithoutRange) {
+  auto package = maximumContentPackage();
+  package.weather.minimumCelsius = INT8_MIN;
+  package.weather.maximumCelsius = INT8_MIN;
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  const Operation* caption = findTextOperation(canvas, "WEER");
+  ASSERT_NE(caption, nullptr);
+  EXPECT_GE(caption->bounds.x, 132);
+  EXPECT_LT(caption->bounds.x, 264);
+}
+
+TEST(DashboardV3Renderer, SunColumnIconFollowsTheSelectedSunEvent) {
+  RecordingCanvas canvasBefore;
+  dashboard::v3::renderDashboardV3(canvasBefore, sunSelectionPackage(), /*minuteOfDay=*/5 * 60);
+  const Operation* sunrise = findIconOperation(canvasBefore, 11);
+  ASSERT_NE(sunrise, nullptr);
+  EXPECT_GE(sunrise->bounds.x, 3 * canvasBefore.width() / 4);
+
+  RecordingCanvas canvasDay;
+  dashboard::v3::renderDashboardV3(canvasDay, sunSelectionPackage(), /*minuteOfDay=*/12 * 60);
+  const Operation* sunset = findIconOperation(canvasDay, 12);
+  ASSERT_NE(sunset, nullptr);
+  EXPECT_GE(sunset->bounds.x, 3 * canvasDay.width() / 4);
+
+  RecordingCanvas canvasAfter;
+  dashboard::v3::renderDashboardV3(canvasAfter, sunSelectionPackage(), /*minuteOfDay=*/22 * 60);
+  const Operation* tomorrowSunrise = findIconOperation(canvasAfter, 11);
+  ASSERT_NE(tomorrowSunrise, nullptr);
+  EXPECT_GE(tomorrowSunrise->bounds.x, 3 * canvasAfter.width() / 4);
+}
+
 // --- Maximum-content fixture -------------------------------------------------
 
 TEST(DashboardV3Renderer, MaximumContentPackageKeepsEveryOperationInsideTheCanvas) {
@@ -290,6 +415,114 @@ TEST(DashboardV3Renderer, EmptyChatsLeaveWhatsAppSectionOutWithoutMovingMarkets)
   EXPECT_EQ(findTextOperation(canvas, "WHATSAPP"), nullptr);
   ASSERT_NE(findTextOperation(canvas, "AEX"), nullptr);
   EXPECT_LT(findTextOperation(canvas, "AEX")->bounds.y, 500);
+}
+
+// --- Traffic hierarchy ------------------------------------------------------
+//
+// Two subjects: the commute (destination + travel minutes) dominates the left
+// half, the national jam (congestion kilometres) dominates the right half.
+// The classification byte is validated by the decoder but its meaning is not
+// documented in this repo, so the renderer must not turn it into a label.
+
+TEST(DashboardV3Renderer, TrafficPutsCommuteMinutesDominantLeftAndJamDistanceDominantRight) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  const Operation* minutes = findTextOperation(canvas, "23 MIN");
+  const Operation* jamKm = findTextOperation(canvas, "42");
+  ASSERT_NE(minutes, nullptr);
+  ASSERT_NE(jamKm, nullptr);
+  EXPECT_LT(minutes->bounds.x + minutes->bounds.width, 528 / 2) << "commute minutes stay in the left half";
+  EXPECT_GE(jamKm->bounds.x, 528 / 2) << "jam distance sits in the right half";
+
+  EXPECT_NE(findTextOperation(canvas, "UTRECHT"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "KM FILE"), nullptr);
+
+  const Operation* pin = findIconOperation(canvas, 28);
+  const Operation* cone = findIconOperation(canvas, 27);
+  ASSERT_NE(pin, nullptr);
+  ASSERT_NE(cone, nullptr);
+  EXPECT_LT(pin->bounds.x, 264);
+  EXPECT_GE(cone->bounds.x, 264);
+}
+
+TEST(DashboardV3Renderer, TrafficClassificationByteIsNotInventedIntoALabel) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.traffic.classification = 2;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  std::vector<std::string> trafficTexts;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind == Operation::Kind::Text && operation.bounds.y >= 194 && operation.bounds.y < 271) {
+      trafficTexts.push_back(operation.text);
+    }
+  }
+  const std::vector<std::string> expected = {"UTRECHT", "23 MIN", "KM FILE", "42"};
+  EXPECT_EQ(trafficTexts, expected);
+}
+
+// --- Status hierarchy -------------------------------------------------------
+
+TEST(DashboardV3Renderer, StatusRowsUseIconsAndProgressBarsForBatteries) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  struct ExpectedRow {
+    uint8_t iconId;
+    const char* name;
+    const char* percent;
+    uint8_t value;
+  };
+  const ExpectedRow rows[] = {{17, "X3", "88%", 88}, {25, "AUTO", "65%", 65}, {20, "THUIS", "42%", 42}};
+  const int firstRowY = 271 + 48;  // bodyRight.y + 48
+  for (size_t index = 0; index < 3; ++index) {
+    const int rowY = firstRowY + static_cast<int>(index) * 32;
+    const Operation* icon = findIconOperation(canvas, rows[index].iconId);
+    ASSERT_NE(icon, nullptr);
+    EXPECT_GE(icon->bounds.x, 270);
+    EXPECT_NE(findTextOperation(canvas, rows[index].name), nullptr);
+    EXPECT_NE(findTextOperation(canvas, rows[index].percent), nullptr);
+
+    const Operation* track = nullptr;
+    const Operation* fill = nullptr;
+    for (const auto& operation : canvas.operations) {
+      if (operation.bounds.y < rowY || operation.bounds.y >= rowY + 32) {
+        continue;
+      }
+      if (operation.kind == Operation::Kind::Rect) {
+        track = &operation;
+      }
+      if (operation.kind == Operation::Kind::Fill && operation.bounds.x >= 270) {
+        fill = &operation;
+      }
+    }
+    ASSERT_NE(track, nullptr) << "battery row needs a bar track";
+    ASSERT_NE(fill, nullptr) << "battery row needs a filled fraction";
+    EXPECT_GE(track->bounds.x, 270);
+    EXPECT_EQ(fill->bounds.width, (track->bounds.width - 2) * rows[index].value / 100);
+    EXPECT_GE(fill->bounds.x, track->bounds.x);
+    EXPECT_LE(fill->bounds.x + fill->bounds.width, track->bounds.x + track->bounds.width);
+  }
+}
+
+TEST(DashboardV3Renderer, StepsStayDistinctBelowTheBatteryRows) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  const Operation* steps = findTextOperation(canvas, "STAPPEN");
+  const Operation* stepsValue = findTextOperation(canvas, "7.850 / 10.000");
+  const Operation* footprints = findIconOperation(canvas, 47);
+  ASSERT_NE(steps, nullptr);
+  ASSERT_NE(stepsValue, nullptr);
+  ASSERT_NE(footprints, nullptr);
+  EXPECT_GE(steps->bounds.x, 270);
+  EXPECT_GE(stepsValue->bounds.x, 270);
+  EXPECT_GE(footprints->bounds.x, 270);
+
+  const Operation* x3 = findTextOperation(canvas, "X3");
+  ASSERT_NE(x3, nullptr);
+  EXPECT_GT(steps->bounds.y, x3->bounds.y + 3 * 32) << "steps sit below all three battery rows";
 }
 
 // --- Optional PBM artifact canvas ------------------------------------------
