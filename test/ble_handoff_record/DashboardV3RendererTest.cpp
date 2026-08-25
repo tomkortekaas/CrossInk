@@ -254,4 +254,39 @@ TEST(DashboardV3Renderer, HeaderFillIsBlackAndHeaderTextIsWhite) {
   EXPECT_GT(headerTextCount, 0);
 }
 
+TEST(DashboardV3Renderer, MaximumContentDrawsEveryAgendaMarketAndChatRow) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  for (const char* title : {"AFSPRAAK 1", "AFSPRAAK 2", "AFSPRAAK 3", "AFSPRAAK 4", "AFSPRAAK 5"}) {
+    EXPECT_NE(findTextOperation(canvas, title), nullptr) << title;
+  }
+  for (const char* market : {"AEX", "DOW", "DAX"}) {
+    EXPECT_NE(findTextOperation(canvas, market), nullptr) << market;
+  }
+  for (const char* chat : {"PAPA", "MAMA", "WERK"}) {
+    EXPECT_NE(findTextOperation(canvas, chat), nullptr) << chat;
+  }
+
+  bool hasMessageIcon = false;
+  for (const auto& operation : canvas.operations) {
+    hasMessageIcon |= operation.kind == Operation::Kind::Icon && operation.bounds.x >= 270;
+  }
+  EXPECT_TRUE(hasMessageIcon);
+  expectOperationsInsideCanvas(canvas);
+}
+
+TEST(DashboardV3Renderer, EmptyChatsLeaveWhatsAppSectionOutWithoutMovingMarkets) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.chatCount = 0;
+  package.unreadTotal = 0;
+
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_EQ(findTextOperation(canvas, "WHATSAPP"), nullptr);
+  ASSERT_NE(findTextOperation(canvas, "AEX"), nullptr);
+  EXPECT_LT(findTextOperation(canvas, "AEX")->bounds.y, 500);
+}
+
 }  // namespace

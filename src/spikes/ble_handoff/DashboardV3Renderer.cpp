@@ -22,6 +22,18 @@ void formatPercent(const uint8_t value, char (&out)[8]) {
   }
 }
 
+template <size_t Size>
+void copyField(const std::array<uint8_t, Size>& source, const uint8_t length, char (&out)[Size + 1]) {
+  const size_t boundedLength = std::min(static_cast<size_t>(length), Size);
+  std::memcpy(out, source.data(), boundedLength);
+  out[boundedLength] = '\0';
+}
+
+void formatMinute(const uint16_t minute, char (&out)[8]) {
+  std::snprintf(out, sizeof(out), "%02u:%02u", static_cast<unsigned>(minute / 60),
+                static_cast<unsigned>(minute % 60));
+}
+
 void renderHeader(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3Package& package,
                   const uint16_t minuteOfDay) {
   canvas.fill(rect, true);
@@ -127,6 +139,35 @@ void renderBody(DashboardV3Canvas& canvas, const DashboardV3Rects& layout, const
   canvas.line(layout.bodyLeft.x + PAD, layout.bodyLeft.y + 36, layout.bodyLeft.x + layout.bodyLeft.width - PAD,
               layout.bodyLeft.y + 36, true);
 
+  constexpr int timelineX = 72;
+  constexpr int agendaStartY = 52;
+  constexpr int agendaRowHeight = 76;
+  if (package.agendaCount > 0) {
+    const int firstY = layout.bodyLeft.y + agendaStartY;
+    const int lastY = firstY + (package.agendaCount - 1) * agendaRowHeight;
+    canvas.line(layout.bodyLeft.x + timelineX, firstY, layout.bodyLeft.x + timelineX, lastY + 8, true);
+  }
+  for (size_t index = 0; index < package.agendaCount; ++index) {
+    const AgendaRow& row = package.agenda[index];
+    const int rowY = layout.bodyLeft.y + agendaStartY + static_cast<int>(index) * agendaRowHeight;
+    char time[8];
+    formatMinute(row.minuteOfDay, time);
+    char title[MAX_AGENDA_TITLE_BYTES + 1];
+    copyField(row.title, row.titleLength, title);
+    char detail[MAX_AGENDA_DETAIL_BYTES + 1];
+    copyField(row.detail, row.detailLength, detail);
+    label(canvas, {layout.bodyLeft.x + PAD, rowY, 48, 18}, time, FontRole::Utility10, true, true,
+          TextAlign::Right);
+    canvas.fill({layout.bodyLeft.x + timelineX - 3, rowY + 5, 7, 7}, true);
+    if (index == 0) canvas.rect({layout.bodyLeft.x + 78, rowY - 6, layout.bodyLeft.width - 94, 54}, true);
+    label(canvas, {layout.bodyLeft.x + 84, rowY, layout.bodyLeft.width - 100, 24}, title, FontRole::Heading14,
+          index == 0);
+    if (detail[0] != '\0') {
+      label(canvas, {layout.bodyLeft.x + 84, rowY + 24, layout.bodyLeft.width - 100, 18}, detail,
+            FontRole::Utility10);
+    }
+  }
+
   int y = layout.bodyRight.y + 48;
   const char* names[] = {"X3", "AUTO", "THUIS"};
   const uint8_t values[] = {package.status.x3Battery, package.status.vehicleBattery, package.status.homeBattery};
@@ -139,8 +180,49 @@ void renderBody(DashboardV3Canvas& canvas, const DashboardV3Rects& layout, const
     y += 28;
   }
   label(canvas, {layout.bodyRight.x + PAD, y + 12, 120, 24}, "STAPPEN", FontRole::Utility10, true);
-  label(canvas, {layout.bodyRight.x + PAD, y + 48, 160, 24}, "MARKTEN", FontRole::Heading14, true);
-  label(canvas, {layout.bodyRight.x + PAD, y + 150, 180, 24}, "WHATSAPP", FontRole::Heading14, true);
+  const int marketsHeadingY = y + 48;
+  label(canvas, {layout.bodyRight.x + PAD, marketsHeadingY, 160, 24}, "MARKTEN", FontRole::Heading14, true);
+  int marketY = marketsHeadingY + 28;
+  for (size_t index = 0; index < package.marketCount; ++index) {
+    const MarketRow& row = package.markets[index];
+    char market[MAX_MARKET_LABEL_BYTES + 1];
+    copyField(row.label, row.labelLength, market);
+    char change[16] = "—";
+    if (row.changeBasisPoints != INT16_MIN) {
+      const int value = row.changeBasisPoints;
+      std::snprintf(change, sizeof(change), "%c%d,%02d%%", value >= 0 ? '+' : '-', std::abs(value) / 100,
+                    std::abs(value) % 100);
+    }
+    label(canvas, {layout.bodyRight.x + PAD, marketY, 100, 20}, market, FontRole::Utility10, true);
+    label(canvas, {layout.bodyRight.x + 118, marketY, layout.bodyRight.width - 134, 20}, change,
+          FontRole::Utility10, true, true, TextAlign::Right);
+    marketY += 26;
+  }
+
+  if (package.chatCount == 0) return;
+  const int chatsHeadingY = marketsHeadingY + 108;
+  label(canvas, {layout.bodyRight.x + PAD, chatsHeadingY, 170, 24}, "WHATSAPP", FontRole::Heading14, true);
+  canvas.icon(65, {layout.bodyRight.x + layout.bodyRight.width - 48, chatsHeadingY, 24, 24}, true);
+  char unread[12];
+  std::snprintf(unread, sizeof(unread), "%u", static_cast<unsigned>(package.unreadTotal));
+  label(canvas, {layout.bodyRight.x + layout.bodyRight.width - 26, chatsHeadingY + 2, 18, 20}, unread,
+        FontRole::Utility10, true, true, TextAlign::Right);
+  int chatY = chatsHeadingY + 28;
+  for (size_t index = 0; index < package.chatCount; ++index) {
+    const ChatRow& row = package.chats[index];
+    char name[MAX_CHAT_NAME_BYTES + 1];
+    copyField(row.name, row.nameLength, name);
+    char count[10];
+    std::snprintf(count, sizeof(count), "%u", static_cast<unsigned>(row.unreadCount));
+    char time[8];
+    formatMinute(row.lastMessageMinuteOfDay, time);
+    label(canvas, {layout.bodyRight.x + PAD, chatY, 130, 20}, name, FontRole::Utility10, true);
+    label(canvas, {layout.bodyRight.x + 150, chatY, layout.bodyRight.width - 166, 20}, count, FontRole::Utility10,
+          true, true, TextAlign::Right);
+    label(canvas, {layout.bodyRight.x + 150, chatY + 14, layout.bodyRight.width - 166, 18}, time,
+          FontRole::Utility10, false, true, TextAlign::Right);
+    chatY += 34;
+  }
 }
 
 void renderFooter(DashboardV3Canvas& canvas, const Rect rect) {
