@@ -4,14 +4,19 @@
 
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
+#include <HalClock.h>
 #include <I18n.h>
 #include <Logging.h>
 
 #include <algorithm>
 
+#include "AgendaWakePolicy.h"
 #include "BleHandoffNvs.h"
+#include "CrossPointSettings.h"
 #include "DashboardGridRenderer.h"
 #include "DashboardGridRendererV2.h"
+#include "DashboardV3.h"
+#include "DashboardV3Renderer.h"
 #include "DashboardWidgetGrid.h"
 #include "DashboardWidgetGridV2.h"
 #include "fontIds.h"
@@ -130,6 +135,30 @@ bool renderWidgetGridV2Template(GfxRenderer& renderer) {
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
   renderer.clearScreen();
   dashboard::v2::renderWidgetGridV2(renderer, package);
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH, true);
+  return true;
+}
+
+bool renderDashboardV3Template(GfxRenderer& renderer) {
+  // Keep the decoded maximum-size V3 package out of the render task's stack,
+  // matching the established template-4 path above.
+  static dashboard::v3::DashboardV3Package package;
+  package = {};
+  if (dashboard::v3::decodeDashboardV3(persisted.bytes.data(), persisted.length, package) !=
+      dashboard::Status::Ok) {
+    return false;
+  }
+
+  uint8_t utcHour = 12;
+  uint8_t utcMinute = 0;
+  uint16_t minuteOfDay = 12 * 60;
+  if (halClock.getTime(utcHour, utcMinute)) {
+    minuteOfDay = dashboard::localMinuteOfDay(utcHour, utcMinute, SETTINGS.clockUtcOffsetQ);
+  }
+
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+  renderer.clearScreen();
+  dashboard::v3::renderDashboardV3(renderer, package, minuteOfDay);
   renderer.displayBuffer(HalDisplay::HALF_REFRESH, true);
   return true;
 }
@@ -282,6 +311,10 @@ bool renderDashboardCard(GfxRenderer& renderer, DashboardSkipReason* const reaso
       return false;
     case dashboard::v2::TEMPLATE_WIDGET_GRID_V2:
       if (renderWidgetGridV2Template(renderer)) return true;
+      setReason(DashboardSkipReason::Undecodable);
+      return false;
+    case dashboard::v3::TEMPLATE_DASHBOARD_V3:
+      if (renderDashboardV3Template(renderer)) return true;
       setReason(DashboardSkipReason::Undecodable);
       return false;
     default:
