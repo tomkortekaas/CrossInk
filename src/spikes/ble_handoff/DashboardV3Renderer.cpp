@@ -23,7 +23,6 @@ constexpr uint8_t ICON_HOUSE = 20;
 constexpr uint8_t ICON_CAR = 25;
 constexpr uint8_t ICON_TRAFFIC_CONE = 27;
 constexpr uint8_t ICON_MAP_PIN = 28;
-constexpr uint8_t ICON_CALENDAR = 42;
 constexpr uint8_t ICON_FOOTPRINTS = 47;
 
 void label(DashboardV3Canvas& canvas, const Rect bounds, const char* value, const FontRole font = FontRole::Utility10,
@@ -88,22 +87,20 @@ void uppercaseAscii(const char* input, char (&output)[8]) {
 // The header's date column: the package timestamp as a compact Dutch date.
 // A zero timestamp means the phone never sent a usable time, so a dash is
 // shown rather than an invented date (same rule the date widget uses).
-void formatDateColumn(const uint64_t generatedAt, char (&day)[8], char (&dateLabel)[16]) {
+void formatDateColumn(const uint64_t generatedAt, char (&dateLabel)[16]) {
   if (generatedAt == 0) {
-    std::snprintf(day, sizeof(day), "-");
-    std::snprintf(dateLabel, sizeof(dateLabel), "- -");
+    std::snprintf(dateLabel, sizeof(dateLabel), "-");
     return;
   }
   const int64_t days = static_cast<int64_t>(generatedAt / 86400ULL);
   const CivilDate date = civilFromDays(days);
-  std::snprintf(day, sizeof(day), "%d", date.day);
   // Epoch day 0 (1970-01-01) was a Thursday; Weekday::Thursday == 3.
   const auto weekday = static_cast<dashboard::Weekday>((days + 3) % 7);
   char weekdayUpper[8];
   char monthUpper[8];
   uppercaseAscii(dashboard::weekdayAbbreviation(weekday), weekdayUpper);
   uppercaseAscii(dashboard::monthAbbreviation(static_cast<uint8_t>(date.month)), monthUpper);
-  std::snprintf(dateLabel, sizeof(dateLabel), "%s %s", weekdayUpper, monthUpper);
+  std::snprintf(dateLabel, sizeof(dateLabel), "%s %d %s", weekdayUpper, date.day, monthUpper);
 }
 
 void formatSteps(const uint16_t steps, const uint16_t stepGoal, char (&out)[24]) {
@@ -128,15 +125,13 @@ void renderHeader(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3P
     canvas.line(x, rect.y + 12, x, rect.y + rect.height - 12, false);
   }
 
-  // Column 1 - date: the package timestamp as a compact Dutch date, with the
-  // day number as the visual anchor of the whole header.
+  // Column 1 - date: one compact line avoids collisions between icon, day and
+  // caption on the narrow portrait display.
   const int dateX = rect.x;
-  char day[8];
   char dateLabel[16];
-  formatDateColumn(package.generatedAt, day, dateLabel);
-  canvas.icon(ICON_CALENDAR, {dateX + 14, rect.y + 15, 32, 32}, false);
-  label(canvas, {dateX + 50, rect.y + 13, columnWidth - 64, 34}, day, FontRole::Value28, true, false);
-  label(canvas, {dateX + 50, rect.y + 50, columnWidth - 64, 16}, dateLabel, FontRole::Utility10, false, false);
+  formatDateColumn(package.generatedAt, dateLabel);
+  label(canvas, {dateX + 10, rect.y + 25, columnWidth - 20, 24}, dateLabel, FontRole::Heading14, true, false,
+        TextAlign::Center);
 
   // Column 2 - weather: condition icon, current temperature, min/max range.
   // The package carries no free-text weather description, so none is drawn.
@@ -216,35 +211,36 @@ void renderRain(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3Pac
 void renderTraffic(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3Package& package) {
   // Left subject - the commute: the destination as caption, travel minutes as
   // the dominant value.
-  char destination[MAX_DESTINATION_BYTES + 1] = "-";
-  if (package.traffic.destinationLength > 0) {
+  const bool hasCommute = package.traffic.destinationLength > 0 || package.traffic.travelMinutes != UINT16_MAX;
+  if (hasCommute) {
+    char destination[MAX_DESTINATION_BYTES + 1] = "-";
     std::memcpy(destination, package.traffic.destination.data(), package.traffic.destinationLength);
     destination[package.traffic.destinationLength] = '\0';
+    const int leftX = rect.x + PAD;
+    canvas.icon(ICON_MAP_PIN, {leftX, rect.y + 12, 32, 32}, true);
+    label(canvas, {leftX + 40, rect.y + 10, 190, 20}, destination, FontRole::Utility10, true);
+    char travel[16] = "-";
+    if (package.traffic.travelMinutes != UINT16_MAX) {
+      std::snprintf(travel, sizeof(travel), "%u MIN", static_cast<unsigned>(package.traffic.travelMinutes));
+    }
+    label(canvas, {leftX + 40, rect.y + 30, 190, 40}, travel, FontRole::Value28, true);
   }
-  const int leftX = rect.x + PAD;
-  canvas.icon(ICON_MAP_PIN, {leftX, rect.y + 12, 32, 32}, true);
-  label(canvas, {leftX + 40, rect.y + 10, 190, 20}, destination, FontRole::Utility10, true);
-  char travel[16] = "-";
-  if (package.traffic.travelMinutes != UINT16_MAX) {
-    std::snprintf(travel, sizeof(travel), "%u MIN", static_cast<unsigned>(package.traffic.travelMinutes));
-  }
-  label(canvas, {leftX + 40, rect.y + 30, 190, 40}, travel, FontRole::Value28, true);
 
   // Right subject - the national jam: congestion distance as the dominant
   // value, "KM FILE" as its unit caption. The classification byte is
   // validated by the decoder but has no documented meaning in this repo, so
   // it is deliberately not turned into a label here.
-  const int rightX = rect.x + rect.width - PAD;
-  canvas.icon(ICON_TRAFFIC_CONE, {rightX - 48, rect.y + 12, 32, 32}, true);
-  label(canvas, {rightX - 246, rect.y + 10, 190, 20}, "KM FILE", FontRole::Utility10, true, true,
-        TextAlign::Right);
-  char congestion[20] = "-";
   if (package.traffic.nationalCongestionKilometers != UINT16_MAX) {
+    const int rightX = rect.x + rect.width - PAD;
+    canvas.icon(ICON_TRAFFIC_CONE, {rightX - 48, rect.y + 12, 32, 32}, true);
+    label(canvas, {rightX - 246, rect.y + 10, 190, 20}, "KM FILE", FontRole::Utility10, true, true,
+          TextAlign::Right);
+    char congestion[20];
     std::snprintf(congestion, sizeof(congestion), "%u",
                   static_cast<unsigned>(package.traffic.nationalCongestionKilometers));
+    label(canvas, {rightX - 246, rect.y + 30, 190, 40}, congestion, FontRole::Value28, true, true,
+          TextAlign::Right);
   }
-  label(canvas, {rightX - 246, rect.y + 30, 190, 40}, congestion, FontRole::Value28, true, true,
-        TextAlign::Right);
 }
 
 void renderBody(DashboardV3Canvas& canvas, const DashboardV3Rects& layout, const DashboardV3Package& package) {
@@ -294,7 +290,7 @@ void renderBody(DashboardV3Canvas& canvas, const DashboardV3Rects& layout, const
     const int labelX = iconX + 40;
     const int percentX = layout.bodyRight.x + layout.bodyRight.width - PAD - 36;
     canvas.icon(iconIds[index], {iconX, y, 32, 32}, true);
-    label(canvas, {labelX, y + 6, 60, 18}, names[index], FontRole::Utility10, true);
+    label(canvas, {labelX, y + 6, 110, 18}, names[index], FontRole::Utility10, true);
     char percent[8];
     formatPercent(values[index], percent);
     label(canvas, {percentX, y + 6, 36, 18}, percent, FontRole::Utility10, true, true, TextAlign::Right);
@@ -311,10 +307,10 @@ void renderBody(DashboardV3Canvas& canvas, const DashboardV3Rects& layout, const
   // value, deliberately without another progress bar.
   const int stepsY = y + 6;
   canvas.icon(ICON_FOOTPRINTS, {layout.bodyRight.x + PAD, stepsY + 3, 24, 24}, true);
-  label(canvas, {layout.bodyRight.x + PAD + 40, stepsY + 4, 90, 18}, "STAPPEN", FontRole::Utility10, true);
+  label(canvas, {layout.bodyRight.x + PAD + 40, stepsY + 4, 100, 18}, "STAPPEN", FontRole::Utility10);
   char stepsValue[24];
   formatSteps(package.status.steps, package.status.stepGoal, stepsValue);
-  label(canvas, {layout.bodyRight.x + layout.bodyRight.width - PAD - 130, stepsY + 4, 130, 18}, stepsValue,
+  label(canvas, {layout.bodyRight.x + 154, stepsY + 4, layout.bodyRight.width - 170, 18}, stepsValue,
         FontRole::Utility10, true, true, TextAlign::Right);
 
   int nextSectionY = stepsY + 40;
@@ -362,11 +358,15 @@ void renderBody(DashboardV3Canvas& canvas, const DashboardV3Rects& layout, const
 
 void renderFooter(DashboardV3Canvas& canvas, const Rect rect) {
   label(canvas, {rect.x + PAD, rect.y + 8, rect.width - 2 * PAD, 24}, "Verbeelding is belangrijker dan kennis.",
-        FontRole::Heading14, true);
+        FontRole::Utility12, true);
   label(canvas, {rect.x + PAD, rect.y + 34, rect.width - 2 * PAD, 16}, "- Albert Einstein", FontRole::Utility10);
 }
 
 }  // namespace
+
+void applyDashboardV3DeviceBattery(DashboardV3Package& package, const uint16_t percentage) {
+  package.status.x3Battery = static_cast<uint8_t>(std::min<uint16_t>(percentage, 100));
+}
 
 void renderDashboardV3(DashboardV3Canvas& canvas, const DashboardV3Package& package, const uint16_t minuteOfDay) {
   const DashboardV3Rects layout = computeDashboardV3Layout(canvas.width(), canvas.height(), {});

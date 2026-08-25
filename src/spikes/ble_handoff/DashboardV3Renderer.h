@@ -44,5 +44,6 @@ class DashboardV3Canvas {
 
 void renderDashboardV3(DashboardV3Canvas& canvas, const DashboardV3Package& package, uint16_t minuteOfDay);
 void renderDashboardV3(GfxRenderer& renderer, const DashboardV3Package& package, uint16_t minuteOfDay);
+void applyDashboardV3DeviceBattery(DashboardV3Package& package, uint16_t percentage);
 
 }  // namespace dashboard::v3

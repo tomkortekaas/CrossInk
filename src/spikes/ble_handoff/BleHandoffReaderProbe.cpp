@@ -5,6 +5,7 @@
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
 #include <HalClock.h>
+#include <HalPowerManager.h>
 #include <I18n.h>
 #include <Logging.h>
 
@@ -148,6 +149,7 @@ bool renderDashboardV3Template(GfxRenderer& renderer) {
       dashboard::Status::Ok) {
     return false;
   }
+  dashboard::v3::applyDashboardV3DeviceBattery(package, powerManager.getBatteryPercentage());
 
   uint8_t utcHour = 12;
   uint8_t utcMinute = 0;

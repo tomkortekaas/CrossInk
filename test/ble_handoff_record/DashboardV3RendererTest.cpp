@@ -20,6 +20,7 @@ struct Operation {
   bool black = true;
   uint8_t iconId = 0;
   dashboard::v3::TextAlign align = dashboard::v3::TextAlign::Left;
+  dashboard::v3::FontRole font = dashboard::v3::FontRole::Utility10;
 };
 
 class RecordingCanvas final : public dashboard::v3::DashboardV3Canvas {
@@ -42,7 +43,7 @@ class RecordingCanvas final : public dashboard::v3::DashboardV3Canvas {
   }
 
   void text(const dashboard::v3::TextSpec& spec, const char* value) override {
-    operations.push_back({Operation::Kind::Text, spec.bounds, value, spec.black, 0, spec.align});
+    operations.push_back({Operation::Kind::Text, spec.bounds, value, spec.black, 0, spec.align, spec.font});
   }
 
   void icon(const uint8_t iconId, const dashboard::v3::Rect bounds, const bool black) override {
@@ -248,14 +249,11 @@ TEST(DashboardV3Renderer, HeaderShowsPackageDateInProminentDutchForm) {
   package.generatedAt = 1787616000ULL;  // 2026-08-25 00:00 UTC -> dinsdag 25 augustus
   dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
 
-  const Operation* day = findTextOperation(canvas, "25");
-  const Operation* dateLabel = findTextOperation(canvas, "DI AUG");
-  ASSERT_NE(day, nullptr);
-  ASSERT_NE(dateLabel, nullptr);
-  EXPECT_LT(day->bounds.x, 132) << "the day must sit in the first header column";
-  EXPECT_LT(dateLabel->bounds.x, 132);
-  EXPECT_FALSE(day->black) << "header text stays white on the black band";
-  EXPECT_FALSE(dateLabel->black);
+  const Operation* date = findTextOperation(canvas, "DI 25 AUG");
+  ASSERT_NE(date, nullptr);
+  EXPECT_LT(date->bounds.x, 132) << "the date must sit in the first header column";
+  EXPECT_FALSE(date->black) << "header text stays white on the black band";
+  EXPECT_EQ(findIconOperation(canvas, 42), nullptr) << "the date no longer collides with a calendar icon";
 }
 
 TEST(DashboardV3Renderer, HeaderWithoutTimestampShowsDashesInsteadOfADate) {
@@ -264,12 +262,9 @@ TEST(DashboardV3Renderer, HeaderWithoutTimestampShowsDashesInsteadOfADate) {
   package.generatedAt = 0;
   dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
 
-  const Operation* day = findTextOperation(canvas, "-");
-  const Operation* dateLabel = findTextOperation(canvas, "- -");
-  ASSERT_NE(day, nullptr);
-  ASSERT_NE(dateLabel, nullptr);
-  EXPECT_LT(day->bounds.x, 132);
-  EXPECT_LT(dateLabel->bounds.x, 132);
+  const Operation* date = findTextOperation(canvas, "-");
+  ASSERT_NE(date, nullptr);
+  EXPECT_LT(date->bounds.x, 132);
   EXPECT_EQ(findTextOperation(canvas, "25"), nullptr);
 }
 
@@ -278,15 +273,13 @@ TEST(DashboardV3Renderer, HeaderEstablishesFourIconColumnsForDateWeatherWindSun)
   dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
 
   constexpr int columnWidth = 528 / 4;
-  const Operation* calendar = findIconOperation(canvas, 42);
   const Operation* condition = findIconOperation(canvas, 3);
   const Operation* wind = findIconOperation(canvas, 6);
   const Operation* sunset = findIconOperation(canvas, 12);  // daylight -> today's sunset
-  ASSERT_NE(calendar, nullptr);
   ASSERT_NE(condition, nullptr);
   ASSERT_NE(wind, nullptr);
   ASSERT_NE(sunset, nullptr);
-  EXPECT_LT(calendar->bounds.x, columnWidth);
+  EXPECT_EQ(findIconOperation(canvas, 42), nullptr);
   EXPECT_GE(condition->bounds.x, columnWidth);
   EXPECT_LT(condition->bounds.x, 2 * columnWidth);
   EXPECT_GE(wind->bounds.x, 2 * columnWidth);
@@ -463,6 +456,20 @@ TEST(DashboardV3Renderer, TrafficClassificationByteIsNotInventedIntoALabel) {
   EXPECT_EQ(trafficTexts, expected);
 }
 
+TEST(DashboardV3Renderer, MissingTrafficDoesNotDrawLargeDashBlocksOrCountrywideCaption) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.traffic = {};
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_EQ(findTextOperation(canvas, "KM FILE"), nullptr);
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Text || operation.bounds.y < 194 || operation.bounds.y >= 271) continue;
+    EXPECT_NE(operation.font, dashboard::v3::FontRole::Value28)
+        << "missing traffic must not become a large black dash";
+  }
+}
+
 // --- Status hierarchy -------------------------------------------------------
 
 TEST(DashboardV3Renderer, StatusRowsUseIconsAndProgressBarsForBatteries) {
@@ -505,6 +512,8 @@ TEST(DashboardV3Renderer, StatusRowsUseIconsAndProgressBarsForBatteries) {
     EXPECT_GE(fill->bounds.x, track->bounds.x);
     EXPECT_LE(fill->bounds.x + fill->bounds.width, track->bounds.x + track->bounds.width);
   }
+
+  EXPECT_GE(findTextOperation(canvas, "THUIS")->bounds.width, 100);
 }
 
 TEST(DashboardV3Renderer, StepsStayDistinctBelowTheBatteryRows) {
@@ -520,6 +529,7 @@ TEST(DashboardV3Renderer, StepsStayDistinctBelowTheBatteryRows) {
   EXPECT_GE(steps->bounds.x, 270);
   EXPECT_GE(stepsValue->bounds.x, 270);
   EXPECT_GE(footprints->bounds.x, 270);
+  EXPECT_GE(steps->bounds.width, 90);
 
   const Operation* x3 = findTextOperation(canvas, "X3");
   ASSERT_NE(x3, nullptr);
@@ -552,7 +562,7 @@ TEST(DashboardV3Renderer, MinimalPackageEmitsOnlyFontSafeAsciiPlaceholders) {
     }
   }
 
-  EXPECT_NE(findTextOperation(canvas, "- -"), nullptr) << "header date label uses ASCII dashes";
+  EXPECT_NE(findTextOperation(canvas, "-"), nullptr) << "header date label uses an ASCII dash";
   EXPECT_NE(findTextOperation(canvas, "VERWARMING -"), nullptr) << "unknown heating uses an ASCII dash";
   EXPECT_NE(findTextOperation(canvas, "- Albert Einstein"), nullptr) << "footer author uses an ASCII dash";
 }
@@ -694,6 +704,21 @@ TEST(DashboardV3Renderer, FooterQuoteIsLeftAlignedWithAsciiHyphenAuthor) {
   EXPECT_GE(author->bounds.y, quote->bounds.y + quote->bounds.height)
       << "the smaller author line sits below the quote line";
   EXPECT_LE(author->bounds.y + author->bounds.height, 792);
+  EXPECT_EQ(quote->font, dashboard::v3::FontRole::Utility12)
+      << "the real Lexend 14 quote truncated on hardware; use the readable 12px rung";
+}
+
+TEST(DashboardV3Renderer, DeviceBatteryOverridesOnlyTheX3StatusValue) {
+  auto package = maximumContentPackage();
+  package.status.x3Battery = 12;
+  package.status.vehicleBattery = 65;
+  package.status.homeBattery = 42;
+
+  dashboard::v3::applyDashboardV3DeviceBattery(package, 76);
+
+  EXPECT_EQ(package.status.x3Battery, 76);
+  EXPECT_EQ(package.status.vehicleBattery, 65);
+  EXPECT_EQ(package.status.homeBattery, 42);
 }
 
 // --- Optional PBM artifact canvas ------------------------------------------
