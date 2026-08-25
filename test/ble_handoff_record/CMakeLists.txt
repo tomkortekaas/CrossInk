@@ -6,6 +6,7 @@ add_executable(BleHandoffRecordTest
   DashboardWidgetGridTest.cpp
   DashboardWidgetGridV2Test.cpp
   DashboardV3Test.cpp
+  DashboardV3LayoutTest.cpp
   DashboardDateFieldsTest.cpp
   DashboardTransferTest.cpp
   DashboardSlotSelectionTest.cpp
@@ -18,6 +19,7 @@ add_executable(BleHandoffRecordTest
   ${REPO_ROOT}/src/spikes/ble_handoff/DashboardWidgetGrid.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/DashboardWidgetGridV2.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/DashboardV3.cpp
+  ${REPO_ROOT}/src/spikes/ble_handoff/DashboardV3Layout.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/DashboardTransfer.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/DashboardSlotSelection.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/ReceiverWindow.cpp
