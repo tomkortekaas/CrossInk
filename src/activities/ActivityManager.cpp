@@ -26,11 +26,13 @@
 #include "network/CrossPointWebServerActivity.h"
 #include "network/NearbyBookTransferActivity.h"
 #include "network/NearbyStatsSyncActivity.h"
+#include "network/UsbDriveActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
+#include "util/TwoFingerSwipe.h"
 
 namespace {
 constexpr uint32_t FILE_TRANSFER_MODE_MASK = 0xFF;
@@ -42,6 +44,82 @@ uint32_t fileTransferBootPayload(const NetworkMode mode, const bool returnToRead
 
 void restartToFileTransfer(const NetworkMode mode, const std::string& returnBookPath) {
   silentRestartToNetwork(NetworkBootTarget::FILE_TRANSFER, fileTransferBootPayload(mode, !returnBookPath.empty()));
+}
+
+bool applyTwoFingerSwipeAction(Activity& activity, MappedInputManager& mappedInput, GfxRenderer& renderer) {
+  MappedInputManager::CompletedSwipe completed;
+  if (!mappedInput.wasCompletedMultiTouchSwipe(completed)) return false;
+
+  const TwoFingerSwipe::CompletedSwipe swipe = {completed.contactCount, completed.startX, completed.startY,
+                                                completed.endX,         completed.endY,   completed.durationMs};
+  const auto direction = TwoFingerSwipe::directionFor(swipe, renderer.getScreenWidth(), renderer.getScreenHeight());
+  uint8_t action = CrossPointSettings::TWO_FINGER_SWIPE_NOT_SET;
+  switch (direction) {
+    case TwoFingerSwipe::Direction::Up:
+      action = SETTINGS.twoFingerSwipeUp;
+      break;
+    case TwoFingerSwipe::Direction::Down:
+      action = SETTINGS.twoFingerSwipeDown;
+      break;
+    case TwoFingerSwipe::Direction::Left:
+      action = SETTINGS.twoFingerSwipeLeft;
+      break;
+    case TwoFingerSwipe::Direction::Right:
+      action = SETTINGS.twoFingerSwipeRight;
+      break;
+    case TwoFingerSwipe::Direction::None:
+      return false;
+  }
+  if (action == CrossPointSettings::TWO_FINGER_SWIPE_NOT_SET) return false;
+
+  switch (static_cast<CrossPointSettings::TWO_FINGER_SWIPE_ACTION>(action)) {
+    case CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_BRIGHTNESS:
+    case CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_BRIGHTNESS: {
+      if (!Frontlight.present()) return true;
+      const uint8_t previousBrightness = Frontlight.brightness();
+      const bool previousOn = Frontlight.isOn();
+      const int delta = action == CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_BRIGHTNESS ? 5 : -5;
+      const uint8_t brightness =
+          static_cast<uint8_t>(std::clamp(static_cast<int>(Frontlight.brightness()) + delta, 0, 100));
+      Frontlight.setBrightness(brightness);
+      Frontlight.setOn(true);
+      SETTINGS.frontlightBrightness = brightness;
+      SETTINGS.frontlightOn = 1;
+      if (brightness != previousBrightness || !previousOn) SETTINGS.saveToFile();
+      return true;
+    }
+    case CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_WARMTH:
+    case CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_WARMTH: {
+      if (!Frontlight.present() || !Frontlight.hasColorTemperature()) return true;
+      const uint8_t previousWarmth = Frontlight.warmth();
+      const bool previousOn = Frontlight.isOn();
+      const int delta = action == CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_WARMTH ? 5 : -5;
+      const uint8_t warmth = static_cast<uint8_t>(std::clamp(static_cast<int>(Frontlight.warmth()) + delta, 0, 100));
+      Frontlight.setWarmth(warmth);
+      SETTINGS.frontlightWarmth = warmth;
+      SETTINGS.frontlightOn = Frontlight.isOn() ? 1 : 0;
+      if (warmth != previousWarmth || Frontlight.isOn() != previousOn) SETTINGS.saveToFile();
+      return true;
+    }
+    case CrossPointSettings::TWO_FINGER_SWIPE_NEXT_CHAPTER:
+    case CrossPointSettings::TWO_FINGER_SWIPE_PREVIOUS_CHAPTER:
+    case CrossPointSettings::TWO_FINGER_SWIPE_INCREASE_FONT_SIZE:
+    case CrossPointSettings::TWO_FINGER_SWIPE_DECREASE_FONT_SIZE:
+      activity.handleTwoFingerSwipeAction(static_cast<CrossPointSettings::TWO_FINGER_SWIPE_ACTION>(action));
+      return true;
+    case CrossPointSettings::TWO_FINGER_SWIPE_NOT_SET:
+    case CrossPointSettings::TWO_FINGER_SWIPE_ACTION_COUNT:
+      return false;
+  }
+  return true;
+}
+
+bool applyTwoFingerRotation(Activity& activity, MappedInputManager& mappedInput) {
+  MappedInputManager::CompletedRotation completed;
+  if (!mappedInput.wasCompletedMultiTouchRotation(completed)) return false;
+  // Rotate the content opposite the physical gesture so it feels like the
+  // reader is turning the page under the user's fingers.
+  return activity.handleTwoFingerRotation(completed.degrees < 0.0f);
 }
 }  // namespace
 
@@ -92,23 +170,52 @@ void ActivityManager::renderTaskLoop() {
 }
 
 void ActivityManager::loop() {
+  if (currentActivity && currentActivity->requiresExclusiveStorageLoop()) {
+    currentActivity->loop();
+    // USB Drive normally restarts the device rather than replacing itself. The
+    // pending-action fallthrough keeps the simulator's stub lifecycle usable.
+    if (pendingAction == PendingAction::None) {
+      if (requestedUpdate.exchange(false) && renderTaskHandle) {
+        xTaskNotify(renderTaskHandle, 1, eIncrement);
+      }
+      return;
+    }
+  }
+
   if (currentActivity) {
     mappedInput.setPowerAsConfirmInReaderMode(currentActivity->allowPowerAsConfirmInReaderMode());
 
-    // Frontlight quick panel: top-edge down-swipe on home-key boards, except
-    // that the open EPUB reader exposes the same action across the whole page.
-    // Pushed, so it returns to whatever was underneath — including mid-book.
-    const bool lightPanelGesture = currentActivity->usesFullScreenReaderVerticalSwipes()
-                                       ? mappedInput.wasReaderLightPanelGesture()
-                                       : mappedInput.wasLightPanelGesture();
-    if (Frontlight.present() && currentActivity->name != "FrontlightPanel" &&
-        currentActivity->allowFrontlightPanelGesture() && lightPanelGesture) {
-      pushActivity(std::make_unique<FrontlightPanelActivity>(renderer, mappedInput));
-      return;
-    }
-    // Note: do not hold a lock here, the loop() method must be responsible for acquire one if needed
-    if (!handleReaderPowerButtonSettingsOverride() && !handleGlobalHomeGesture()) {
+    if (currentActivity->blocksGlobalInput()) {
       currentActivity->loop();
+    } else {
+      // Completed two-finger gestures are recognized before normal one-finger
+      // activity gestures. A rotation has priority over translation in the SDK,
+      // so a contact sequence can trigger at most one action here.
+      if (applyTwoFingerRotation(*currentActivity, mappedInput)) {
+        return;
+      }
+
+      // The frontlight panel owns its own sliders.
+      if (currentActivity->name != "FrontlightPanel" &&
+          applyTwoFingerSwipeAction(*currentActivity, mappedInput, renderer)) {
+        return;
+      }
+
+      // Frontlight quick panel: top-edge down-swipe on home-key boards, except
+      // that the open EPUB reader exposes the same action across the whole page.
+      // Pushed, so it returns to whatever was underneath — including mid-book.
+      const bool lightPanelGesture = currentActivity->usesFullScreenReaderVerticalSwipes()
+                                         ? mappedInput.wasReaderLightPanelGesture()
+                                         : mappedInput.wasLightPanelGesture();
+      if (Frontlight.present() && currentActivity->name != "FrontlightPanel" &&
+          currentActivity->allowFrontlightPanelGesture() && lightPanelGesture) {
+        pushActivity(std::make_unique<FrontlightPanelActivity>(renderer, mappedInput));
+        return;
+      }
+      // Note: do not hold a lock here, the loop() method must be responsible for acquire one if needed
+      if (!handleGlobalHomeGesture()) {
+        currentActivity->loop();
+      }
     }
   } else {
     mappedInput.setPowerAsConfirmInReaderMode(false);
@@ -139,6 +246,20 @@ void ActivityManager::loop() {
       } else {
         currentActivity = std::move(stackActivities.back());
         stackActivities.pop_back();
+
+        if (openReaderMenuAfterPop) {
+          openReaderMenuAfterPop = false;
+          // Reader menu implementations may acquire RenderLock.
+          lock.unlock();
+          if (currentActivity->openReaderSettingsMenu()) {
+            continue;
+          }
+          // TXT is a reader without a settings menu; retain the icon's
+          // existing Global Settings fallback for that case.
+          goToSettings(true);
+          continue;
+        }
+
         // Handle result if necessary
         if (currentActivity->resultHandler) {
           // Move it here to avoid the case where handler calling another startActivityForResult()
@@ -208,9 +329,19 @@ bool ActivityManager::handleGlobalHomeGesture() {
     return false;
   }
 
-  const bool homeGesture = currentActivity->usesFullScreenReaderVerticalSwipes() ? mappedInput.wasReaderHomeGesture()
-                                                                                 : mappedInput.wasHomeGesture();
+  const bool homeGesture = currentActivity->usesFullScreenReaderVerticalSwipes()
+                               ? mappedInput.wasReaderHomeGesture()
+                               : (currentActivity->allowGlobalHomeSwipeGesture() || mappedInput.hasHomeKey()) &&
+                                     mappedInput.wasHomeGesture();
   if (!homeGesture) {
+    return false;
+  }
+
+  return handleHomeButtonBackOrHome();
+}
+
+bool ActivityManager::handleHomeButtonBackOrHome() {
+  if (!currentActivity || pendingAction != PendingAction::None || currentActivity->isHomeActivity()) {
     return false;
   }
 
@@ -222,21 +353,34 @@ bool ActivityManager::handleGlobalHomeGesture() {
   return true;
 }
 
-bool ActivityManager::handleReaderPowerButtonSettingsOverride() {
-  if (!readerPowerButtonOpensSettings()) {
+bool ActivityManager::openReaderMenuFromShortcut() {
+  return currentActivity && pendingAction == PendingAction::None && currentActivity->openReaderSettingsMenu();
+}
+
+bool ActivityManager::openReaderMenuAfterClosingOverlay() {
+  if (!currentActivity || pendingAction != PendingAction::None || stackActivities.empty() ||
+      !stackActivities.back()->isReaderActivity()) {
     return false;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Power)) {
-    if (!currentActivity->openReaderSettingsMenu()) {
-      goToSettings();
-    }
-    return true;
-  }
+  openReaderMenuAfterPop = true;
+  popActivity();
+  return true;
+}
 
-  // Do not let reader activities run configured short/long Power actions while
-  // the button is held. Its release is reserved for restoring Settings access.
-  return mappedInput.isPressed(MappedInputManager::Button::Power);
+bool ActivityManager::handleShortcutAction(const uint8_t action) {
+  return currentActivity && pendingAction == PendingAction::None && currentActivity->handleShortcutAction(action);
+}
+
+bool ActivityManager::handleQuickLockUnlock(const QuickLockTrigger trigger) {
+  return currentActivity && pendingAction == PendingAction::None && currentActivity->handleQuickLockUnlock(trigger);
+}
+
+void ActivityManager::notifyInputLockChanged(const bool locked) {
+  if (currentActivity) currentActivity->onInputLockChanged(locked);
+  for (const auto& activity : stackActivities) {
+    activity->onInputLockChanged(locked);
+  }
 }
 
 void ActivityManager::exitActivity(const RenderLock& lock) {
@@ -300,6 +444,14 @@ void ActivityManager::goToHotspotFileTransfer(const std::string& returnBookPath)
   restartToFileTransfer(NetworkMode::CREATE_HOTSPOT, returnBookPath);
 }
 
+void ActivityManager::goToUsbDrive() {
+#if CROSSINK_APP_CAP_USB_DRIVE
+  replaceActivity(std::make_unique<UsbDriveActivity>(renderer, mappedInput));
+#else
+  LOG_ERR("ACT", "USB Drive requested in a build without USB Drive capability");
+#endif
+}
+
 bool ActivityManager::resumeFileTransferFromNetworkBoot(const uint32_t payload) {
   const uint32_t rawMode = payload & FILE_TRANSFER_MODE_MASK;
   if (rawMode > static_cast<uint32_t>(NetworkMode::CREATE_HOTSPOT)) {
@@ -335,6 +487,15 @@ void ActivityManager::goToNearbyStatsSync() {
 }
 
 void ActivityManager::goToSettings(const bool dismissOnUpSwipe) {
+  preferredHomeBookPath.clear();
+  returningHomeThroughSettings = false;
+  if (currentActivity && currentActivity->isHomeActivity()) {
+    preferredHomeBookPath = currentActivity->getCurrentBookPath();
+    returningHomeThroughSettings = true;
+  } else if (!stackActivities.empty() && stackActivities.back()->isHomeActivity()) {
+    preferredHomeBookPath = stackActivities.back()->getCurrentBookPath();
+    returningHomeThroughSettings = true;
+  }
   replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput, dismissOnUpSwipe));
 }
 
@@ -414,6 +575,13 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
 }
 
 void ActivityManager::goHome(HomeMenuItem initialMenuItem, const bool initialFullRefresh) {
+  std::string initialBookPath;
+  if (returningHomeThroughSettings) {
+    initialBookPath = std::move(preferredHomeBookPath);
+  }
+  preferredHomeBookPath.clear();
+  returningHomeThroughSettings = false;
+
   if (initialMenuItem == HomeMenuItem::NONE && currentActivity) {
     const auto& activityName = currentActivity->name;
     if (activityName == "FileBrowser") {
@@ -430,7 +598,8 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, const bool initialFul
       initialMenuItem = HomeMenuItem::SETTINGS_MENU;
     }
   }
-  replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, initialFullRefresh));
+  replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, initialFullRefresh,
+                                                 std::move(initialBookPath)));
 }
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
 
@@ -457,6 +626,10 @@ void ActivityManager::popActivity() {
 
 bool ActivityManager::preventAutoSleep() const { return currentActivity && currentActivity->preventAutoSleep(); }
 
+bool ActivityManager::requiresExclusiveStorageLoop() const {
+  return currentActivity && currentActivity->requiresExclusiveStorageLoop();
+}
+
 bool ActivityManager::isHomeActivity() const { return currentActivity && currentActivity->name == "Home"; }
 
 bool ActivityManager::isReaderActivity() const {
@@ -468,9 +641,17 @@ bool ActivityManager::isReaderActivity() const {
                      [](const auto& activity) { return activity && activity->isReaderActivity(); });
 }
 
-bool ActivityManager::readerPowerButtonOpensSettings() const {
-  return mappedInput.hasTouchHardware() && SETTINGS.disableReaderTouchscreen && currentActivity &&
-         currentActivity->handlesReaderPowerSettingsOverride();
+bool ActivityManager::openReaderSettingsForTouchscreenEscapeHatch() {
+  if (!mappedInput.hasTouchHardware() || !SETTINGS.disableReaderTouchscreen || !currentActivity ||
+      !currentActivity->isReaderActivity() || pendingAction != PendingAction::None) {
+    return false;
+  }
+
+  if (!currentActivity->openReaderSettingsMenu()) {
+    // TXT has no reader menu, so keep a reliable global Settings fallback.
+    goToSettings();
+  }
+  return true;
 }
 
 bool ActivityManager::hasActivityNamed(const char* activityName) const {
@@ -501,6 +682,11 @@ bool ActivityManager::requestManualReaderRefresh() {
   lock.unlock();
   requestUpdate(true);
   return true;
+}
+
+bool ActivityManager::handleShortcutAction(const CrossPointSettings::SHORT_PWRBTN action) {
+  return currentActivity && (currentActivity->isReaderActivity() || currentActivity->isHomeActivity()) &&
+         currentActivity->handleShortcutAction(action);
 }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }

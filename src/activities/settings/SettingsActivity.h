@@ -25,11 +25,17 @@ enum class SettingAction {
   KOReaderSync,
   OPDSBrowser,
   DisplaySleepScreen,
+  DisplayFrontlight,
   ReaderFontOptions,
   ReaderPageLayout,
+  ScreenMargin,
+  QuickActions,
   ControlsPowerButton,
+  ControlsHomeButton,
   ControlsFrontButtons,
   ControlsSideButtons,
+  ControlsTapsGestures,
+  ControlsTwoFingerSwipe,
   SystemDevice,
   SystemFilesCache,
   SystemReadingStats,
@@ -49,15 +55,16 @@ struct SettingInfo {
   StrId nameId;
   SettingType type;
   uint8_t CrossPointSettings::* valuePtr = nullptr;
+  uint16_t CrossPointSettings::* value16Ptr = nullptr;
   std::vector<StrId> enumValues;
   std::vector<uint8_t> enumRawValues;
   std::vector<std::string> enumStringValues;  // runtime alternative to StrId enumValues (for SD card fonts etc.)
   SettingAction action = SettingAction::None;
 
   struct ValueRange {
-    uint8_t min;
-    uint8_t max;
-    uint8_t step;
+    uint16_t min;
+    uint16_t max;
+    uint16_t step;
   };
   ValueRange valueRange = {};
 
@@ -143,6 +150,18 @@ struct SettingInfo {
     return s;
   }
 
+  static SettingInfo Value16(StrId nameId, uint16_t CrossPointSettings::* ptr, const ValueRange valueRange,
+                             const char* key = nullptr, StrId category = StrId::STR_NONE_OPT) {
+    SettingInfo s;
+    s.nameId = nameId;
+    s.type = SettingType::VALUE;
+    s.value16Ptr = ptr;
+    s.valueRange = valueRange;
+    s.key = key;
+    s.category = category;
+    return s;
+  }
+
   static SettingInfo String(StrId nameId, char* ptr, size_t maxLen, const char* key = nullptr,
                             StrId category = StrId::STR_NONE_OPT) {
     SettingInfo s;
@@ -218,7 +237,8 @@ inline uint8_t settingEnumRawValueForDisplayIndex(const SettingInfo& setting, ui
 }
 
 inline bool settingShowsNavigationCaret(const SettingInfo& setting) {
-  return setting.type == SettingType::SUBMENU || setting.action == SettingAction::CustomiseStatusBar;
+  return setting.type == SettingType::SUBMENU || setting.action == SettingAction::CustomiseStatusBar ||
+         setting.action == SettingAction::QuickActions;
 }
 
 class SettingsActivity final : public Activity {
@@ -231,13 +251,18 @@ class SettingsActivity final : public Activity {
   // Per-category settings derived from shared list + device-only actions
   std::vector<SettingInfo> displaySettings;
   std::vector<SettingInfo> displaySleepSettings;
+  std::vector<SettingInfo> displayFrontlightSettings;
   std::vector<SettingInfo> readerSettings;
   std::vector<SettingInfo> readerFontSettings;
   std::vector<SettingInfo> readerPageLayoutSettings;
+  std::vector<SettingInfo> readerScreenMarginSettings;
   std::vector<SettingInfo> controlsSettings;
   std::vector<SettingInfo> controlsPowerSettings;
+  std::vector<SettingInfo> controlsHomeButtonSettings;
   std::vector<SettingInfo> controlsFrontButtonSettings;
   std::vector<SettingInfo> controlsSideButtonSettings;
+  std::vector<SettingInfo> controlsTapsGesturesSettings;
+  std::vector<SettingInfo> controlsTwoFingerSwipeSettings;
   std::vector<SettingInfo> systemSettings;
   std::vector<SettingInfo> systemDeviceSettings;
   std::vector<SettingInfo> systemFilesCacheSettings;
@@ -250,6 +275,9 @@ class SettingsActivity final : public Activity {
   // The frontlight-panel shortcut opens Settings as a transient Home menu.
   // Its swipe-up closes the screen; regular Settings keeps swipe scrolling.
   bool dismissOnUpSwipe = false;
+  // Settings can be created over a landscape reader. Its teardown resets the
+  // renderer before this activity enters, so retain the requested layout.
+  GfxRenderer::Orientation entryOrientation;
   bool showSettingSelection = true;
   SettingAction activeSubmenu = SettingAction::None;
   SettingAction parentSubmenu = SettingAction::None;
@@ -291,12 +319,14 @@ class SettingsActivity final : public Activity {
   void toggleCurrentSetting();
   void openSleepTimeoutPicker();
   void openLineHeightPicker();
+  void openFrontlightScheduleTimePicker(uint16_t CrossPointSettings::* valuePtr, StrId titleId);
   void openStringEditor(const SettingInfo& setting);
   void rebuildSettingsLists();
   void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);
 
  public:
   explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool dismissOnUpSwipe = false);
+  bool allowGlobalHomeSwipeGesture() const override { return false; }
   void onEnter() override;
   void onExit() override;
   void loop() override;

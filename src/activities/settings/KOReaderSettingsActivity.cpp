@@ -47,9 +47,10 @@ void KOReaderSettingsActivity::onEnter() {
   uiReady = false;
   visibleRows = 1;
   topIndex = 0;
-  app.setTheme(uiThemeTokens(uiTarget));
+  applySharedUiTheme(app, uiTarget);
   app.on(ACTION_ROW, &KOReaderSettingsActivity::onRowEvent, this);
   app.setScreen(&KOReaderSettingsActivity::listScreen, this);
+  KOREADER_STORE.ensureLoaded();
   requestUpdate();
 }
 
@@ -111,16 +112,15 @@ void KOReaderSettingsActivity::handleSelection() {
                            });
   } else if (selectedIndex == 1) {
     // Password
-    startActivityForResult(
-        std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_KOREADER_PASSWORD),
-                                                KOREADER_STORE.getPassword(), 64, InputType::Password),
-        [this](const ActivityResult& result) {
-          if (!result.isCancelled) {
-            const auto& kb = std::get<KeyboardResult>(result.data);
-            KOREADER_STORE.setCredentials(KOREADER_STORE.getUsername(), kb.text);
-            KOREADER_STORE.saveToFile();
-          }
-        });
+    startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_KOREADER_PASSWORD),
+                                                                   KOREADER_STORE.getPassword(), 64, InputType::Text),
+                           [this](const ActivityResult& result) {
+                             if (!result.isCancelled) {
+                               const auto& kb = std::get<KeyboardResult>(result.data);
+                               KOREADER_STORE.setCredentials(KOREADER_STORE.getUsername(), kb.text);
+                               KOREADER_STORE.saveToFile();
+                             }
+                           });
   } else if (selectedIndex == 2) {
     // Sync Server URL - prefill with https:// if empty to save typing
     const std::string currentUrl = KOREADER_STORE.getServerUrl();
@@ -259,7 +259,8 @@ void KOReaderSettingsActivity::render(RenderLock&&) {
   app.render();
   uiReady = true;
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels =
+      mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

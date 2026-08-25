@@ -7,45 +7,51 @@
 #include "components/TouchHeaderBackButton.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
-#include "components/UiAppHelpers.h"
 #include "components/icons/chart.h"
 #include "fontIds.h"
 
 namespace fui = freeink::ui;
 
 namespace {
-constexpr int MENU_ITEM_COUNT = 5;
-constexpr int LIST_ITEM_COUNT = MENU_ITEM_COUNT + 1;
-constexpr int NEARBY_SECTION_INDEX = 3;
 constexpr fui::ActionId ACTION_ROW = 1;
-constexpr StrId menuItems[MENU_ITEM_COUNT] = {StrId::STR_JOIN_NETWORK, StrId::STR_CALIBRE_WIRELESS,
-                                              StrId::STR_CREATE_HOTSPOT, StrId::STR_RECEIVE_NEARBY_BOOK,
-                                              StrId::STR_NEARBY_STATS_SYNC};
-constexpr StrId menuDescs[MENU_ITEM_COUNT] = {StrId::STR_JOIN_DESC, StrId::STR_CALIBRE_DESC, StrId::STR_HOTSPOT_DESC,
-                                              StrId::STR_RECEIVE_NEARBY_BOOK_DESC, StrId::STR_NEARBY_STATS_SYNC_DESC};
-constexpr UIIcon menuIcons[MENU_ITEM_COUNT] = {UIIcon::Wifi, UIIcon::Library, UIIcon::Hotspot, UIIcon::Transfer,
-                                               UIIcon::Transfer};
+
+#if CROSSINK_APP_CAP_USB_DRIVE
+constexpr NetworkMode menuModes[] = {NetworkMode::JOIN_NETWORK,        NetworkMode::CONNECT_CALIBRE,
+                                     NetworkMode::CREATE_HOTSPOT,      NetworkMode::USB_DRIVE,
+                                     NetworkMode::NEARBY_BOOK_RECEIVE, NetworkMode::NEARBY_STATS_SYNC};
+constexpr StrId menuItems[] = {StrId::STR_JOIN_NETWORK, StrId::STR_CALIBRE_WIRELESS,    StrId::STR_CREATE_HOTSPOT,
+                               StrId::STR_USB_DRIVE,    StrId::STR_RECEIVE_NEARBY_BOOK, StrId::STR_NEARBY_STATS_SYNC};
+constexpr StrId menuDescs[] = {StrId::STR_JOIN_DESC,
+                               StrId::STR_CALIBRE_DESC,
+                               StrId::STR_HOTSPOT_DESC,
+                               StrId::STR_USB_DRIVE_DESC,
+                               StrId::STR_RECEIVE_NEARBY_BOOK_DESC,
+                               StrId::STR_NEARBY_STATS_SYNC_DESC};
+constexpr UIIcon menuIcons[] = {UIIcon::Wifi,     UIIcon::Library,  UIIcon::Hotspot,
+                                UIIcon::Transfer, UIIcon::Transfer, UIIcon::Transfer};
+#else
+constexpr NetworkMode menuModes[] = {NetworkMode::JOIN_NETWORK, NetworkMode::CONNECT_CALIBRE,
+                                     NetworkMode::CREATE_HOTSPOT, NetworkMode::NEARBY_BOOK_RECEIVE,
+                                     NetworkMode::NEARBY_STATS_SYNC};
+constexpr StrId menuItems[] = {StrId::STR_JOIN_NETWORK, StrId::STR_CALIBRE_WIRELESS, StrId::STR_CREATE_HOTSPOT,
+                               StrId::STR_RECEIVE_NEARBY_BOOK, StrId::STR_NEARBY_STATS_SYNC};
+constexpr StrId menuDescs[] = {StrId::STR_JOIN_DESC, StrId::STR_CALIBRE_DESC, StrId::STR_HOTSPOT_DESC,
+                               StrId::STR_RECEIVE_NEARBY_BOOK_DESC, StrId::STR_NEARBY_STATS_SYNC_DESC};
+constexpr UIIcon menuIcons[] = {UIIcon::Wifi, UIIcon::Library, UIIcon::Hotspot, UIIcon::Transfer, UIIcon::Transfer};
+#endif
+
+constexpr int MENU_ITEM_COUNT = sizeof(menuModes) / sizeof(menuModes[0]);
+constexpr int LIST_ITEM_COUNT = MENU_ITEM_COUNT + 1;
+constexpr int NEARBY_SECTION_INDEX = CROSSINK_APP_CAP_USB_DRIVE ? 4 : 3;
 
 int listIndexForMenuIndex(const int menuIndex) { return menuIndex < NEARBY_SECTION_INDEX ? menuIndex : menuIndex + 1; }
 }  // namespace
 
 NetworkModeSelectionActivity::NetworkModeSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-    : Activity("NetworkModeSelection", renderer, mappedInput),
-      uiTarget(makeUiTarget(renderer)),
-      app(uiTarget, uiTarget.deviceContext()) {}
+    : Activity("NetworkModeSelection", renderer, mappedInput), ui(renderer) {}
 
 void NetworkModeSelectionActivity::selectCurrent() {
-  NetworkMode mode = NetworkMode::JOIN_NETWORK;
-  if (selectedIndex == 1) {
-    mode = NetworkMode::CONNECT_CALIBRE;
-  } else if (selectedIndex == 2) {
-    mode = NetworkMode::CREATE_HOTSPOT;
-  } else if (selectedIndex == 3) {
-    mode = NetworkMode::NEARBY_BOOK_RECEIVE;
-  } else if (selectedIndex == 4) {
-    mode = NetworkMode::NEARBY_STATS_SYNC;
-  }
-  onModeSelected(mode);
+  if (selectedIndex >= 0 && selectedIndex < MENU_ITEM_COUNT) onModeSelected(menuModes[selectedIndex]);
 }
 
 void NetworkModeSelectionActivity::onRowEvent(const fui::ActionEvent& event, void* user) {
@@ -54,7 +60,7 @@ void NetworkModeSelectionActivity::onRowEvent(const fui::ActionEvent& event, voi
   self->selectedIndex = event.value;
   // Selection leaves this screen; a lingering flash would gray an unrelated
   // element on the next render.
-  self->app.clearTapFlash();
+  self->ui.app.clearTapFlash();
   self->selectCurrent();
 }
 
@@ -62,12 +68,12 @@ void NetworkModeSelectionActivity::onEnter() {
   Activity::onEnter();
 
   selectedIndex = 0;
-  uiReady = false;
+  ui.closeRouting();
   visibleRows = 1;
   topIndex = 0;
-  app.setTheme(uiThemeTokens(uiTarget));
-  app.on(ACTION_ROW, &NetworkModeSelectionActivity::onRowEvent, this);
-  app.setScreen(&NetworkModeSelectionActivity::listScreen, this);
+  ui.reset();
+  ui.app.on(ACTION_ROW, &NetworkModeSelectionActivity::onRowEvent, this);
+  ui.app.setScreen(&NetworkModeSelectionActivity::listScreen, this);
   requestUpdate();
 }
 
@@ -93,11 +99,10 @@ void NetworkModeSelectionActivity::loop() {
 
   // Touch goes through the FreeInkApp: render() registered the row hit rects;
   // route the snapshot and let onRowEvent dispatch.
-  if (uiReady) {
-    const fui::InputSnapshot snap = touchSnapshotFrom(mappedInput);
-    if (snap.touchPressed || snap.touchReleased) {
-      const auto event = app.route(snap);
-      if (app.invalidated()) requestUpdate();
+  if (ui.routingReady()) {
+    fui::ActionEvent event{};
+    if (ui.routeTouch(mappedInput, event)) {
+      if (ui.app.invalidated()) requestUpdate();
       if (event) return;  // dispatched to onRowEvent
     }
   }
@@ -141,9 +146,11 @@ void NetworkModeSelectionActivity::buildListScreen(UiApp::ScreenType& screen) {
     fui::ListItem item;
     item.label = I18N.get(menuItems[i]);
     item.subtitle = I18N.get(menuDescs[i]);
-    if (i == 3) {
+    if (menuModes[i] == NetworkMode::USB_DRIVE) {
+      item.icon = fui::bitmapFromIcon(icon_usb_32);
+    } else if (menuModes[i] == NetworkMode::NEARBY_BOOK_RECEIVE) {
       item.icon = fui::bitmapFromIcon(icon_chevrons_left_right_ellipsis_32);
-    } else if (i == 4) {
+    } else if (menuModes[i] == NetworkMode::NEARBY_STATS_SYNC) {
       item.icon = fui::BitmapRef{ChartListIcon, 32, 32, fui::BitmapFormat::Mask1};
     } else {
       item.icon = listIconFor(menuIcons[i], 32);  // subtitle rows carry the larger icon
@@ -162,6 +169,7 @@ void NetworkModeSelectionActivity::buildListScreen(UiApp::ScreenType& screen) {
   props.labelText.bold = true;
   props.subtitleText = screen.theme().smallText;
   props.subtitleText.bold = false;
+  props.subtitleText.maxLines = 2;
   props.headerText = screen.theme().bodyText;
   props.headerText.bold = true;
   props.rowGap = 10;
@@ -185,16 +193,15 @@ void NetworkModeSelectionActivity::render(RenderLock&&) {
   // indicator; the rest of the screen renders through the app.
   const Rect header = TouchHeaderBackButton::headerRect(renderer, mappedInput);
   if (mappedInput.hasTouchHardware()) {
-    TouchHeaderBackButton::draw(renderer, uiTarget, header, tr(STR_FILE_TRANSFER), false);
+    TouchHeaderBackButton::draw(renderer, ui.target, header, tr(STR_FILE_TRANSFER), false);
   } else {
     GUI.drawHeader(renderer, header, tr(STR_FILE_TRANSFER));
   }
 
-  uiReady = false;
-  app.render();
-  uiReady = true;
+  ui.render();
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels =
+      mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer(screenTransitionRefresh.modeFor(0));

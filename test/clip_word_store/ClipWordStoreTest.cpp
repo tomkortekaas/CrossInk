@@ -7,6 +7,7 @@
 #include "Epub/Epub/ReaderRenderSpec.h"
 #include "activities/reader/WordRef.h"
 #include "clippings/ClipTextBuilder.h"
+#include "clippings/ClippingTextMatcher.h"
 
 TEST(ClipWordStore, StoresNullTerminatedUtf8TextWithStableOffsets) {
   ClipWordStore store;
@@ -55,6 +56,45 @@ TEST(ClipTextBuilder, JoinsInsertedHyphenAcrossParagraphBoundary) {
   const ClippingResult result = ClipTextBuilder::build(store, order, 0, 1, 2, 0, 2);
 
   EXPECT_EQ(result.text, "hyphenated");
+}
+
+TEST(ClippingTextMatcher, MatchesLayoutInsertedHyphenFragmentsAsOneToken) {
+  constexpr char token[] = "correctly";
+  EXPECT_EQ(ClippingTextMatcher::matchTokenFragment("cor-", true, token, sizeof(token) - 1, 0),
+            ClippingTextMatcher::TokenFragmentMatch::CONTINUES_TOKEN);
+  EXPECT_EQ(ClippingTextMatcher::matchTokenFragment("rectly", false, token, sizeof(token) - 1, 3),
+            ClippingTextMatcher::TokenFragmentMatch::COMPLETES_TOKEN);
+}
+
+TEST(ClippingTextMatcher, MatchesAdjacentDisplayFragmentsAsOneToken) {
+  constexpr char token[] = "it\xE2\x80\xA6";
+  EXPECT_EQ(ClippingTextMatcher::matchTokenFragment("it", false, token, sizeof(token) - 1, 0),
+            ClippingTextMatcher::TokenFragmentMatch::CONTINUES_TOKEN);
+  EXPECT_EQ(ClippingTextMatcher::matchTokenFragment("\xE2\x80\xA6", false, token, sizeof(token) - 1, 2),
+            ClippingTextMatcher::TokenFragmentMatch::COMPLETES_TOKEN);
+}
+
+TEST(ClippingTextMatcher, MatchesNonBreakingSpaceBeforeAdjacentEllipsisFragment) {
+  constexpr char token[] = "it \xE2\x80\xA6";
+  const auto firstFragment =
+      ClippingTextMatcher::matchTokenFragmentWithLength("it", false, token, sizeof(token) - 1, 0);
+  EXPECT_EQ(firstFragment.match, ClippingTextMatcher::TokenFragmentMatch::CONTINUES_TOKEN);
+  EXPECT_EQ(firstFragment.tokenBytes, 2);
+
+  const auto ellipsisFragment = ClippingTextMatcher::matchTokenFragmentWithLength(
+      "\xC2\xA0\xE2\x80\xA6", false, token, sizeof(token) - 1, firstFragment.tokenBytes);
+  EXPECT_EQ(ellipsisFragment.match, ClippingTextMatcher::TokenFragmentMatch::COMPLETES_TOKEN);
+  EXPECT_EQ(ellipsisFragment.tokenBytes, 4);
+}
+
+TEST(ClippingTextMatcher, RejectsAuthoredHyphensAndMismatchedInsertedSuffixes) {
+  constexpr char token[] = "correctly";
+  constexpr char authoredHyphenToken[] = "wellknown";
+  EXPECT_EQ(ClippingTextMatcher::matchTokenFragment("well-known", false, authoredHyphenToken,
+                                                    sizeof(authoredHyphenToken) - 1, 0),
+            ClippingTextMatcher::TokenFragmentMatch::MISMATCH);
+  EXPECT_EQ(ClippingTextMatcher::matchTokenFragment("rectify", false, token, sizeof(token) - 1, 3),
+            ClippingTextMatcher::TokenFragmentMatch::MISMATCH);
 }
 
 TEST(ClippingLayout, RejectsStoredRangeWhenFontChangesWithoutChangingPageCount) {

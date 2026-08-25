@@ -20,6 +20,7 @@
 #include "DictionaryDefinitionActivity.h"
 #include "MappedInputManager.h"
 #include "Memory.h"
+#include "ReaderUtils.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/Dictionary.h"
@@ -58,6 +59,20 @@ bool isDashSeparator(const char* text, const size_t length, const size_t offset)
 bool containsDashSeparator(const char* text, const size_t length) {
   for (size_t i = 0; i < length; ++i) {
     if (isDashSeparator(text, length, i)) return true;
+  }
+  return false;
+}
+
+bool hasVisibleWordText(const char* text) {
+  if (!text) return false;
+  const char* cursor = text;
+  if (static_cast<unsigned char>(cursor[0]) == 0xE2 && cursor[1] != '\0' && cursor[2] != '\0' &&
+      static_cast<unsigned char>(cursor[1]) == 0x80 && static_cast<unsigned char>(cursor[2]) == 0x83) {
+    cursor += 3;
+  }
+  while (*cursor) {
+    if (*cursor != ' ' && *cursor != '\t' && *cursor != '\r' && *cursor != '\n') return true;
+    ++cursor;
   }
   return false;
 }
@@ -353,16 +368,17 @@ void DictionaryWordSelectActivity::renderDefinitionBackground() {
     LOG_ERR("DICT", "Cannot redraw dictionary background without a reader page");
     return;
   }
-  renderer.clearScreen();
+  const bool foregroundBlack = ReaderUtils::readerForegroundBlack();
+  renderer.clearScreen(ReaderUtils::readerBackgroundColor());
 
   // Dictionary layout can evict the reader font's bitmap glyph cache. Rebuild
   // it before redrawing the page behind the modal; the persistent advance
   // table only preserves glyph widths, not the bitmaps themselves.
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();
-  page->render(renderer, SETTINGS.getReaderFontId(), marginLeft, marginTop);  // scan pass
+  page->render(renderer, SETTINGS.getReaderFontId(), marginLeft, marginTop, foregroundBlack);  // scan pass
   scope.endScanAndPrewarm();
-  page->render(renderer, SETTINGS.getReaderFontId(), marginLeft, marginTop);
+  page->render(renderer, SETTINGS.getReaderFontId(), marginLeft, marginTop, foregroundBlack);
 }
 
 void DictionaryWordSelectActivity::renderDefinitionBackgroundCallback(void* context) {
@@ -578,6 +594,7 @@ bool DictionaryWordSelectActivity::extractWords() {
   const int16_t naturalSpaceWidth =
       static_cast<int16_t>(renderer.getTextAdvanceX(SETTINGS.getReaderFontId(), " ", EpdFontFamily::REGULAR));
 
+  uint16_t pageWordOrdinal = 0;
   for (const auto& element : page->elements) {
     if (element->getTag() != TAG_PageLine) continue;
     const auto* line = static_cast<const PageLine*>(element.get());
@@ -611,6 +628,12 @@ bool DictionaryWordSelectActivity::extractWords() {
       const uint8_t bionicBoundary = block->bionicBoundary(wordIndex);
       const uint16_t bionicSuffixX = block->bionicRunOffset(wordIndex);
       const bool wordIsRtl = isRtlWord(wordText, block->getBlockStyle().isRtl);
+
+      if (!hasVisibleWordText(wordText)) {
+        lastSelectableWordIndex = -2;
+        continue;
+      }
+      const uint16_t sourcePageWordOrdinal = pageWordOrdinal++;
 
       if (!utf8ContainsLookupCharacter(wordText)) {
         lastSelectableWordIndex = -2;
@@ -659,6 +682,8 @@ bool DictionaryWordSelectActivity::extractWords() {
         word.textLen = static_cast<uint16_t>(wordLength);
         word.lookupOffset = offset;
         word.lookupLen = word.textLen;
+        word.pageWordOrdinal = sourcePageWordOrdinal;
+        word.sourceWordByteOffset = 0;
         word.screenX = screenX;
         word.screenY = screenY;
         word.width = wordWidth;
@@ -701,6 +726,8 @@ bool DictionaryWordSelectActivity::extractWords() {
         word.textLen = static_cast<uint16_t>(part.length);
         word.lookupOffset = offset;
         word.lookupLen = word.textLen;
+        word.pageWordOrdinal = sourcePageWordOrdinal;
+        word.sourceWordByteOffset = static_cast<uint16_t>(part.sourceOffset);
         word.screenX = static_cast<int16_t>(screenX + offsetX);
         word.screenY = screenY;
         word.width = partWidth;
@@ -714,6 +741,50 @@ bool DictionaryWordSelectActivity::extractWords() {
     }
   }
   return true;
+}
+
+bool DictionaryWordSelectActivity::captureClippingRequest() {
+  int firstIdx = -1;
+  int lastIdx = -1;
+  if (!navigator.getLookupSelectionRange(firstIdx, lastIdx)) {
+    LOG_ERR("CLIP", "Dictionary clipping has no selected words");
+    return false;
+  }
+  const auto* first = navigator.getWordAt(firstIdx);
+  const auto* last = navigator.getWordAt(lastIdx);
+  if (!first || !last) {
+    LOG_ERR("CLIP", "Dictionary clipping selection indexes are invalid");
+    return false;
+  }
+  if (first->continuationOf >= 0) first = navigator.getWordAt(first->continuationOf);
+  if (last->continuationIndex >= 0) last = navigator.getWordAt(last->continuationIndex);
+  if (!first || !last) {
+    LOG_ERR("CLIP", "Dictionary clipping hyphenated selection is invalid");
+    return false;
+  }
+  const bool firstPrecedesLast =
+      first->pageWordOrdinal < last->pageWordOrdinal ||
+      (first->pageWordOrdinal == last->pageWordOrdinal && first->sourceWordByteOffset <= last->sourceWordByteOffset);
+  const auto* rangeFirst = firstPrecedesLast ? first : last;
+  const auto* rangeLast = firstPrecedesLast ? last : first;
+  pendingClippingRequest_.firstPageWordOrdinal = rangeFirst->pageWordOrdinal;
+  pendingClippingRequest_.lastPageWordOrdinal = rangeLast->pageWordOrdinal;
+  pendingClippingRequest_.firstWordByteOffset = rangeFirst->sourceWordByteOffset;
+  pendingClippingRequest_.lastWordByteEndOffset =
+      static_cast<uint16_t>(rangeLast->sourceWordByteOffset + rangeLast->textLen);
+  hasPendingClippingRequest_ = true;
+  navigator.clearCompletedSelection();
+  return true;
+}
+
+void DictionaryWordSelectActivity::finishWithClippingRequest() {
+  if (!hasPendingClippingRequest_) {
+    LOG_ERR("CLIP", "Dictionary clipping requested without a selected range");
+    DictUtils::cancelAndFinish(*this);
+    return;
+  }
+  setResult(ActivityResult{pendingClippingRequest_});
+  finish();
 }
 
 bool DictionaryWordSelectActivity::mergeHyphenatedWords() {
@@ -813,7 +884,8 @@ void DictionaryWordSelectActivity::loop() {
             readerBackgroundRender_ ? readerContext_ : this,
             readerBackgroundRender_ ? readerBackgroundRender_
                                     : &DictionaryWordSelectActivity::renderDefinitionBackgroundCallback,
-            dictionaryFontFamilyName_, dictionaryFontPointSize_, true, &highlightSnapshotStorage_);
+            dictionaryFontFamilyName_, dictionaryFontPointSize_, true,
+            hasPendingClippingRequest_ ? &pendingClippingRequest_ : nullptr, &highlightSnapshotStorage_);
         if (!definition) {
           LOG_ERR("DICT", "OOM allocating DictionaryDefinitionActivity (%u bytes)",
                   static_cast<unsigned>(sizeof(DictionaryDefinitionActivity)));
@@ -823,32 +895,25 @@ void DictionaryWordSelectActivity::loop() {
         }
         suspendWorkingSet();
         startActivityForResult(std::move(definition), [this](const ActivityResult& result) {
-          if (!result.isCancelled) {
-            setResult(ActivityResult{});
+          if (const auto* request = std::get_if<DictionaryClippingRequest>(&result.data)) {
+            setResult(ActivityResult{*request});
             finish();
-          } else {
-            {
-              RenderLock lock(*this);
-              if (!restoreWorkingSet()) {
-                GUI.drawPopup(renderer, tr(STR_MEMORY_ERROR));
-                renderer.displayBuffer();
-                delay(1000);
-                ActivityResult parentResult;
-                parentResult.isCancelled = true;
-                setResult(std::move(parentResult));
-                finish();
-                return;
-              }
-            }
-            forceFullRepaintOnNextRender();
-            requestUpdate();
+            return;
           }
+          // A definition is the terminal screen of reader-page lookup. Its
+          // dismiss paths (Back and an outside tap) must return to the reader,
+          // rather than restoring the word-selection highlight beneath it.
+          setResult(ActivityResult{});
+          finish();
         });
         break;
       }
       case DictionaryLookupController::LookupEvent::NotFoundDismissedBack:
-        forceFullRepaintOnNextRender();
-        requestUpdate();
+        setResult(ActivityResult{});
+        finish();
+        break;
+      case DictionaryLookupController::LookupEvent::CreateClipping:
+        finishWithClippingRequest();
         break;
       case DictionaryLookupController::LookupEvent::NotFoundDismissedDone:
         setResult(ActivityResult{});
@@ -890,7 +955,8 @@ void DictionaryWordSelectActivity::loop() {
     }
 
     touchDragLookup_ = false;
-    controller.lookupOrPopup(navigator.finishTouchMultiSelect());
+    controller.lookupOrPopup(navigator.finishTouchMultiSelect(), navigator.getLookupSelectionWordCount());
+    if (controller.isLookingUp()) captureClippingRequest();
     return;
   }
 
@@ -916,11 +982,17 @@ void DictionaryWordSelectActivity::loop() {
     return;
   }
 
-  if (controller.handleMultiSelect(navigator)) return;
+  if (controller.handleMultiSelect(navigator)) {
+    if (controller.isLookingUp()) captureClippingRequest();
+    return;
+  }
 
   if (navigator.isMultiSelecting()) return;
 
-  if (controller.handleConfirmLookup(navigator)) return;
+  if (controller.handleConfirmLookup(navigator)) {
+    if (controller.isLookingUp()) captureClippingRequest();
+    return;
+  }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     DictUtils::cancelAndFinish(*this);
@@ -931,6 +1003,7 @@ void DictionaryWordSelectActivity::loop() {
 void DictionaryWordSelectActivity::render(RenderLock&&) {
   const int lineHeight = renderer.getLineHeight(SETTINGS.getReaderFontId());
   const int currIdx = navigator.getCurrentFlatIndex();
+  const bool foregroundBlack = ReaderUtils::readerForegroundBlack();
 
   // Differential fast path. Only valid when:
   //   - we set it up on the previous frame (RenderMode::Differential),
@@ -938,7 +1011,8 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   //   - we have a current selection.
   if (nextRenderMode_ == RenderMode::Differential && !controller.isActive() && currIdx >= 0) {
     prewarmHighlightGlyphs(currIdx);
-    auto dirty = navigator.renderHighlightDifferential(renderer, lineHeight, prevHighlightIdx_, currIdx);
+    auto dirty =
+        navigator.renderHighlightDifferential(renderer, lineHeight, prevHighlightIdx_, currIdx, foregroundBlack);
     if (dirty.has_value()) {
       // Push full panel — the SDK's windowed-refresh path produces alternating black→white
       // transition failures on consecutive fast partial refreshes, so it's intentionally not
@@ -979,7 +1053,8 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
 
       prewarmHighlightGlyphs(currIdx);
 
-      auto setup = navigator.renderHighlightDifferential(renderer, lineHeight, /*prevWordIdx=*/-1, currIdx);
+      auto setup =
+          navigator.renderHighlightDifferential(renderer, lineHeight, /*prevWordIdx=*/-1, currIdx, foregroundBlack);
       bool snapshotPrimed = setup.has_value();
       if (!snapshotPrimed) {
         // Hyphenated wrap or oversize capture. The framebuffer still holds
@@ -989,7 +1064,7 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
         // repaint so the renderer state is consistent. The user just pays
         // for one regular page render on the next cursor move instead of
         // on entry.
-        navigator.renderHighlight(renderer, lineHeight);
+        navigator.renderHighlight(renderer, lineHeight, foregroundBlack);
       }
       clearFrontButtonHintArea();
       DictUtils::drawWordSelectButtonHints(renderer, mappedInput, navigator);
@@ -1003,7 +1078,7 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   }
 
   // Full repaint path.
-  renderer.clearScreen();
+  renderer.clearScreen(ReaderUtils::readerBackgroundColor());
   if (controller.render()) {
     // Controller drew an overlay; framebuffer state is unknown.
     nextRenderMode_ = RenderMode::FullPage;
@@ -1017,9 +1092,9 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   // Same pattern as EpubReaderActivity::renderContents().
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();
-  page->render(renderer, SETTINGS.getReaderFontId(), marginLeft, marginTop);  // scan pass
+  page->render(renderer, SETTINGS.getReaderFontId(), marginLeft, marginTop, foregroundBlack);  // scan pass
   scope.endScanAndPrewarm();
-  page->render(renderer, SETTINGS.getReaderFontId(), marginLeft, marginTop);
+  page->render(renderer, SETTINGS.getReaderFontId(), marginLeft, marginTop, foregroundBlack);
 
   // Set up snapshot AND draw the highlight via the differential entry point with
   // prevWordIdx = -1 (no previous highlight to wipe). This both draws the highlight
@@ -1034,11 +1109,12 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
   // it's also the only call site that must pass -1.
   bool snapshotPrimed = false;
   if (currIdx >= 0) {
-    auto setup = navigator.renderHighlightDifferential(renderer, lineHeight, /*prevWordIdx=*/-1, currIdx);
+    auto setup =
+        navigator.renderHighlightDifferential(renderer, lineHeight, /*prevWordIdx=*/-1, currIdx, foregroundBlack);
     snapshotPrimed = setup.has_value();
   }
   if (!snapshotPrimed) {
-    navigator.renderHighlight(renderer, lineHeight);
+    navigator.renderHighlight(renderer, lineHeight, foregroundBlack);
   }
 
   clearFrontButtonHintArea();

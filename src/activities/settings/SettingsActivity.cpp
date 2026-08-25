@@ -3,6 +3,7 @@
 #include <BoardConfig.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
+#include <I18n.h>
 #include <Logging.h>
 
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <cstring>
 #include <iterator>
 
+#include "AppCapabilities.h"
 #include "AppVersion.h"
 #include "BackupStatsActivity.h"
 #include "ButtonRemapActivity.h"
@@ -19,9 +21,12 @@
 #include "ClockSyncActivity.h"
 #include "CrossPointSettings.h"
 #include "FontSelectionActivity.h"
+#include "FrontlightTimePickerActivity.h"
 #include "KOReaderSettingsActivity.h"
 #include "MappedInputManager.h"
 #include "OpdsServerListActivity.h"
+#include "QuickActions.h"
+#include "QuickActionsActivity.h"
 #include "SdCardFontSystem.h"
 #include "SdFirmwareUpdateActivity.h"
 #include "SettingsList.h"
@@ -38,8 +43,10 @@
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
 #include "components/UiAppHelpers.h"
+#include "components/icons/frontlightHeaderIcons.h"
 #include "fontIds.h"
 #include "util/DictionaryRegistry.h"
+#include "util/FrontlightSchedule.h"
 
 namespace fui = freeink::ui;
 
@@ -54,44 +61,34 @@ const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DIS
 namespace {
 constexpr int systemVersionFooterSideMargin = 20;
 constexpr int systemVersionFooterBottomInset = 15;
-constexpr size_t controlsParentBaseCount = 3;
+constexpr size_t controlsParentBaseCount = 4;
+constexpr size_t controlsHomeButtonCount = 4;
 constexpr size_t controlsPowerMinCount = 2;
 constexpr size_t controlsPowerMaxCount = 3;
 constexpr size_t controlsFrontButtonCount = 6;
-constexpr size_t controlsSideButtonCount = 3;
-constexpr int touchSettingsRowHeightScale = 2;
-constexpr int touchSettingsTabBarHeightScale = 2;
+constexpr size_t controlsSideButtonCount = 4;
+
+void formatFrontlightScheduleTime(const uint16_t timeOfDay, char* const buf, const size_t len) {
+  const FrontlightSchedule::TimeOfDay time = FrontlightSchedule::timeOfDayFromMinutes(timeOfDay);
+  snprintf(buf, len, "%u:%02u %s", static_cast<unsigned>(time.hour12), static_cast<unsigned>(time.minute),
+           I18N.get(time.isPm ? StrId::STR_PM : StrId::STR_AM));
+}
 
 int settingsTabBarTop(const ThemeMetrics& metrics) { return CompactHeader::headerBottomY(metrics); }
-
-int settingsRowHeightScale(const bool hasTouch) { return hasTouch ? touchSettingsRowHeightScale : 1; }
-
-int settingsTabBarHeight(const ThemeMetrics& metrics, const bool hasTouch) {
-  return metrics.tabBarHeight * (hasTouch ? touchSettingsTabBarHeightScale : 1);
-}
-
-int settingsSubmenuHeaderOffset(const GfxRenderer& renderer, const ThemeMetrics& metrics, const bool hasSubmenuTitle) {
-  if (!hasSubmenuTitle) return 0;
-  return renderer.getLineHeight(UI_10_FONT_ID) + metrics.verticalSpacing;
-}
-
-Rect settingsListRect(const ThemeMetrics& metrics, const int pageWidth, const int pageHeight, const bool hasTouch) {
-  const int tabBarTop = settingsTabBarTop(metrics);
-  const int listTop = tabBarTop + settingsTabBarHeight(metrics, hasTouch) + metrics.verticalSpacing;
-  return Rect{0, listTop, pageWidth, pageHeight - listTop - metrics.buttonHintsHeight - metrics.verticalSpacing};
-}
 
 Rect settingsHeaderRect(const ThemeMetrics& metrics, const int pageWidth) {
   return Rect{0, metrics.topPadding, pageWidth, CompactHeader::headerBottomY(metrics) - metrics.topPadding};
 }
 
-Rect settingsRowsRect(const GfxRenderer& renderer, const ThemeMetrics& metrics, const int pageWidth,
-                      const int pageHeight, const bool hasTouch, const bool hasSubmenuTitle) {
-  Rect rect = settingsListRect(metrics, pageWidth, pageHeight, hasTouch);
-  const int headerOffset = settingsSubmenuHeaderOffset(renderer, metrics, hasSubmenuTitle);
-  rect.y += headerOffset;
-  rect.height = std::max(0, rect.height - headerOffset);
-  return rect;
+bool useLandscapeTouchLayout(const GfxRenderer& renderer) {
+  // Layout is an app capability decision, not a live GT911 probe or SDK board
+  // profile result. The simulator supplies touch through its own device
+  // profile, while firmware can construct Settings during touch reinitialization.
+#if CROSSINK_APP_CAP_TOUCH
+  return renderer.getScreenWidth() > renderer.getScreenHeight();
+#else
+  return false;
+#endif
 }
 
 uint8_t enumDisplayIndexForRawValue(const SettingInfo& setting, uint8_t rawValue) {
@@ -187,6 +184,14 @@ void drawSystemVersionFooter(const GfxRenderer& renderer, const int pageWidth, c
 }
 
 std::string formatSettingValue(const SettingInfo& setting) {
+  if (setting.value16Ptr == &CrossPointSettings::frontlightScheduleStart ||
+      setting.value16Ptr == &CrossPointSettings::frontlightScheduleEnd) {
+    const uint16_t timeOfDay = SETTINGS.*(setting.value16Ptr);
+    if (SETTINGS.frontlightScheduleEnabled == 0 || !FrontlightSchedule::isTimeOfDayValid(timeOfDay)) return "--";
+    char valueBuffer[16];
+    formatFrontlightScheduleTime(timeOfDay, valueBuffer, sizeof(valueBuffer));
+    return valueBuffer;
+  }
   if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
     if (SETTINGS.sleepTimeoutMinutes >= CrossPointSettings::SLEEP_TIMEOUT_NEVER_MINUTES) {
       return tr(STR_SLEEP_NEVER);
@@ -208,24 +213,34 @@ std::string formatSettingValue(const SettingInfo& setting) {
   return std::to_string(SETTINGS.*(setting.valuePtr));
 }
 
-uint8_t valueDisplayIndexForRawValue(const SettingInfo& setting, const uint8_t rawValue) {
-  const uint8_t min = setting.valueRange.min;
-  const uint8_t max = setting.valueRange.max;
-  const uint8_t step = setting.valueRange.step == 0 ? 1 : setting.valueRange.step;
-  const uint8_t clampedValue = std::clamp(rawValue, min, max);
-  const uint8_t offset = clampedValue > min ? clampedValue - min : 0;
-  return static_cast<uint8_t>((offset + step / 2) / step);
+fui::BitmapRef twoFingerSwipeIcon(const StrId nameId) {
+  switch (nameId) {
+    case StrId::STR_TWO_FINGER_SWIPE_UP:
+      return fui::bitmapFromIcon(icon_arrows_up_24);
+    case StrId::STR_TWO_FINGER_SWIPE_DOWN:
+      return fui::bitmapFromIcon(icon_arrows_down_24);
+    case StrId::STR_TWO_FINGER_SWIPE_LEFT:
+      return fui::bitmapFromIcon(icon_arrows_left_24);
+    case StrId::STR_TWO_FINGER_SWIPE_RIGHT:
+      return fui::bitmapFromIcon(icon_arrows_right_24);
+    default:
+      return {};
+  }
 }
 
-uint8_t rawValueForValueDisplayIndex(const SettingInfo& setting, const uint8_t displayIndex) {
-  const uint8_t step = setting.valueRange.step == 0 ? 1 : setting.valueRange.step;
-  const uint16_t rawValue = static_cast<uint16_t>(setting.valueRange.min) + static_cast<uint16_t>(displayIndex) * step;
-  return static_cast<uint8_t>(std::min<uint16_t>(rawValue, setting.valueRange.max));
+fui::BitmapRef frontlightScheduleEndpointIcon(const SettingInfo& setting) {
+  if (setting.value16Ptr == &CrossPointSettings::frontlightScheduleStart) {
+    return fui::bitmapFromIcon(icon_lightbulb_28);
+  }
+  if (setting.value16Ptr == &CrossPointSettings::frontlightScheduleEnd) {
+    return fui::bitmapFromIcon(icon_lightbulb_off_28);
+  }
+  return {};
 }
 
-uint8_t valueOptionCount(const SettingInfo& setting) {
-  const uint8_t step = setting.valueRange.step == 0 ? 1 : setting.valueRange.step;
-  return static_cast<uint8_t>(((setting.valueRange.max - setting.valueRange.min) / step) + 1);
+bool isTwoFingerSwipeSetting(const uint8_t CrossPointSettings::* const valuePtr) {
+  return valuePtr == &CrossPointSettings::twoFingerSwipeUp || valuePtr == &CrossPointSettings::twoFingerSwipeDown ||
+         valuePtr == &CrossPointSettings::twoFingerSwipeLeft || valuePtr == &CrossPointSettings::twoFingerSwipeRight;
 }
 
 std::string trimAsciiSpaces(const std::string& value) {
@@ -244,19 +259,24 @@ std::string trimAsciiSpaces(const std::string& value) {
 SettingsActivity::SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const bool dismissOnUpSwipe)
     : Activity("Settings", renderer, mappedInput),
       dismissOnUpSwipe(dismissOnUpSwipe),
+      entryOrientation(renderer.getOrientation()),
       uiTarget(makeUiTarget(renderer)),
       app(uiTarget, uiTarget.deviceContext()) {}
 
 void SettingsActivity::rebuildSettingsLists() {
   displaySettings.clear();
   displaySleepSettings.clear();
+  displayFrontlightSettings.clear();
   readerSettings.clear();
   readerFontSettings.clear();
   readerPageLayoutSettings.clear();
   controlsSettings.clear();
   controlsPowerSettings.clear();
+  controlsHomeButtonSettings.clear();
   controlsFrontButtonSettings.clear();
   controlsSideButtonSettings.clear();
+  controlsTapsGesturesSettings.clear();
+  controlsTwoFingerSwipeSettings.clear();
   systemSettings.clear();
   systemDeviceSettings.clear();
   systemFilesCacheSettings.clear();
@@ -279,9 +299,11 @@ void SettingsActivity::rebuildSettingsLists() {
   }
 #endif
   displaySleepSettings = buildDisplaySleepSettingsList(allSettings);
+  displayFrontlightSettings = buildDisplayFrontlightSettingsList(allSettings);
   readerSettings = buildReaderSettingsParentList(allSettings);
   readerFontSettings = buildReaderFontSettingsList(allSettings);
   readerPageLayoutSettings = buildReaderPageLayoutSettingsList(allSettings);
+  readerScreenMarginSettings = buildReaderScreenMarginSettingsList(allSettings);
   systemSettings = buildSystemSettingsParentList(allSettings);
   systemDeviceSettings = buildSystemDeviceSettingsList(allSettings);
   systemFilesCacheSettings = buildSystemFilesCacheSettingsList(allSettings);
@@ -289,6 +311,9 @@ void SettingsActivity::rebuildSettingsLists() {
   systemGlobalStatsSettings = buildSystemGlobalStatsSettingsList(allSettings);
   controlsSettings = buildControlsSettingsParentList(allSettings);
   controlsPowerSettings = buildControlsPowerSettingsList(allSettings);
+  controlsHomeButtonSettings = buildControlsHomeButtonSettingsList(allSettings);
+  controlsTapsGesturesSettings = buildControlsTapsGesturesSettingsList(allSettings);
+  controlsTwoFingerSwipeSettings = buildControlsTwoFingerSwipeSettingsList(allSettings);
 #if CROSSINK_APP_CAP_TOUCH
   if (!gpio.hasTouch()) {
     controlsFrontButtonSettings = buildControlsFrontButtonSettingsList(allSettings);
@@ -296,25 +321,30 @@ void SettingsActivity::rebuildSettingsLists() {
   controlsSideButtonSettings = buildControlsSideButtonSettingsList(allSettings);
 
   const bool hasTouch = gpio.hasTouch();
-  const size_t expectedControlsCount = controlsParentBaseCount - (hasTouch ? 1u : 0u) +
+  const bool hasHomeKey = gpio.hasHomeKey();
+  const size_t expectedControlsCount = controlsParentBaseCount - (hasTouch ? 1u : 0u) + (hasHomeKey ? 1u : 0u) +
                                        (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN) ? 1u : 0u) +
-                                       (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION) ? 1u : 0u);
+                                       (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION) ? 1u : 0u) +
+                                       (hasSettingByName(allSettings, StrId::STR_PAGE_TURN) ? 1u : 0u);
   const size_t expectedFrontButtonCount = hasTouch ? 0u : controlsFrontButtonCount;
 #else
   controlsFrontButtonSettings = buildControlsFrontButtonSettingsList(allSettings);
   controlsSideButtonSettings = buildControlsSideButtonSettingsList(allSettings);
 
-  const size_t expectedControlsCount = controlsParentBaseCount +
+  const size_t expectedControlsCount = controlsParentBaseCount + (gpio.hasHomeKey() ? 1u : 0u) +
                                        (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN) ? 1u : 0u) +
-                                       (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION) ? 1u : 0u);
+                                       (hasSettingByName(allSettings, StrId::STR_TILT_PAGE_TURN_DIRECTION) ? 1u : 0u) +
+                                       (hasSettingByName(allSettings, StrId::STR_PAGE_TURN) ? 1u : 0u);
   constexpr size_t expectedFrontButtonCount = controlsFrontButtonCount;
 #endif
-  if (controlsSettings.size() != expectedControlsCount || controlsPowerSettings.size() < controlsPowerMinCount ||
-      controlsPowerSettings.size() > controlsPowerMaxCount ||
+  if (controlsSettings.size() != expectedControlsCount ||
+      (gpio.hasHomeKey() && controlsHomeButtonSettings.size() != controlsHomeButtonCount) ||
+      controlsPowerSettings.size() < controlsPowerMinCount || controlsPowerSettings.size() > controlsPowerMaxCount ||
       controlsFrontButtonSettings.size() != expectedFrontButtonCount ||
       controlsSideButtonSettings.size() != controlsSideButtonCount) {
-    LOG_ERR("SET", "Unexpected controls menu counts: controls=%u/%u power=%u front=%u side=%u",
+    LOG_ERR("SET", "Unexpected controls menu counts: controls=%u/%u home=%u power=%u front=%u side=%u",
             static_cast<uint32_t>(controlsSettings.size()), static_cast<uint32_t>(expectedControlsCount),
+            static_cast<uint32_t>(controlsHomeButtonSettings.size()),
             static_cast<uint32_t>(controlsPowerSettings.size()),
             static_cast<uint32_t>(controlsFrontButtonSettings.size()),
             static_cast<uint32_t>(controlsSideButtonSettings.size()));
@@ -326,7 +356,13 @@ void SettingsActivity::rebuildSettingsLists() {
 void SettingsActivity::setCurrentSettingsForCategory() {
   switch (selectedCategoryIndex) {
     case 0:
-      currentSettings = activeSubmenu == SettingAction::DisplaySleepScreen ? &displaySleepSettings : &displaySettings;
+      if (activeSubmenu == SettingAction::DisplaySleepScreen) {
+        currentSettings = &displaySleepSettings;
+      } else if (activeSubmenu == SettingAction::DisplayFrontlight) {
+        currentSettings = &displayFrontlightSettings;
+      } else {
+        currentSettings = &displaySettings;
+      }
       break;
     case 1:
       switch (activeSubmenu) {
@@ -335,6 +371,9 @@ void SettingsActivity::setCurrentSettingsForCategory() {
           break;
         case SettingAction::ReaderPageLayout:
           currentSettings = &readerPageLayoutSettings;
+          break;
+        case SettingAction::ScreenMargin:
+          currentSettings = &readerScreenMarginSettings;
           break;
         default:
           currentSettings = &readerSettings;
@@ -346,11 +385,20 @@ void SettingsActivity::setCurrentSettingsForCategory() {
         case SettingAction::ControlsPowerButton:
           currentSettings = &controlsPowerSettings;
           break;
+        case SettingAction::ControlsHomeButton:
+          currentSettings = &controlsHomeButtonSettings;
+          break;
         case SettingAction::ControlsFrontButtons:
           currentSettings = &controlsFrontButtonSettings;
           break;
         case SettingAction::ControlsSideButtons:
           currentSettings = &controlsSideButtonSettings;
+          break;
+        case SettingAction::ControlsTapsGestures:
+          currentSettings = &controlsTapsGesturesSettings;
+          break;
+        case SettingAction::ControlsTwoFingerSwipe:
+          currentSettings = &controlsTwoFingerSwipeSettings;
           break;
         default:
           currentSettings = &controlsSettings;
@@ -392,16 +440,26 @@ StrId SettingsActivity::activeSubmenuTitleId() const {
   switch (activeSubmenu) {
     case SettingAction::DisplaySleepScreen:
       return StrId::STR_DISPLAY_SLEEP_SCREEN;
+    case SettingAction::DisplayFrontlight:
+      return StrId::STR_FRONTLIGHT;
     case SettingAction::ReaderFontOptions:
       return StrId::STR_READER_FONT_OPTIONS;
     case SettingAction::ReaderPageLayout:
       return StrId::STR_READER_PAGE_LAYOUT;
+    case SettingAction::ScreenMargin:
+      return StrId::STR_SCREEN_MARGIN;
     case SettingAction::ControlsPowerButton:
       return StrId::STR_POWER_BUTTON;
+    case SettingAction::ControlsHomeButton:
+      return StrId::STR_HOME_BUTTON;
     case SettingAction::ControlsFrontButtons:
       return StrId::STR_FRONT_BUTTONS;
     case SettingAction::ControlsSideButtons:
       return StrId::STR_SIDE_BUTTONS;
+    case SettingAction::ControlsTapsGestures:
+      return StrId::STR_TAPS_AND_GESTURES;
+    case SettingAction::ControlsTwoFingerSwipe:
+      return StrId::STR_TWO_FINGER_SWIPE;
     case SettingAction::SystemDevice:
       return StrId::STR_SYSTEM_DEVICE;
     case SettingAction::SystemFilesCache:
@@ -460,50 +518,51 @@ void SettingsActivity::openEnumOptionPicker(const SettingInfo& setting) {
   if (currentIndex >= optionCount) currentIndex = 0;
 
   const SettingInfo selectedSetting = setting;
-  optionPopup.show(setting.nameId, options, currentIndex, [this, selectedSetting](int selectedIndex) {
-    if (selectedSetting.valuePtr != nullptr) {
-      SETTINGS.*(selectedSetting.valuePtr) =
-          enumRawValueForDisplayIndex(selectedSetting, static_cast<uint8_t>(selectedIndex));
-    } else if (selectedSetting.valueSetter) {
-      selectedSetting.valueSetter(static_cast<uint8_t>(selectedIndex));
-    }
+  const auto note = setting.valuePtr == &CrossPointSettings::sideButtonChordAction && mappedInput.hasTouchHardware()
+                        ? OptionPopup::Note{tr(STR_NOTE), tr(STR_TOUCHSCREEN_ESCAPE_HATCH_NOTE)}
+                        : OptionPopup::Note{};
+  optionPopup.show(
+      setting.nameId, options, currentIndex,
+      [this, selectedSetting](int selectedIndex) {
+        if (selectedSetting.valuePtr != nullptr) {
+          SETTINGS.*(selectedSetting.valuePtr) =
+              enumRawValueForDisplayIndex(selectedSetting, static_cast<uint8_t>(selectedIndex));
+          if (isTwoFingerSwipeSetting(selectedSetting.valuePtr)) {
+            CrossPointSettings::normalizeTwoFingerSwipeActions(SETTINGS, selectedSetting.valuePtr);
+          }
+          QuickActions::settingChanged(SETTINGS, selectedSetting.valuePtr);
+        } else if (selectedSetting.valueSetter) {
+          selectedSetting.valueSetter(static_cast<uint8_t>(selectedIndex));
+        }
 
-    const bool sleepScreenChanged = selectedSetting.valuePtr == &CrossPointSettings::sleepScreen;
-    const bool quickResumeTimeoutChanged = selectedSetting.valuePtr == &CrossPointSettings::quickResumeSleepScreen;
-    syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
-    SETTINGS.saveToFile();
-    rebuildSettingsLists();
-    requestUpdate();
-  });
+        const bool sleepScreenChanged = selectedSetting.valuePtr == &CrossPointSettings::sleepScreen;
+        const bool quickResumeTimeoutChanged = selectedSetting.valuePtr == &CrossPointSettings::quickResumeSleepScreen;
+        syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
+        SETTINGS.saveToFile();
+        rebuildSettingsLists();
+        requestUpdate();
+      },
+      note);
   requestUpdate();
 }
 
 void SettingsActivity::openScreenMarginPicker(const SettingInfo& setting) {
-  const uint8_t optionCount = valueOptionCount(setting);
-  if (optionCount == 0 || setting.valuePtr == nullptr) return;
-
-  std::vector<std::string> options;
-  options.reserve(optionCount);
-  for (uint8_t i = 0; i < optionCount; i++) {
-    options.push_back(std::to_string(rawValueForValueDisplayIndex(setting, i)));
-  }
-
-  uint8_t currentIndex = valueDisplayIndexForRawValue(setting, SETTINGS.*(setting.valuePtr));
-  if (currentIndex >= optionCount) currentIndex = 0;
+  if (setting.valuePtr == nullptr) return;
 
   const SettingInfo selectedSetting = setting;
   startActivityForResult(
-      std::make_unique<OptionSelectionActivity>(renderer, mappedInput, "SettingsValueSelect", selectedSetting.nameId,
-                                                std::move(options), currentIndex, false, true),
+      std::make_unique<IntervalSelectionActivity>(
+          renderer, mappedInput, "ScreenMarginInterval", selectedSetting.nameId, SETTINGS.*(selectedSetting.valuePtr),
+          CrossPointSettings::MIN_SCREEN_MARGIN, CrossPointSettings::MAX_SCREEN_MARGIN,
+          CrossPointSettings::SCREEN_MARGIN_SMALL_STEP, CrossPointSettings::SCREEN_MARGIN_LARGE_STEP,
+          StrId::STR_NONE_OPT, /*readerActivity=*/false,
+          /*allowPowerAsConfirm=*/false, /*ignoreInitialConfirmRelease=*/false, /*showPercentValue=*/false,
+          StrId::STR_NONE_OPT, /*overrideDisabledReaderTouchscreen=*/false, /*showTouchHeaderBackButton=*/true),
       [this, selectedSetting](const ActivityResult& result) {
-        if (result.isCancelled) {
-          requestUpdate();
-          return;
-        }
-
-        const auto* selection = std::get_if<OptionSelectionResult>(&result.data);
-        if (selection != nullptr && selectedSetting.valuePtr != nullptr) {
-          SETTINGS.*(selectedSetting.valuePtr) = rawValueForValueDisplayIndex(selectedSetting, selection->index);
+        if (!result.isCancelled) {
+          SETTINGS.*(selectedSetting.valuePtr) = static_cast<uint8_t>(std::clamp(
+              std::get<IntervalResult>(result.data).value, static_cast<uint32_t>(CrossPointSettings::MIN_SCREEN_MARGIN),
+              static_cast<uint32_t>(CrossPointSettings::MAX_SCREEN_MARGIN)));
           SETTINGS.saveToFile();
         }
         requestUpdate();
@@ -596,6 +655,11 @@ void SettingsActivity::openStringEditor(const SettingInfo& setting) {
 void SettingsActivity::onEnter() {
   Activity::onEnter();
 
+  // Reapply the orientation captured before the activity being replaced (for
+  // example, a landscape reader) performs its normal portrait reset.
+  renderer.setOrientation(entryOrientation);
+  app.setDevice(uiTarget.deviceContext());
+
   // Dictionary names and paths are needed only while settings are open. Keep
   // the catalog out of the reader's steady-state heap.
   dictionaryRegistry.discover();
@@ -615,7 +679,7 @@ void SettingsActivity::onEnter() {
   uiReady = false;
   visibleRows = 1;
   topIndex = 0;
-  app.setTheme(uiThemeTokens(uiTarget));
+  applySharedUiTheme(app, uiTarget);
   app.on(ACTION_ROW, &SettingsActivity::onRowEvent, this);
   app.on(ACTION_TAB, &SettingsActivity::onTabEvent, this);
   app.setScreen(&SettingsActivity::settingsScreen, this);
@@ -671,6 +735,9 @@ void SettingsActivity::onRowEvent(const fui::ActionEvent& event, void* user) {
 void SettingsActivity::onExit() {
   dictionaryRegistry.clear();
   sdFontSystem.releaseRegistry();
+  // Settings is a transient Home surface when it replaced a reader overlay.
+  // Return Home in its usual portrait orientation after closing it.
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
   Activity::onExit();
 
   UITheme::getInstance().reload();  // Re-apply theme in case it was changed
@@ -680,16 +747,26 @@ void SettingsActivity::applyUiSettingChange(uint8_t CrossPointSettings::* valueP
   // Theme and UI-scale changes take effect immediately, on this screen —
   // reload the theme and re-derive the app's fonts and tokens so the very
   // next repaint is in the new look.
-  if (valuePtr == &CrossPointSettings::uiTheme) {
-    UITheme::getInstance().reload();
-  } else if (valuePtr != &CrossPointSettings::uiScale) {
+  const bool themeChanged = valuePtr == &CrossPointSettings::uiTheme;
+  const bool scaleChanged = valuePtr == &CrossPointSettings::uiScale;
+  if (!themeChanged && !scaleChanged) {
     return;
   }
-  const auto spec = uiScaleSpec();
-  uiTarget.setFont(fui::GfxRendererTarget::FONT_SMALL, spec.smallFontId);
-  uiTarget.setFont(fui::GfxRendererTarget::FONT_BODY, spec.bodyFontId);
-  uiTarget.setFont(fui::GfxRendererTarget::FONT_TITLE, spec.titleFontId);
-  app.setTheme(uiThemeTokens(uiTarget));
+
+  // Rendering reads the shared theme tokens field-by-field. Hold the same
+  // mutex used by the render task while replacing the theme and fonts, then
+  // release it before requestUpdate() triggers the next repaint.
+  {
+    RenderLock lock(*this);
+    if (themeChanged) {
+      UITheme::getInstance().reload();
+    }
+    const auto spec = uiScaleSpec();
+    uiTarget.setFont(fui::GfxRendererTarget::FONT_SMALL, spec.smallFontId);
+    uiTarget.setFont(fui::GfxRendererTarget::FONT_BODY, spec.bodyFontId);
+    uiTarget.setFont(fui::GfxRendererTarget::FONT_TITLE, spec.titleFontId);
+    applySharedUiTheme(app, uiTarget);
+  }
 }
 
 void SettingsActivity::loop() {
@@ -757,7 +834,16 @@ void SettingsActivity::loop() {
   // Swipes scroll the viewport; the selection stays put (it may scroll
   // off-screen) and button navigation pulls the view back to it.
   const auto swipe = mappedInput.wasSwipe();
+#if CROSSINK_APP_CAP_TOUCH
+  const bool landscapeTouch = useLandscapeTouchLayout(renderer);
+  // The frontlight shortcut keeps its quick exit in landscape, but only from
+  // the X4 Pro's lower-edge gesture band. Other upward swipes scroll the list.
+  const bool dismissLandscapeFromBottomEdge = landscapeTouch && mappedInput.wasBottomEdgeUpSwipe();
+  if (dismissOnUpSwipe && swipe == MappedInputManager::SwipeDir::Up &&
+      (!landscapeTouch || dismissLandscapeFromBottomEdge)) {
+#else
   if (dismissOnUpSwipe && swipe == MappedInputManager::SwipeDir::Up) {
+#endif
     SETTINGS.saveToFile();
     finish();
     return;
@@ -837,11 +923,17 @@ void SettingsActivity::toggleCurrentSetting() {
     openSleepTimeoutPicker();
     return;
   }
+  if (setting.value16Ptr == &CrossPointSettings::frontlightScheduleStart ||
+      setting.value16Ptr == &CrossPointSettings::frontlightScheduleEnd) {
+    openFrontlightScheduleTimePicker(setting.value16Ptr, setting.nameId);
+    return;
+  }
   if (setting.valuePtr == &CrossPointSettings::lineHeightPercent) {
     openLineHeightPicker();
     return;
   }
-  if (setting.valuePtr == &CrossPointSettings::screenMargin) {
+  if (setting.valuePtr == &CrossPointSettings::screenMarginVertical ||
+      setting.valuePtr == &CrossPointSettings::screenMarginHorizontal) {
     openScreenMarginPicker(setting);
     return;
   }
@@ -885,6 +977,7 @@ void SettingsActivity::toggleCurrentSetting() {
     if (optionCount == 0) return;
     const uint8_t nextIndex = (currentIndex + 1) % static_cast<uint8_t>(optionCount);
     SETTINGS.*(setting.valuePtr) = enumRawValueForDisplayIndex(setting, nextIndex);
+    QuickActions::settingChanged(SETTINGS, setting.valuePtr);
   } else if (setting.type == SettingType::ENUM && setting.valueGetter && setting.valueSetter) {
     if (setting.nameId == StrId::STR_FONT_FAMILY) {
       // Launch font selection submenu instead of cycling
@@ -961,16 +1054,22 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::ClockSync:
         startActivityForResult(std::make_unique<ClockSyncActivity>(renderer, mappedInput), resultHandler);
         break;
+      case SettingAction::QuickActions:
+        startActivityForResult(std::make_unique<QuickActionsActivity>(renderer, mappedInput), resultHandler);
+        break;
       case SettingAction::ReaderFontOptions:
       case SettingAction::ReaderPageLayout:
       case SettingAction::ControlsPowerButton:
       case SettingAction::ControlsFrontButtons:
       case SettingAction::ControlsSideButtons:
+      case SettingAction::ControlsTapsGestures:
+      case SettingAction::ControlsTwoFingerSwipe:
       case SettingAction::SystemDevice:
       case SettingAction::SystemFilesCache:
       case SettingAction::SystemReadingStats:
       case SettingAction::SystemGlobalStats:
       case SettingAction::DisplaySleepScreen:
+      case SettingAction::DisplayFrontlight:
       case SettingAction::None:
         // Do nothing
         break;
@@ -984,6 +1083,10 @@ void SettingsActivity::toggleCurrentSetting() {
   }
 
   syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
+  if (isTwoFingerSwipeSetting(setting.valuePtr)) {
+    CrossPointSettings::normalizeTwoFingerSwipeActions(SETTINGS, setting.valuePtr);
+  }
+  QuickActions::settingChanged(SETTINGS, setting.valuePtr);
   SETTINGS.saveToFile();
   // Apply this while `setting` still refers to the current list; rebuilding
   // below clears its backing vector and invalidates the reference.
@@ -1037,7 +1140,7 @@ void SettingsActivity::openLineHeightPicker() {
   startActivityForResult(
       std::make_unique<IntervalSelectionActivity>(
           renderer, mappedInput, "LineHeightInterval", StrId::STR_LINE_SPACING, SETTINGS.lineHeightPercent,
-          CrossPointSettings::MIN_LINE_HEIGHT_PERCENT, CrossPointSettings::MAX_LINE_HEIGHT_PERCENT, 1, 10,
+          CrossPointSettings::MIN_LINE_HEIGHT_PERCENT, CrossPointSettings::MAX_LINE_HEIGHT_PERCENT, 1, 5,
           StrId::STR_NONE_OPT, /*readerActivity=*/false,
           /*allowPowerAsConfirm=*/false, /*ignoreInitialConfirmRelease=*/false, /*showPercentValue=*/true,
           StrId::STR_NONE_OPT, /*overrideDisabledReaderTouchscreen=*/false, /*showTouchHeaderBackButton=*/true),
@@ -1049,6 +1152,19 @@ void SettingsActivity::openLineHeightPicker() {
         }
         requestUpdate();
       });
+}
+
+void SettingsActivity::openFrontlightScheduleTimePicker(uint16_t CrossPointSettings::* const valuePtr,
+                                                        const StrId titleId) {
+  const uint16_t storedValue = SETTINGS.*valuePtr;
+  startActivityForResult(std::make_unique<FrontlightTimePickerActivity>(renderer, mappedInput, titleId, storedValue),
+                         [this, valuePtr](const ActivityResult& result) {
+                           if (!result.isCancelled) {
+                             SETTINGS.*valuePtr = static_cast<uint16_t>(std::get<IntervalResult>(result.data).value);
+                             SETTINGS.saveToFile();
+                           }
+                           requestUpdate();
+                         });
 }
 
 void SettingsActivity::openIdleTimeThresholdPicker() {
@@ -1083,7 +1199,7 @@ std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
   if (setting.type == SettingType::ENUM && setting.valueGetter) {
     return settingEnumOptionLabel(setting, setting.valueGetter());
   }
-  if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
+  if (setting.type == SettingType::VALUE && (setting.valuePtr != nullptr || setting.value16Ptr != nullptr)) {
     return formatSettingValue(setting);
   }
   if (setting.type == SettingType::ACTION && setting.action == SettingAction::Language) {
@@ -1103,6 +1219,9 @@ void SettingsActivity::settingsScreen(UiApp::ScreenType& screen, void* user) {
 
 void SettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
   const auto& metrics = UITheme::getInstance().getMetrics();
+#if CROSSINK_APP_CAP_TOUCH
+  const bool landscapeTouch = useLandscapeTouchLayout(renderer);
+#endif
   // Content starts directly below the compact header divider.
   screen.setContentMargin(fui::Insets{static_cast<int16_t>(settingsTabBarTop(metrics)), 0,
                                       static_cast<int16_t>(metrics.buttonHintsHeight), 0});
@@ -1173,12 +1292,39 @@ void SettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
     tabStyles.active = tabStyles.selected;
     tabProps.tabStyles = tabStyles;
   }
-  const fui::Rect tabRect = screen.takeTop(tabBand);
-  if (!roundedRaffTabs && !borderedTabs && tabsFocused) {
-    screen.target().fill(tabRect, fui::Paint::dither(fui::Color::LightGray));
+#if CROSSINK_APP_CAP_TOUCH
+  if (landscapeTouch) {
+    // Landscape has width to spare but little vertical room. Keep categories
+    // in a left rail so the settings list can use the full remaining height.
+    const fui::Rect body = screen.body();
+    const int16_t railWidth = static_cast<int16_t>(body.width / 4);
+    int16_t tabY = body.y;
+    for (int i = 0; i < categoryCount; ++i) {
+      const int16_t tabHeight =
+          static_cast<int16_t>(i == categoryCount - 1 ? body.bottom() - tabY : body.height / categoryCount);
+      const fui::Rect tabRect{body.x, tabY, railWidth, tabHeight};
+      fui::TabBarProps railProps = tabProps;
+      railProps.tabs = &tabs[i];
+      railProps.count = 1;
+      if (!roundedRaffTabs && !borderedTabs && tabsFocused) {
+        screen.target().fill(tabRect, fui::Paint::dither(fui::Color::LightGray));
+      }
+      drawUiTabBar(screen, railProps, tabRect, metrics.tabBarAppearance);
+      tabY = static_cast<int16_t>(tabY + tabHeight);
+    }
+    screen.target().fill(fui::Rect{static_cast<int16_t>(body.x + railWidth - 1), body.y, 1, body.height},
+                         fui::Paint::solid(fui::Color::Black));
+    screen.insetContent(fui::Insets{0, 0, 0, static_cast<int16_t>(railWidth + metrics.verticalSpacing)});
+  } else
+#endif
+  {
+    const fui::Rect tabRect = screen.takeTop(tabBand);
+    if (!roundedRaffTabs && !borderedTabs && tabsFocused) {
+      screen.target().fill(tabRect, fui::Paint::dither(fui::Color::LightGray));
+    }
+    drawUiTabBar(screen, tabProps, tabRect, metrics.tabBarAppearance);
+    screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
   }
-  drawUiTabBar(screen, tabProps, tabRect, metrics.tabBarAppearance);
-  screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
 
   const StrId submenuTitle = activeSubmenuTitleId();
   if (submenuTitle != StrId::STR_NONE_OPT) {
@@ -1202,8 +1348,12 @@ void SettingsActivity::buildSettingsScreen(UiApp::ScreenType& screen) {
     values[i] = settingValueText(settings[i]);
     const bool isSectionHeader = settings[i].type == SettingType::SECTION_HEADER;
     fui::ListItem item;
+    const fui::BitmapRef directionIcon = twoFingerSwipeIcon(settings[i].nameId);
+    const fui::BitmapRef endpointIcon = frontlightScheduleEndpointIcon(settings[i]);
+    const fui::BitmapRef itemIcon = directionIcon ? directionIcon : endpointIcon;
     item.label = isSectionHeader ? uiListSectionHeaderLabel(values[i], I18N.get(settings[i].nameId))
-                                 : I18N.get(settings[i].nameId);
+                                 : (directionIcon ? "" : I18N.get(settings[i].nameId));
+    item.icon = itemIcon;
     if (!isSectionHeader && !values[i].empty()) item.value = values[i].c_str();
     item.isHeader = isSectionHeader;
     item.actionValue = static_cast<int16_t>(i);
@@ -1265,11 +1415,19 @@ void SettingsActivity::render(RenderLock&&) {
                       (*currentSettings)[selectedSettingIndex - 1].valuePtr == &CrossPointSettings::lineHeightPercent ||
                       (*currentSettings)[selectedSettingIndex - 1].valuePtr ==
                           &CrossPointSettings::readingIdleTimeThresholdUnits ||
-                      (*currentSettings)[selectedSettingIndex - 1].valuePtr == &CrossPointSettings::screenMargin)
+                      (*currentSettings)[selectedSettingIndex - 1].valuePtr ==
+                          &CrossPointSettings::screenMarginVertical ||
+                      (*currentSettings)[selectedSettingIndex - 1].valuePtr ==
+                          &CrossPointSettings::screenMarginHorizontal ||
+                      (*currentSettings)[selectedSettingIndex - 1].value16Ptr ==
+                          &CrossPointSettings::frontlightScheduleStart ||
+                      (*currentSettings)[selectedSettingIndex - 1].value16Ptr ==
+                          &CrossPointSettings::frontlightScheduleEnd)
                  ? tr(STR_SELECT)
                  : tr(STR_TOGGLE));
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels =
+      mappedInput.mapLabels(mappedInput.withBackArrow(tr(STR_BACK)), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   // Always use standard refresh for settings screen

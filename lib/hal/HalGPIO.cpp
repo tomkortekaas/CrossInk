@@ -8,8 +8,14 @@
 #include <XteinkDetect.h>
 #include <esp_sleep.h>
 
+#include <algorithm>
+
 #if FREEINK_MCU_S3
 #include <soc/usb_serial_jtag_reg.h>
+#endif
+
+#if FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE
+extern "C" bool tud_mounted(void);
 #endif
 
 // Global HalGPIO instance
@@ -198,6 +204,38 @@ unsigned long HalGPIO::getPowerButtonHeldTime() const { return inputMgr.getPower
 #if CROSSINK_APP_CAP_TOUCH
 bool HalGPIO::hasTouch() const { return inputMgr.hasTouch(); }
 
+bool HalGPIO::supportsMultiTouch() const { return inputMgr.supportsMultiTouch(); }
+
+HalGPIO::TouchSnapshot HalGPIO::getTouchSnapshot() const {
+  TouchSnapshot result;
+  if (!supportsMultiTouch()) return result;
+
+  const auto source = inputMgr.getTouchSnapshot();
+  const auto& touch = BoardConfig::ACTIVE.touch;
+  const uint16_t width = touch.rawMaxX > touch.rawMinX ? touch.rawMaxX - touch.rawMinX : 1;
+  const uint16_t height = touch.rawMaxY > touch.rawMinY ? touch.rawMaxY - touch.rawMinY : 1;
+  result.count = std::min<uint8_t>(source.count, TouchSnapshot::MAX_CONTACTS);
+  result.reportedCount = source.reportedCount;
+  for (uint8_t i = 0; i < result.count; ++i) {
+    const auto& point = source.points[i];
+    result.contacts[i].id = point.id;
+    result.contacts[i].nx = std::clamp(static_cast<float>(point.point.x) / width, 0.0f, 1.0f);
+    result.contacts[i].ny = std::clamp(static_cast<float>(point.point.y) / height, 0.0f, 1.0f);
+  }
+  return result;
+}
+
+bool HalGPIO::wasCompletedMultiTouchSwipe(CompletedMultiTouchSwipe& swipe) const {
+  if (!supportsMultiTouch()) return false;
+  return inputMgr.wasMultiTouchSwipe(swipe.contactCount, swipe.nxStart, swipe.nyStart, swipe.nxEnd, swipe.nyEnd,
+                                     swipe.durationMs);
+}
+
+bool HalGPIO::wasCompletedMultiTouchRotation(CompletedMultiTouchRotation& rotation) const {
+  if (!supportsMultiTouch()) return false;
+  return inputMgr.wasMultiTouchRotation(rotation.degrees, rotation.nxCenter, rotation.nyCenter, rotation.durationMs);
+}
+
 bool HalGPIO::hasHomeKey() const { return BoardConfig::hasHomeKey(); }
 
 bool HalGPIO::wasHomeKeyPressed() const { return inputMgr.wasHomeKeyPressed(); }
@@ -215,6 +253,10 @@ bool HalGPIO::wasTouchReleased() const { return inputMgr.wasTouchReleased(); }
 bool HalGPIO::isTouchTapCandidate(float& nx, float& ny, unsigned long& heldMs) const {
   return inputMgr.isTouchTapCandidate(nx, ny, heldMs);
 }
+
+bool HalGPIO::wasTouchLongPress(float& nx, float& ny) const { return inputMgr.wasTouchLongPress(nx, ny); }
+
+void HalGPIO::suppressTouchContact() { inputMgr.suppressTouchContact(); }
 
 bool HalGPIO::isTouchHeldAt(float& nx, float& ny) const { return inputMgr.isTouchHeldAt(nx, ny); }
 
@@ -292,8 +334,19 @@ bool HalGPIO::verifyPowerButtonWakeup(uint16_t requiredDurationMs, bool shortPre
 // stays invisible — on boards with no VBUS line (X4 Pro, see
 // xteink-x4pro-support.md) this is the only observable USB signal.
 static bool usbHostSofActive() {
-  static uint32_t lastFrame = 0xFFFFFFFF;
+  static uint32_t lastFrame = 0;
   static unsigned long lastAdvanceMs = 0;
+  static bool seeded = false;
+  if (!seeded) {
+    // First probe must not fabricate a connection: getWakeupReason() calls this
+    // at boot, and a false positive turns a power-button wake (POWERON reset)
+    // into AfterUSBPower, which goes straight back to deep sleep — the device
+    // never wakes. Seed the counter and wait one SOF period out; a real host
+    // clocks SOFs at 1 kHz, so 3 ms guarantees advancement when attached.
+    seeded = true;
+    lastFrame = REG_READ(USB_SERIAL_JTAG_FRAM_NUM_REG);
+    delay(3);
+  }
   const uint32_t frame = REG_READ(USB_SERIAL_JTAG_FRAM_NUM_REG);
   if (frame != lastFrame) {
     lastFrame = frame;
@@ -312,6 +365,11 @@ bool HalGPIO::isUsbConnected() const {
     static const BatteryMonitor battery;
     return battery.isCharging();
   }
+#endif
+#if FREEINK_DEVICE_X4PRO && !ARDUINO_USB_MODE
+  // X4 Pro uses native TinyUSB for its composite CDC+MSC device. The mounted
+  // state is the reliable bus-presence signal for this OTG configuration.
+  return tud_mounted();
 #endif
   if (BoardConfig::ACTIVE.usbDetect >= 0) {
     return digitalRead(BoardConfig::ACTIVE.usbDetect) == HIGH;

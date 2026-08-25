@@ -8,7 +8,9 @@
 
 #include <algorithm>
 
+#include "GlobalActions.h"
 #include "MappedInputManager.h"
+#include "ReaderStatusBarTapTarget.h"
 #include "components/UITheme.h"
 
 namespace ReaderUtils {
@@ -19,8 +21,8 @@ constexpr uint8_t STATUS_BAR_TEXT_PADDING = 3;
 // Gap between the top clock status bar band and the first line of book text.
 // Signed so negative values pull the text up toward the clock (unsigned would wrap
 // a negative to a huge positive). Note the book-text top margin is
-// std::max(screenMargin, reservedClockHeight + TOP_CLOCK_TEXT_PADDING), so this only
-// bites once reservedClockHeight + padding drops below the screen-margin setting.
+// std::max(screenMarginVertical, reservedClockHeight + TOP_CLOCK_TEXT_PADDING), so this only
+// bites once reservedClockHeight + padding drops below the vertical-margin setting.
 constexpr int8_t TOP_CLOCK_TEXT_PADDING = 0;
 
 inline GfxRenderer::Orientation toRendererOrientation(const uint8_t orientation) {
@@ -59,13 +61,13 @@ inline int getTopClockStatusBarHeight() {
   return std::max(UITheme::getStatusBarHeight(), metrics.statusBarVerticalMargin);
 }
 
-inline int getTopClockStatusBarReservedHeight() {
+inline int getTopClockStatusBarReservedHeight(const GfxRenderer& renderer) {
   const int statusBarHeight = getTopClockStatusBarHeight();
   if (statusBarHeight <= 0) {
     return 0;
   }
 
-  return UITheme::getInstance().getMetrics().topPadding + statusBarHeight;
+  return UITheme::getInstance().getMetrics().topPadding + UITheme::getTopStatusBarInset(renderer) + statusBarHeight;
 }
 
 inline uint8_t rotatedOrientation(const uint8_t orientation, const bool clockwise) {
@@ -105,8 +107,15 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
     return result;
   }
 
+  const auto pageTurnGesture = static_cast<CrossPointSettings::PAGE_TURN_GESTURE>(SETTINGS.pageTurnGesture);
+  const bool allowsSwipe =
+      pageTurnGesture == CrossPointSettings::TAP_AND_SWIPE || pageTurnGesture == CrossPointSettings::SWIPE_ONLY;
+  const bool allowsTap = pageTurnGesture == CrossPointSettings::TAP_AND_SWIPE ||
+                         pageTurnGesture == CrossPointSettings::TAP_ONLY ||
+                         pageTurnGesture == CrossPointSettings::INVERTED_TAP;
+
   const auto swipe = input.wasSwipe();
-  if (swipe != MappedInputManager::SwipeDir::None) {
+  if (allowsSwipe && swipe != MappedInputManager::SwipeDir::None) {
     // A horizontal reader swipe turns pages wherever it starts. Edge-only
     // navigation remains handled by the activities that explicitly use it.
     result.prev = swipe == MappedInputManager::SwipeDir::Right;
@@ -122,25 +131,48 @@ inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const Mapp
   result.tapped = true;
   result.x = x;
   result.y = y;
+  result.heldMs = input.getHeldTime();
   // Reserve the top/bottom gesture bands for vertical edge swipes. If the touch
   // controller loses part of a short edge swipe, do not reinterpret it as a page tap.
-  if (input.isInVerticalEdgeGestureZone(y)) {
+  if (!allowsTap || input.isInVerticalEdgeGestureZone(y)) {
+    return result;
+  }
+
+  if (pageTurnGesture == CrossPointSettings::INVERTED_TAP) {
+    const int nextZoneWidth = (width * 2) / 3;
+    result.next = x < nextZoneWidth;
+    result.prev = x >= nextZoneWidth;
     return result;
   }
 
   const int previousZoneWidth = width / 3;
   result.prev = x < previousZoneWidth;
   result.next = x >= previousZoneWidth;
-  result.heldMs = input.getHeldTime();
   return result;
 #endif
+}
+
+inline bool isBottomStatusBarTap(const GfxRenderer& renderer, const int y, const int statusBarHeight) {
+  int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
+  renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
+                                   &orientedMarginLeft);
+  return ReaderStatusBarTapTarget::containsBottom(y, renderer.getScreenHeight(), orientedMarginBottom, statusBarHeight);
+}
+
+inline bool isTopStatusBarTap(const GfxRenderer& renderer, const int y, const int statusBarHeight) {
+  int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
+  renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
+                                   &orientedMarginLeft);
+  return ReaderStatusBarTapTarget::containsTop(y, renderer.getScreenHeight(), orientedMarginTop, statusBarHeight);
 }
 
 // Reader menu opens on its board-specific vertical swipe anywhere on the open
 // page, or a long press of the capacitive home key (a short home tap still goes home).
 inline bool isTouchMenuGesture(const MappedInputManager& input) {
-  return SETTINGS.touchReaderControls && input.hasTouch() &&
-         (input.wasReaderMenuGesture() || input.wasReaderMenuHold());
+  // The capacitive Home key is independent from screen touch. Its configured
+  // long-press reader-menu action must still work when screen touch is disabled.
+  return input.wasReaderMenuHold() ||
+         (SETTINGS.touchReaderControls && input.hasTouch() && input.wasReaderMenuGesture());
 }
 
 // X4 Pro opens the reader menu with an upward swipe. Its top-edge downward
@@ -181,7 +213,12 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
 // renderer.waitRefreshComplete() and must rebuild the differential baseline
 // before the next page turn (the tiled grayscale cleanup does).
 inline void displayWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntilFullRefresh, bool async = false) {
-  const auto mode = (pagesUntilFullRefresh <= 1) ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH;
+  // A negative countdown is reserved for the explicit Refresh Screen shortcut.
+  // Regular cadence cleanup remains a HALF refresh at 1. The X4 retains its
+  // prior clean HALF waveform; other panels use their full waveform.
+  const auto mode = pagesUntilFullRefresh < 0    ? manualScreenRefreshMode()
+                    : pagesUntilFullRefresh <= 1 ? HalDisplay::HALF_REFRESH
+                                                 : HalDisplay::FAST_REFRESH;
   if (async) {
     renderer.displayBufferAsync(mode);
   } else {

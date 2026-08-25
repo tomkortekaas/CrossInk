@@ -35,6 +35,13 @@ class WordSelectNavigator {
     uint16_t textLen = 0;
     uint16_t lookupOffset = 0;
     uint16_t lookupLen = 0;
+    // Ordinal among all visible words on the source reader page. This remains
+    // stable when dictionary lookup excludes punctuation-only tokens.
+    uint16_t pageWordOrdinal = 0;
+    // Byte offset inside the original PageLine word. Dash-separated tokens are
+    // exposed as independent selectable fragments while retaining this link to
+    // the canonical reader word for clipping.
+    uint16_t sourceWordByteOffset = 0;
     int16_t screenX = 0;
     int16_t screenY = 0;
     int16_t width = 0;
@@ -128,6 +135,15 @@ class WordSelectNavigator {
   // Flat index of the current cursor word. -1 if empty.
   int getCurrentFlatIndex() const;
 
+  // Range selected for the current lookup. A completed multi-select remains
+  // available until its caller consumes it, even though the visual mode exits.
+  bool getLookupSelectionRange(int& fromIdx, int& toIdx) const;
+  size_t getLookupSelectionWordCount() const;
+  void clearCompletedSelection() {
+    completedSelectionStart = -1;
+    completedSelectionEnd = -1;
+  }
+
   // Word at flat index idx. nullptr if out of bounds.
   const WordInfo* getWordAt(int idx) const;
 
@@ -161,7 +177,7 @@ class WordSelectNavigator {
   // Draw inverted highlight for selected word(s).  Uses WordInfo::fontId.
   // In multi-select: highlights the anchor..cursor range.
   // In single-select: highlights the cursor word (+ hyphenated continuation if any).
-  void renderHighlight(const GfxRenderer& renderer, int lineHeight) const;
+  void renderHighlight(const GfxRenderer& renderer, int lineHeight, bool foregroundBlack) const;
 
   // Compute the union of the previous and current highlight bounding rectangles,
   // padded by 2 px on every side to cover renderHighlight's fillRect border.
@@ -184,7 +200,7 @@ class WordSelectNavigator {
   //
   // Mutates internal snapshot state, so this method is non-const.
   std::optional<Rect> renderHighlightDifferential(GfxRenderer& renderer, int lineHeight, int prevWordIdx,
-                                                  int currWordIdx);
+                                                  int currWordIdx, bool foregroundBlack);
 
   // Pixel snapshot for one rectangular framebuffer region. Storage is injected
   // by the owning activity, allowing stacked dictionary activities to share the
@@ -290,6 +306,8 @@ class WordSelectNavigator {
   bool inMultiSelectMode = false;
   bool confirmReleaseConsumed = false;
   int anchorFlatIndex = -1;
+  int completedSelectionStart = -1;
+  int completedSelectionEnd = -1;
   bool touchDragCursorVisible = false;
 
   int findClosestWord(int targetRow) const;
@@ -307,12 +325,13 @@ class WordSelectNavigator {
 
   // Single-word highlight draw. Used by both renderHighlight (for each word it
   // chooses to highlight) and renderHighlightDifferential.
-  void drawSingleHighlight(const GfxRenderer& renderer, int lineHeight, int wordIndex) const;
-  void drawTouchDragCursor(const GfxRenderer& renderer, int lineHeight, int wordIndex) const;
+  void drawSingleHighlight(const GfxRenderer& renderer, int lineHeight, int wordIndex, bool foregroundBlack) const;
+  void drawTouchDragCursor(const GfxRenderer& renderer, int lineHeight, int wordIndex, bool foregroundBlack) const;
 
   // Draw the hyphenated continuation partner(s) of w when they fall outside [lo, hi].
   // No-op when w is nullptr or w has no continuation links.
-  void drawContinuationsIfOutside(const GfxRenderer& renderer, int lineHeight, const WordInfo* w, int lo, int hi) const;
+  void drawContinuationsIfOutside(const GfxRenderer& renderer, int lineHeight, const WordInfo* w, int lo, int hi,
+                                  bool foregroundBlack) const;
 
   // Padded bounding rectangle for one word, matching renderHighlight's ±2 padding.
   // Returns Rect{0,0,0,0} when wordIndex is invalid.
