@@ -33,7 +33,7 @@ void label(DashboardV3Canvas& canvas, const Rect bounds, const char* value, cons
 
 void formatPercent(const uint8_t value, char (&out)[8]) {
   if (value == UINT8_MAX) {
-    std::snprintf(out, sizeof(out), "—");
+    std::snprintf(out, sizeof(out), "-");
   } else {
     std::snprintf(out, sizeof(out), "%u%%", static_cast<unsigned>(value));
   }
@@ -90,8 +90,8 @@ void uppercaseAscii(const char* input, char (&output)[8]) {
 // shown rather than an invented date (same rule the date widget uses).
 void formatDateColumn(const uint64_t generatedAt, char (&day)[8], char (&dateLabel)[16]) {
   if (generatedAt == 0) {
-    std::snprintf(day, sizeof(day), "—");
-    std::snprintf(dateLabel, sizeof(dateLabel), "— —");
+    std::snprintf(day, sizeof(day), "-");
+    std::snprintf(dateLabel, sizeof(dateLabel), "- -");
     return;
   }
   const int64_t days = static_cast<int64_t>(generatedAt / 86400ULL);
@@ -108,16 +108,15 @@ void formatDateColumn(const uint64_t generatedAt, char (&day)[8], char (&dateLab
 
 void formatSteps(const uint16_t steps, const uint16_t stepGoal, char (&out)[24]) {
   if (steps == UINT16_MAX) {
-    std::snprintf(out, sizeof(out), "—");
+    std::snprintf(out, sizeof(out), "-");
     return;
   }
   if (stepGoal == UINT16_MAX) {
     std::snprintf(out, sizeof(out), "%u", static_cast<unsigned>(steps));
     return;
   }
-  std::snprintf(out, sizeof(out), "%u.%03u / %u.%03u", static_cast<unsigned>(steps / 1000),
-                static_cast<unsigned>(steps % 1000), static_cast<unsigned>(stepGoal / 1000),
-                static_cast<unsigned>(stepGoal % 1000));
+  std::snprintf(out, sizeof(out), "%u.%03u", static_cast<unsigned>(steps / 1000),
+                static_cast<unsigned>(steps % 1000));
 }
 
 void renderHeader(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3Package& package,
@@ -145,7 +144,7 @@ void renderHeader(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3P
   if (package.weather.conditionIconId != 0) {
     canvas.icon(package.weather.conditionIconId, {weatherX + 12, rect.y + 18, 32, 32}, false);
   }
-  char temperature[12] = "—";
+  char temperature[12] = "-";
   if (package.weather.currentCelsius != INT8_MIN) {
     std::snprintf(temperature, sizeof(temperature), "%d°", package.weather.currentCelsius);
   }
@@ -160,7 +159,7 @@ void renderHeader(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3P
   // Column 3 - wind.
   const int windX = rect.x + 2 * columnWidth;
   canvas.icon(ICON_WIND, {windX + 14, rect.y + 18, 32, 32}, false);
-  char wind[12] = "—";
+  char wind[12] = "-";
   if (package.weather.windKilometersPerHour != UINT8_MAX) {
     std::snprintf(wind, sizeof(wind), "%u", static_cast<unsigned>(package.weather.windKilometersPerHour));
   }
@@ -185,7 +184,7 @@ void renderHeader(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3P
     caption = "MORGEN OP";
     sunIconId = ICON_SUNRISE;
   }
-  char sunTime[8] = "—";
+  char sunTime[8] = "-";
   if (sunMinute != UINT16_MAX) {
     std::snprintf(sunTime, sizeof(sunTime), "%02u:%02u", static_cast<unsigned>(sunMinute / 60),
                   static_cast<unsigned>(sunMinute % 60));
@@ -199,7 +198,7 @@ void renderHeader(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3P
 
 void renderRain(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3Package& package) {
   label(canvas, {rect.x + PAD, rect.y + 12, 150, 20}, "REGEN", FontRole::Utility10, true);
-  const char* heating = !package.heatingKnown ? "VERWARMING —" : package.heatingAllowed ? "VERWARMING AAN" : "VERWARMING UIT";
+  const char* heating = !package.heatingKnown ? "VERWARMING -" : package.heatingAllowed ? "VERWARMING AAN" : "VERWARMING UIT";
   label(canvas, {rect.x + rect.width - 190, rect.y + 12, 174, 20}, heating, FontRole::Utility10, true, true,
         TextAlign::Right);
   const int chartLeft = rect.x + PAD;
@@ -217,7 +216,7 @@ void renderRain(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3Pac
 void renderTraffic(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3Package& package) {
   // Left subject - the commute: the destination as caption, travel minutes as
   // the dominant value.
-  char destination[MAX_DESTINATION_BYTES + 1] = "—";
+  char destination[MAX_DESTINATION_BYTES + 1] = "-";
   if (package.traffic.destinationLength > 0) {
     std::memcpy(destination, package.traffic.destination.data(), package.traffic.destinationLength);
     destination[package.traffic.destinationLength] = '\0';
@@ -225,7 +224,7 @@ void renderTraffic(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3
   const int leftX = rect.x + PAD;
   canvas.icon(ICON_MAP_PIN, {leftX, rect.y + 12, 32, 32}, true);
   label(canvas, {leftX + 40, rect.y + 10, 190, 20}, destination, FontRole::Utility10, true);
-  char travel[16] = "—";
+  char travel[16] = "-";
   if (package.traffic.travelMinutes != UINT16_MAX) {
     std::snprintf(travel, sizeof(travel), "%u MIN", static_cast<unsigned>(package.traffic.travelMinutes));
   }
@@ -239,7 +238,7 @@ void renderTraffic(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3
   canvas.icon(ICON_TRAFFIC_CONE, {rightX - 48, rect.y + 12, 32, 32}, true);
   label(canvas, {rightX - 246, rect.y + 10, 190, 20}, "KM FILE", FontRole::Utility10, true, true,
         TextAlign::Right);
-  char congestion[20] = "—";
+  char congestion[20] = "-";
   if (package.traffic.nationalCongestionKilometers != UINT16_MAX) {
     std::snprintf(congestion, sizeof(congestion), "%u",
                   static_cast<unsigned>(package.traffic.nationalCongestionKilometers));
@@ -256,7 +255,7 @@ void renderBody(DashboardV3Canvas& canvas, const DashboardV3Rects& layout, const
   canvas.line(layout.bodyLeft.x + PAD, layout.bodyLeft.y + 36, layout.bodyLeft.x + layout.bodyLeft.width - PAD,
               layout.bodyLeft.y + 36, true);
 
-  constexpr int timelineX = 72;
+  constexpr int timelineX = 88;
   constexpr int agendaStartY = 52;
   constexpr int agendaRowHeight = 76;
   if (package.agendaCount > 0) {
@@ -273,14 +272,14 @@ void renderBody(DashboardV3Canvas& canvas, const DashboardV3Rects& layout, const
     copyField(row.title, row.titleLength, title);
     char detail[MAX_AGENDA_DETAIL_BYTES + 1];
     copyField(row.detail, row.detailLength, detail);
-    label(canvas, {layout.bodyLeft.x + PAD, rowY, 48, 18}, time, FontRole::Utility10, true, true,
+    label(canvas, {layout.bodyLeft.x + PAD, rowY, 64, 18}, time, FontRole::Utility10, true, true,
           TextAlign::Right);
     canvas.fill({layout.bodyLeft.x + timelineX - 3, rowY + 5, 7, 7}, true);
-    if (index == 0) canvas.rect({layout.bodyLeft.x + 78, rowY - 6, layout.bodyLeft.width - 94, 54}, true);
-    label(canvas, {layout.bodyLeft.x + 84, rowY, layout.bodyLeft.width - 100, 24}, title, FontRole::Heading14,
+    if (index == 0) canvas.rect({layout.bodyLeft.x + 94, rowY - 6, layout.bodyLeft.width - 110, 54}, true);
+    label(canvas, {layout.bodyLeft.x + 100, rowY, layout.bodyLeft.width - 116, 24}, title, FontRole::Heading14,
           index == 0);
     if (detail[0] != '\0') {
-      label(canvas, {layout.bodyLeft.x + 84, rowY + 24, layout.bodyLeft.width - 100, 18}, detail,
+      label(canvas, {layout.bodyLeft.x + 100, rowY + 24, layout.bodyLeft.width - 116, 18}, detail,
             FontRole::Utility10);
     }
   }
@@ -318,27 +317,29 @@ void renderBody(DashboardV3Canvas& canvas, const DashboardV3Rects& layout, const
   label(canvas, {layout.bodyRight.x + layout.bodyRight.width - PAD - 130, stepsY + 4, 130, 18}, stepsValue,
         FontRole::Utility10, true, true, TextAlign::Right);
 
-  const int marketsHeadingY = stepsY + 44;
-  label(canvas, {layout.bodyRight.x + PAD, marketsHeadingY, 160, 24}, "MARKTEN", FontRole::Heading14, true);
-  int marketY = marketsHeadingY + 28;
+  int nextSectionY = stepsY + 40;
+  if (package.marketCount > 0) {
+    label(canvas, {layout.bodyRight.x + PAD, nextSectionY, 160, 24}, "MARKTEN", FontRole::Heading14, true);
+    nextSectionY += 28;
+  }
   for (size_t index = 0; index < package.marketCount; ++index) {
     const MarketRow& row = package.markets[index];
     char market[MAX_MARKET_LABEL_BYTES + 1];
     copyField(row.label, row.labelLength, market);
-    char change[16] = "—";
+    char change[16] = "-";
     if (row.changeBasisPoints != INT16_MIN) {
       const int value = row.changeBasisPoints;
       std::snprintf(change, sizeof(change), "%c%d,%02d%%", value >= 0 ? '+' : '-', std::abs(value) / 100,
                     std::abs(value) % 100);
     }
-    label(canvas, {layout.bodyRight.x + PAD, marketY, 100, 20}, market, FontRole::Utility10, true);
-    label(canvas, {layout.bodyRight.x + 118, marketY, layout.bodyRight.width - 134, 20}, change,
+    label(canvas, {layout.bodyRight.x + PAD, nextSectionY, 100, 20}, market, FontRole::Utility10, true);
+    label(canvas, {layout.bodyRight.x + 118, nextSectionY, layout.bodyRight.width - 134, 20}, change,
           FontRole::Utility10, true, true, TextAlign::Right);
-    marketY += 26;
+    nextSectionY += 26;
   }
 
   if (package.chatCount == 0) return;
-  const int chatsHeadingY = marketsHeadingY + 108;
+  const int chatsHeadingY = nextSectionY + (package.marketCount > 0 ? 8 : 0);
   label(canvas, {layout.bodyRight.x + PAD, chatsHeadingY, 170, 24}, "WHATSAPP", FontRole::Heading14, true);
   canvas.icon(65, {layout.bodyRight.x + layout.bodyRight.width - 48, chatsHeadingY, 24, 24}, true);
   char unread[12];
@@ -350,24 +351,19 @@ void renderBody(DashboardV3Canvas& canvas, const DashboardV3Rects& layout, const
     const ChatRow& row = package.chats[index];
     char name[MAX_CHAT_NAME_BYTES + 1];
     copyField(row.name, row.nameLength, name);
-    char count[10];
-    std::snprintf(count, sizeof(count), "%u", static_cast<unsigned>(row.unreadCount));
     char time[8];
     formatMinute(row.lastMessageMinuteOfDay, time);
     label(canvas, {layout.bodyRight.x + PAD, chatY, 130, 20}, name, FontRole::Utility10, true);
-    label(canvas, {layout.bodyRight.x + 150, chatY, layout.bodyRight.width - 166, 20}, count, FontRole::Utility10,
-          true, true, TextAlign::Right);
-    label(canvas, {layout.bodyRight.x + 150, chatY + 14, layout.bodyRight.width - 166, 18}, time,
+    label(canvas, {layout.bodyRight.x + 150, chatY, layout.bodyRight.width - 166, 20}, time,
           FontRole::Utility10, false, true, TextAlign::Right);
-    chatY += 34;
+    chatY += 26;
   }
 }
 
 void renderFooter(DashboardV3Canvas& canvas, const Rect rect) {
-  label(canvas, {rect.x + PAD, rect.y + 14, rect.width - 2 * PAD, 24}, "Verbeelding is belangrijker dan kennis.",
-        FontRole::Heading14, true, true, TextAlign::Center);
-  label(canvas, {rect.x + PAD, rect.y + 38, rect.width - 2 * PAD, 16}, "— Albert Einstein", FontRole::Utility10,
-        false, true, TextAlign::Center);
+  label(canvas, {rect.x + PAD, rect.y + 8, rect.width - 2 * PAD, 24}, "Verbeelding is belangrijker dan kennis.",
+        FontRole::Heading14, true);
+  label(canvas, {rect.x + PAD, rect.y + 34, rect.width - 2 * PAD, 16}, "- Albert Einstein", FontRole::Utility10);
 }
 
 }  // namespace

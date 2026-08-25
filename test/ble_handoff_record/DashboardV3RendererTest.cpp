@@ -19,6 +19,7 @@ struct Operation {
   std::string text;
   bool black = true;
   uint8_t iconId = 0;
+  dashboard::v3::TextAlign align = dashboard::v3::TextAlign::Left;
 };
 
 class RecordingCanvas final : public dashboard::v3::DashboardV3Canvas {
@@ -41,7 +42,7 @@ class RecordingCanvas final : public dashboard::v3::DashboardV3Canvas {
   }
 
   void text(const dashboard::v3::TextSpec& spec, const char* value) override {
-    operations.push_back({Operation::Kind::Text, spec.bounds, value, spec.black});
+    operations.push_back({Operation::Kind::Text, spec.bounds, value, spec.black, 0, spec.align});
   }
 
   void icon(const uint8_t iconId, const dashboard::v3::Rect bounds, const bool black) override {
@@ -263,8 +264,8 @@ TEST(DashboardV3Renderer, HeaderWithoutTimestampShowsDashesInsteadOfADate) {
   package.generatedAt = 0;
   dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
 
-  const Operation* day = findTextOperation(canvas, "—");
-  const Operation* dateLabel = findTextOperation(canvas, "— —");
+  const Operation* day = findTextOperation(canvas, "-");
+  const Operation* dateLabel = findTextOperation(canvas, "- -");
   ASSERT_NE(day, nullptr);
   ASSERT_NE(dateLabel, nullptr);
   EXPECT_LT(day->bounds.x, 132);
@@ -511,7 +512,7 @@ TEST(DashboardV3Renderer, StepsStayDistinctBelowTheBatteryRows) {
   dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
 
   const Operation* steps = findTextOperation(canvas, "STAPPEN");
-  const Operation* stepsValue = findTextOperation(canvas, "7.850 / 10.000");
+  const Operation* stepsValue = findTextOperation(canvas, "7.850");
   const Operation* footprints = findIconOperation(canvas, 47);
   ASSERT_NE(steps, nullptr);
   ASSERT_NE(stepsValue, nullptr);
@@ -523,6 +524,176 @@ TEST(DashboardV3Renderer, StepsStayDistinctBelowTheBatteryRows) {
   const Operation* x3 = findTextOperation(canvas, "X3");
   ASSERT_NE(x3, nullptr);
   EXPECT_GT(steps->bounds.y, x3->bounds.y + 3 * 32) << "steps sit below all three battery rows";
+}
+
+// --- Font-safe placeholders ------------------------------------------------
+//
+// The real Lexend firmware font renders U+2014 (em dash) as a replacement
+// diamond, so every unknown-value placeholder and the footer author must use
+// the font-safe ASCII hyphen instead. The optional PBM glyphs are much
+// narrower than production Lexend, so only a byte-level check can prove this.
+
+TEST(DashboardV3Renderer, MinimalPackageEmitsOnlyFontSafeAsciiPlaceholders) {
+  RecordingCanvas canvas;
+  dashboard::v3::DashboardV3Package package{};
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  ASSERT_FALSE(canvas.operations.empty());
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Text) {
+      continue;
+    }
+    for (const unsigned char byte : operation.text) {
+      EXPECT_GE(static_cast<unsigned>(byte), 0x20U)
+          << "control byte in \"" << operation.text << "\"";
+      EXPECT_LE(static_cast<unsigned>(byte), 0x7EU)
+          << "non-ASCII byte in \"" << operation.text
+          << "\" (U+2014 renders as a diamond on the Lexend firmware font)";
+    }
+  }
+
+  EXPECT_NE(findTextOperation(canvas, "- -"), nullptr) << "header date label uses ASCII dashes";
+  EXPECT_NE(findTextOperation(canvas, "VERWARMING -"), nullptr) << "unknown heating uses an ASCII dash";
+  EXPECT_NE(findTextOperation(canvas, "- Albert Einstein"), nullptr) << "footer author uses an ASCII dash";
+}
+
+TEST(DashboardV3Renderer, MaximumContentNeverEmitsTheEmDashGlyph) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Text) {
+      continue;
+    }
+    EXPECT_EQ(operation.text.find("\xE2\x80\x94"), std::string::npos)
+        << "U+2014 must not be emitted: \"" << operation.text << "\"";
+  }
+  EXPECT_NE(findTextOperation(canvas, "- Albert Einstein"), nullptr);
+}
+
+TEST(DashboardV3Renderer, UnknownMarketChangeRendersAsciiHyphen) {
+  auto package = maximumContentPackage();
+  for (auto& market : package.markets) {
+    market.changeBasisPoints = INT16_MIN;
+  }
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  const Operation* change = findTextOperation(canvas, "-");
+  ASSERT_NE(change, nullptr);
+  EXPECT_GE(change->bounds.x, 270) << "the market change dash sits in the status column";
+  EXPECT_GE(change->bounds.y, 465) << "the market change dash sits below the steps row";
+}
+
+// --- Agenda time geometry --------------------------------------------------
+//
+// The 48 px time box truncates a full HH:MM in production Lexend Deca 10
+// bold: the widest case ("00:00") measures 4 * (225/16) + 86/16 = 61.6 px
+// using the advance table in lib/EpdFont/builtinFonts/noemoji/lexenddeca_10_bold.h.
+// The time box must be wide enough, with the timeline and title shifted right
+// to keep every operation inside the canvas.
+
+TEST(DashboardV3Renderer, AgendaTimeBoundsHoldAFullHHMMInTheProductionFont) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  const Operation* time = findTextOperation(canvas, "09:00");
+  ASSERT_NE(time, nullptr);
+  EXPECT_GE(time->bounds.width, 64) << "agenda time box must hold a full HH:MM in Lexend Deca 10 bold";
+  EXPECT_LE(time->bounds.x + time->bounds.width, 85)
+      << "right-aligned time text must not reach the first timeline dot";
+
+  const Operation* title = findTextOperation(canvas, "AFSPRAAK 1");
+  ASSERT_NE(title, nullptr);
+  EXPECT_GE(title->bounds.x, time->bounds.x + time->bounds.width)
+      << "the agenda title must start after the widened time column";
+  expectOperationsInsideCanvas(canvas);
+}
+
+// --- Steps -----------------------------------------------------------------
+
+TEST(DashboardV3Renderer, StepsShowOnlyTheCurrentCountInTheStatusColumn) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  const Operation* stepsValue = findTextOperation(canvas, "7.850");
+  ASSERT_NE(stepsValue, nullptr);
+  EXPECT_GE(stepsValue->bounds.x, 270);
+  EXPECT_EQ(findTextOperation(canvas, "7.850 / 10.000"), nullptr)
+      << "the narrow status column shows only the current step count, not count / goal";
+}
+
+// --- Markets and chats -----------------------------------------------------
+
+TEST(DashboardV3Renderer, ChatSectionMovesDirectlyBelowStepsWhenMarketsAreEmpty) {
+  auto package = maximumContentPackage();
+  package.marketCount = 0;
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_EQ(findTextOperation(canvas, "MARKTEN"), nullptr)
+      << "an empty MARKTEN heading must not leave a large blank block";
+  const Operation* whatsapp = findTextOperation(canvas, "WHATSAPP");
+  const Operation* papa = findTextOperation(canvas, "PAPA");
+  ASSERT_NE(whatsapp, nullptr);
+  ASSERT_NE(papa, nullptr);
+  EXPECT_LT(papa->bounds.y, 500) << "the first chat row sits directly below steps";
+  EXPECT_LT(whatsapp->bounds.y, papa->bounds.y);
+}
+
+TEST(DashboardV3Renderer, ChatRowsAreCompactOneLineRowsWithTimeRightAligned) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  const Operation* papa = findTextOperation(canvas, "PAPA");
+  const Operation* mama = findTextOperation(canvas, "MAMA");
+  const Operation* werk = findTextOperation(canvas, "WERK");
+  const Operation* time = findTextOperation(canvas, "10:00");
+  ASSERT_NE(papa, nullptr);
+  ASSERT_NE(mama, nullptr);
+  ASSERT_NE(werk, nullptr);
+  ASSERT_NE(time, nullptr);
+
+  EXPECT_EQ(time->bounds.y, papa->bounds.y) << "name and last-message time share one compact row";
+  EXPECT_GT(time->bounds.x, papa->bounds.x + papa->bounds.width)
+      << "the right-aligned time must not overlap the chat name";
+  EXPECT_GT(mama->bounds.y, papa->bounds.y);
+  EXPECT_GT(werk->bounds.y, mama->bounds.y);
+  EXPECT_LE(time->bounds.x + time->bounds.width, canvas.width());
+}
+
+TEST(DashboardV3Renderer, WithMarketsWhatsAppSitsBelowTheLastMarketRowWithoutOverlap) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  const Operation* dax = findTextOperation(canvas, "DAX");
+  const Operation* whatsapp = findTextOperation(canvas, "WHATSAPP");
+  const Operation* papa = findTextOperation(canvas, "PAPA");
+  ASSERT_NE(dax, nullptr);
+  ASSERT_NE(whatsapp, nullptr);
+  ASSERT_NE(papa, nullptr);
+  EXPECT_GT(whatsapp->bounds.y, dax->bounds.y + dax->bounds.height)
+      << "WhatsApp heading starts below the last market row";
+  EXPECT_GT(papa->bounds.y, whatsapp->bounds.y + whatsapp->bounds.height);
+  expectOperationsInsideCanvas(canvas);
+}
+
+// --- Footer ----------------------------------------------------------------
+
+TEST(DashboardV3Renderer, FooterQuoteIsLeftAlignedWithAsciiHyphenAuthor) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  const Operation* quote = findTextOperation(canvas, "Verbeelding is belangrijker dan kennis.");
+  const Operation* author = findTextOperation(canvas, "- Albert Einstein");
+  ASSERT_NE(quote, nullptr);
+  ASSERT_NE(author, nullptr);
+  EXPECT_EQ(quote->align, dashboard::v3::TextAlign::Left);
+  EXPECT_EQ(author->align, dashboard::v3::TextAlign::Left);
+  EXPECT_GE(quote->bounds.y, 730) << "the quote line lives inside the footer band";
+  EXPECT_GE(author->bounds.y, quote->bounds.y + quote->bounds.height)
+      << "the smaller author line sits below the quote line";
+  EXPECT_LE(author->bounds.y + author->bounds.height, 792);
 }
 
 // --- Optional PBM artifact canvas ------------------------------------------
