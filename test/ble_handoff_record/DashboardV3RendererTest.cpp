@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -287,6 +290,350 @@ TEST(DashboardV3Renderer, EmptyChatsLeaveWhatsAppSectionOutWithoutMovingMarkets)
   EXPECT_EQ(findTextOperation(canvas, "WHATSAPP"), nullptr);
   ASSERT_NE(findTextOperation(canvas, "AEX"), nullptr);
   EXPECT_LT(findTextOperation(canvas, "AEX")->bounds.y, 500);
+}
+
+// --- Optional PBM artifact canvas ------------------------------------------
+//
+// PbmCanvas rasterizes the renderer's draw operations into a monochrome
+// 528x792 pixel buffer and can write a binary PBM (P4). It exists only so a
+// human can review the maximum-content layout geometry outside the firmware;
+// normal test runs never write a file because the write is gated behind the
+// DASHBOARD_V3_PBM_DIR environment variable in the test below.
+//
+// Text uses a compact built-in 7x9 test glyph table (kTestGlyphsAscii below)
+// instead of a real font. These glyphs are NOT Lexend and only need to make
+// labels distinguishable; production Lexend rasterization is separately
+// target-compiled. Icons are bounded filled-disk placeholders for the same
+// reason.
+
+struct TestGlyph {
+  uint16_t codePoint;
+  std::array<uint16_t, 7> columns;  // column-major; bit row r = row r (9 rows used)
+};
+
+// Column-major bits, bit 0 = top row. Generated from a desktop monospace font
+// (Menlo) and baked in so the host tests never depend on system fonts.
+static constexpr TestGlyph kTestGlyphsAscii[95] = {
+    {0x0020, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},  // ' '
+    {0x0021, {0x00, 0x00, 0x1BF, 0x11F, 0x00, 0x00, 0x00}},  // '!'
+    {0x0022, {0x7C, 0x7C, 0x00, 0x00, 0x00, 0x7C, 0x7C}},  // '"'
+    {0x0023, {0x20, 0xE4, 0x3E, 0xA7, 0x3C, 0x27, 0x04}},  // '#'
+    {0x0024, {0x00, 0x4C, 0x0A, 0x1FF, 0x12, 0x60, 0x00}},  // '$'
+    {0x0025, {0x26, 0x29, 0x19, 0xD6, 0x130, 0x128, 0xC8}},  // '%'
+    {0x0026, {0x60, 0x196, 0x119, 0x131, 0x1C1, 0x1C0, 0x20}},  // '&'
+    {0x0027, {0x00, 0x1FF, 0x1FF, 0x1FF, 0x1FF, 0x00, 0x00}},  // '''
+    {0x0028, {0x00, 0x00, 0x7C, 0x101, 0x00, 0x00, 0x00}},  // '('
+    {0x0029, {0x00, 0x00, 0x101, 0xC6, 0x38, 0x00, 0x00}},  // ')'
+    {0x002A, {0x00, 0x28, 0x38, 0xFE, 0x10, 0x28, 0x00}},  // '*'
+    {0x002B, {0x10, 0x10, 0x10, 0xFE, 0x10, 0x10, 0x10}},  // '+'
+    {0x002C, {0x100, 0x1F0, 0x1FF, 0xFF, 0x3F, 0x0F, 0x00}},  // ','
+    {0x002D, {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10}},  // '-'
+    {0x002E, {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}},  // '.'
+    {0x002F, {0x00, 0x100, 0xC0, 0x38, 0x06, 0x01, 0x00}},  // '/'
+    {0x0030, {0x7C, 0x1E3, 0x131, 0x109, 0xCE, 0x7C, 0x00}},  // '0'
+    {0x0031, {0x102, 0x103, 0x103, 0x1FF, 0x100, 0x100, 0x00}},  // '1'
+    {0x0032, {0x100, 0x181, 0x141, 0x121, 0x11F, 0x10E, 0x00}},  // '2'
+    {0x0033, {0x100, 0x101, 0x111, 0x111, 0x1BF, 0xE6, 0x00}},  // '3'
+    {0x0034, {0x60, 0x58, 0x44, 0x43, 0x1FF, 0x40, 0x00}},  // '4'
+    {0x0035, {0x10F, 0x10F, 0x109, 0x109, 0x99, 0xF0, 0x00}},  // '5'
+    {0x0036, {0x7C, 0x19A, 0x109, 0x109, 0x199, 0xF0, 0x00}},  // '6'
+    {0x0037, {0x01, 0x101, 0x1C1, 0x79, 0x0F, 0x03, 0x00}},  // '7'
+    {0x0038, {0xE6, 0x1BF, 0x111, 0x111, 0x1BF, 0xE4, 0x00}},  // '8'
+    {0x0039, {0x1C, 0x133, 0x121, 0x121, 0xB6, 0x7C, 0x00}},  // '9'
+    {0x003A, {0x00, 0x00, 0x1C7, 0x1C7, 0x1C7, 0x00, 0x00}},  // ':'
+    {0x003B, {0x00, 0x00, 0x100, 0x1E3, 0x63, 0x00, 0x00}},  // ';'
+    {0x003C, {0x08, 0x18, 0x18, 0x24, 0x24, 0x24, 0x42}},  // '<'
+    {0x003D, {0x24, 0x24, 0x24, 0x24, 0x24, 0x24, 0x24}},  // '='
+    {0x003E, {0x42, 0x24, 0x24, 0x24, 0x18, 0x18, 0x18}},  // '>'
+    {0x003F, {0x00, 0x01, 0x01, 0x131, 0x0F, 0x06, 0x00}},  // '?'
+    {0x0040, {0x3C, 0x82, 0x139, 0x145, 0x145, 0x3E, 0x00}},  // '@'
+    {0x0041, {0x180, 0xF0, 0x4E, 0x43, 0x5E, 0xF0, 0x100}},  // 'A'
+    {0x0042, {0x1FF, 0x119, 0x109, 0x119, 0x1BF, 0xE4, 0x00}},  // 'B'
+    {0x0043, {0x7C, 0xC6, 0x101, 0x101, 0x101, 0x101, 0x00}},  // 'C'
+    {0x0044, {0x1FF, 0x101, 0x101, 0x101, 0xC6, 0x7C, 0x00}},  // 'D'
+    {0x0045, {0x1FF, 0x119, 0x109, 0x109, 0x109, 0x101, 0x00}},  // 'E'
+    {0x0046, {0x00, 0x1FF, 0x09, 0x09, 0x09, 0x01, 0x00}},  // 'F'
+    {0x0047, {0x7C, 0xC6, 0x101, 0x101, 0x111, 0xF0, 0x00}},  // 'G'
+    {0x0048, {0x1FF, 0x18, 0x08, 0x08, 0x18, 0x1FF, 0x00}},  // 'H'
+    {0x0049, {0x00, 0x101, 0x101, 0x1FF, 0x101, 0x101, 0x00}},  // 'I'
+    {0x004A, {0x00, 0x100, 0x100, 0x101, 0x181, 0xFF, 0x00}},  // 'J'
+    {0x004B, {0x1FF, 0x18, 0x18, 0x34, 0xC2, 0x181, 0x100}},  // 'K'
+    {0x004C, {0x1FF, 0x100, 0x100, 0x100, 0x100, 0x100, 0x00}},  // 'L'
+    {0x004D, {0x1FF, 0x03, 0x1C, 0x30, 0x0C, 0x03, 0x1FF}},  // 'M'
+    {0x004E, {0x1FF, 0x07, 0x0E, 0x38, 0xE0, 0x1FF, 0x1FF}},  // 'N'
+    {0x004F, {0x7C, 0xC6, 0x101, 0x101, 0x183, 0x7C, 0x00}},  // 'O'
+    {0x0050, {0x1FF, 0x31, 0x11, 0x11, 0x1B, 0x0E, 0x00}},  // 'P'
+    {0x0051, {0x00, 0x3C, 0xC3, 0x81, 0x1C1, 0x7E, 0x00}},  // 'Q'
+    {0x0052, {0x1FF, 0x11, 0x11, 0x31, 0x7B, 0x1CE, 0x100}},  // 'R'
+    {0x0053, {0x0E, 0x11B, 0x111, 0x111, 0x1B1, 0xE0, 0x00}},  // 'S'
+    {0x0054, {0x01, 0x01, 0x01, 0x1FF, 0x01, 0x01, 0x01}},  // 'T'
+    {0x0055, {0xFF, 0x180, 0x100, 0x100, 0x180, 0xFF, 0x00}},  // 'U'
+    {0x0056, {0x01, 0x0F, 0xF0, 0x180, 0xF0, 0x1E, 0x03}},  // 'V'
+    {0x0057, {0x07, 0xF8, 0x70, 0x0C, 0xF0, 0xF8, 0x07}},  // 'W'
+    {0x0058, {0x100, 0x183, 0x66, 0x38, 0x6C, 0x1C3, 0x100}},  // 'X'
+    {0x0059, {0x01, 0x07, 0x0C, 0x1F8, 0x0C, 0x03, 0x01}},  // 'Y'
+    {0x005A, {0x181, 0x1C1, 0x131, 0x11D, 0x107, 0x101, 0x00}},  // 'Z'
+    {0x005B, {0x00, 0x00, 0x1FF, 0x101, 0x00, 0x00, 0x00}},  // '['
+    {0x005C, {0x00, 0x01, 0x06, 0x38, 0xC0, 0x100, 0x00}},  // '\'
+    {0x005D, {0x00, 0x00, 0x101, 0x1FF, 0x00, 0x00, 0x00}},  // ']'
+    {0x005E, {0x20, 0x10, 0x0C, 0x0C, 0x08, 0x30, 0x00}},  // '^'
+    {0x005F, {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10}},  // '_'
+    {0x0060, {0x00, 0x04, 0x1C, 0x38, 0x30, 0x60, 0x00}},  // '`'
+    {0x0061, {0xE0, 0x1B3, 0x111, 0x111, 0x191, 0xFE, 0x1FC}},  // 'a'
+    {0x0062, {0x00, 0x1FF, 0x108, 0x104, 0x108, 0xF0, 0x00}},  // 'b'
+    {0x0063, {0x7C, 0xFE, 0x183, 0x101, 0x101, 0x101, 0x82}},  // 'c'
+    {0x0064, {0x00, 0xF0, 0x188, 0x104, 0x108, 0x1FF, 0x00}},  // 'd'
+    {0x0065, {0x3C, 0x7E, 0xC9, 0x89, 0x89, 0x8B, 0x0E}},  // 'e'
+    {0x0066, {0x00, 0x00, 0x0C, 0x1FF, 0x01, 0x01, 0x00}},  // 'f'
+    {0x0067, {0x1C, 0x133, 0x141, 0x101, 0x1A2, 0xFF, 0x00}},  // 'g'
+    {0x0068, {0x00, 0x1FF, 0x08, 0x04, 0x0C, 0x1F8, 0x00}},  // 'h'
+    {0x0069, {0x00, 0x100, 0x104, 0x1FD, 0x100, 0x100, 0x00}},  // 'i'
+    {0x006A, {0x00, 0x00, 0x100, 0x104, 0xFD, 0x00, 0x00}},  // 'j'
+    {0x006B, {0x1FF, 0x20, 0x30, 0xC8, 0x180, 0x100, 0x00}},  // 'k'
+    {0x006C, {0x00, 0x01, 0x01, 0x1FF, 0x100, 0x100, 0x00}},  // 'l'
+    {0x006D, {0xFF, 0x01, 0x01, 0xFF, 0x01, 0x01, 0xFE}},  // 'm'
+    {0x006E, {0x1FF, 0x06, 0x03, 0x01, 0x01, 0x07, 0x1FE}},  // 'n'
+    {0x006F, {0x3C, 0x66, 0x81, 0x81, 0x81, 0x7E, 0x3C}},  // 'o'
+    {0x0070, {0x1FF, 0x22, 0x41, 0x41, 0x23, 0x1E, 0x00}},  // 'p'
+    {0x0071, {0x00, 0x3E, 0x63, 0x41, 0x21, 0x1FF, 0x00}},  // 'q'
+    {0x0072, {0x1FF, 0x0E, 0x03, 0x01, 0x01, 0x03, 0x00}},  // 'r'
+    {0x0073, {0x18E, 0x19F, 0x111, 0x111, 0x111, 0xF3, 0x60}},  // 's'
+    {0x0074, {0x04, 0x04, 0xFF, 0x104, 0x104, 0x104, 0x00}},  // 't'
+    {0x0075, {0xFF, 0x1C0, 0x100, 0x100, 0x180, 0xE0, 0x1FF}},  // 'u'
+    {0x0076, {0x02, 0x1C, 0x70, 0xC0, 0x70, 0x1E, 0x02}},  // 'v'
+    {0x0077, {0x06, 0x78, 0x60, 0x08, 0x60, 0x78, 0x06}},  // 'w'
+    {0x0078, {0x80, 0xC6, 0x2C, 0x38, 0x6C, 0xC2, 0x00}},  // 'x'
+    {0x0079, {0x101, 0x10E, 0xF0, 0x70, 0x0E, 0x01, 0x00}},  // 'y'
+    {0x007A, {0x181, 0x1C1, 0x161, 0x139, 0x10D, 0x107, 0x103}},  // 'z'
+    {0x007B, {0x00, 0x10, 0x30, 0x1CF, 0x101, 0x00, 0x00}},  // '{'
+    {0x007C, {0x00, 0x00, 0x00, 0x1FF, 0x00, 0x00, 0x00}},  // '|'
+    {0x007D, {0x00, 0x101, 0x1CF, 0x30, 0x10, 0x00, 0x00}},  // '}'
+    {0x007E, {0x10, 0x08, 0x08, 0x10, 0x20, 0x20, 0x10}},  // '~'
+};
+
+// Extra non-ASCII code points used by the maximum-content fixture.
+static constexpr TestGlyph kTestGlyphsExtras[] = {
+    {0x00B0, {0x38, 0x6C, 0xC6, 0x82, 0xC6, 0x7C, 0x38}},  // '°'
+    {0x2014, {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10}},  // '—'
+};
+
+const TestGlyph* findTestGlyph(const uint32_t codePoint) {
+  if (codePoint >= 32 && codePoint <= 126) {
+    return &kTestGlyphsAscii[codePoint - 32];
+  }
+  for (const TestGlyph& glyph : kTestGlyphsExtras) {
+    if (glyph.codePoint == codePoint) {
+      return &glyph;
+    }
+  }
+  return nullptr;
+}
+
+class PbmCanvas final : public dashboard::v3::DashboardV3Canvas {
+ public:
+  static constexpr int kWidth = 528;
+  static constexpr int kHeight = 792;
+
+  PbmCanvas() : pixels_(static_cast<size_t>(kWidth) * static_cast<size_t>(kHeight), 0) {}
+
+  int width() const override { return kWidth; }
+  int height() const override { return kHeight; }
+
+  void fill(const dashboard::v3::Rect rect, const bool black) override {
+    const int x0 = std::max(0, rect.x);
+    const int y0 = std::max(0, rect.y);
+    const int x1 = std::min(kWidth, rect.x + rect.width);
+    const int y1 = std::min(kHeight, rect.y + rect.height);
+    for (int y = y0; y < y1; ++y) {
+      for (int x = x0; x < x1; ++x) {
+        setPixel(x, y, black);
+      }
+    }
+  }
+
+  void line(const int x1, const int y1, const int x2, const int y2, const bool black) override {
+    // Bresenham; out-of-canvas pixels are dropped by setPixel.
+    int x = x1;
+    int y = y1;
+    const int dx = std::abs(x2 - x1);
+    const int sx = x1 < x2 ? 1 : -1;
+    const int dy = -std::abs(y2 - y1);
+    const int sy = y1 < y2 ? 1 : -1;
+    int error = dx + dy;
+    for (;;) {
+      setPixel(x, y, black);
+      if (x == x2 && y == y2) break;
+      const int doubled = 2 * error;
+      if (doubled >= dy) {
+        error += dy;
+        x += sx;
+      }
+      if (doubled <= dx) {
+        error += dx;
+        y += sy;
+      }
+    }
+  }
+
+  void rect(const dashboard::v3::Rect rect, const bool black) override {
+    line(rect.x, rect.y, rect.x + rect.width - 1, rect.y, black);
+    line(rect.x, rect.y + rect.height - 1, rect.x + rect.width - 1, rect.y + rect.height - 1, black);
+    line(rect.x, rect.y, rect.x, rect.y + rect.height - 1, black);
+    line(rect.x + rect.width - 1, rect.y, rect.x + rect.width - 1, rect.y + rect.height - 1, black);
+  }
+
+  void text(const dashboard::v3::TextSpec& spec, const char* value) override {
+    // Renderer strings are UTF-8 (e.g. "17° / 24°"); decode into a bounded
+    // code-point buffer.
+    uint32_t codePoints[64];
+    int count = 0;
+    const uint8_t* source = reinterpret_cast<const uint8_t*>(value);
+    while (*source != '\0' && count < 64) {
+      uint32_t codePoint = 0;
+      if ((*source & 0x80U) == 0) {
+        codePoint = *source++;
+      } else if ((*source & 0xE0U) == 0xC0U) {
+        codePoint = static_cast<uint32_t>(*source++ & 0x1FU) << 6;
+        codePoint |= static_cast<uint32_t>(*source++ & 0x3FU);
+      } else if ((*source & 0xF0U) == 0xE0U) {
+        codePoint = static_cast<uint32_t>(*source++ & 0x0FU) << 12;
+        codePoint |= static_cast<uint32_t>(*source++ & 0x3FU) << 6;
+        codePoint |= static_cast<uint32_t>(*source++ & 0x3FU);
+      } else {
+        ++source;  // skip a malformed byte rather than desynchronizing
+        continue;
+      }
+      codePoints[count++] = codePoint;
+    }
+    if (count == 0) {
+      return;
+    }
+
+    // Scale the 7x9 glyphs from the bounds height, then shrink further so the
+    // whole label still fits its bounds. The production renderer truncates
+    // overlength values; a complete label is easier to review geometrically.
+    constexpr int kGlyphColumns = 7;
+    constexpr int kGlyphRows = 9;
+    constexpr int kAdvance = kGlyphColumns + 1;
+    const int heightScale = std::max(1, spec.bounds.height / kGlyphRows);
+    const int widthScale = std::max(1, spec.bounds.width / (kAdvance * count - 1));
+    const int scale = std::min(5, std::min(heightScale, widthScale));
+    const int textWidth = count * kAdvance * scale - scale;
+
+    int x = spec.bounds.x;
+    if (spec.align == dashboard::v3::TextAlign::Center) {
+      x += (spec.bounds.width - textWidth) / 2;
+    }
+    if (spec.align == dashboard::v3::TextAlign::Right) {
+      x += spec.bounds.width - textWidth;
+    }
+    for (int index = 0; index < count; ++index) {
+      drawGlyph(codePoints[index], x + index * kAdvance * scale, spec.bounds.y, scale, spec.black);
+    }
+  }
+
+  void icon(const uint8_t, const dashboard::v3::Rect bounds, const bool black) override {
+    // Bounded placeholder: a filled disk centered in the icon bounds.
+    // Production icon rasterization is separately target-compiled, so the exact
+    // icon glyphs are out of scope for this host-side artifact.
+    const int centerX = bounds.x + bounds.width / 2;
+    const int centerY = bounds.y + bounds.height / 2;
+    const int radiusX = bounds.width / 2;
+    const int radiusY = bounds.height / 2;
+    for (int y = bounds.y; y < bounds.y + bounds.height; ++y) {
+      for (int x = bounds.x; x < bounds.x + bounds.width; ++x) {
+        const int dx = x - centerX;
+        const int dy = y - centerY;
+        if (dx * dx * radiusY * radiusY + dy * dy * radiusX * radiusX <=
+            radiusX * radiusX * radiusY * radiusY) {
+          setPixel(x, y, black);
+        }
+      }
+    }
+  }
+
+  bool writePbm(const std::string& path) const {
+    static_assert(kWidth % 8 == 0, "PBM row packing assumes byte-aligned rows");
+    std::ofstream out(path, std::ios::binary);
+    if (!out.is_open()) {
+      return false;
+    }
+    out << "P4\n" << width() << " " << height() << "\n";
+    constexpr int kRowBytes = kWidth / 8;
+    std::array<uint8_t, kRowBytes> row{};
+    for (int y = 0; y < kHeight; ++y) {
+      row.fill(0);
+      for (int x = 0; x < kWidth; ++x) {
+        if (pixels_[static_cast<size_t>(y) * kWidth + static_cast<size_t>(x)] != 0) {
+          row[static_cast<size_t>(x) / 8] |= static_cast<uint8_t>(0x80U >> (x & 7));
+        }
+      }
+      out.write(reinterpret_cast<const char*>(row.data()), kRowBytes);
+    }
+    return out.good();
+  }
+
+  const std::vector<uint8_t>& pixels() const { return pixels_; }
+
+ private:
+  void setPixel(const int x, const int y, const bool black) {
+    if (x < 0 || x >= kWidth || y < 0 || y >= kHeight) {
+      return;
+    }
+    pixels_[static_cast<size_t>(y) * kWidth + static_cast<size_t>(x)] = black ? 1 : 0;
+  }
+
+  void drawGlyph(const uint32_t codePoint, const int x, const int y, const int scale, const bool black) {
+    const TestGlyph* glyph = findTestGlyph(codePoint);
+    if (glyph == nullptr) {
+      rect({x, y, 7 * scale, 9 * scale}, black);  // fallback: hollow box
+      return;
+    }
+    for (int column = 0; column < 7; ++column) {
+      for (int row = 0; row < 9; ++row) {
+        if ((glyph->columns[column] & (1U << row)) == 0) {
+          continue;
+        }
+        for (int yy = 0; yy < scale; ++yy) {
+          for (int xx = 0; xx < scale; ++xx) {
+            setPixel(x + column * scale + xx, y + row * scale + yy, black);
+          }
+        }
+      }
+    }
+  }
+
+  std::vector<uint8_t> pixels_;
+};
+
+TEST(DashboardV3Renderer, MaximumContentWritesPbmArtifactWhenEnvDirIsSet) {
+  const char* artifactDir = std::getenv("DASHBOARD_V3_PBM_DIR");
+  if (artifactDir == nullptr || artifactDir[0] == '\0') {
+    GTEST_SKIP() << "DASHBOARD_V3_PBM_DIR is not set; skipping the PBM artifact write";
+  }
+
+  PbmCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  const std::string path = std::string(artifactDir) + "/dashboard-v3-maximum.pbm";
+  ASSERT_TRUE(canvas.writePbm(path)) << "could not write " << path;
+
+  // Read the artifact back: header must declare 528x792 and the payload must be
+  // one bit per pixel, MSB-first, 66 bytes per row.
+  std::ifstream in(path, std::ios::binary);
+  ASSERT_TRUE(in.is_open()) << "could not reopen " << path;
+  std::string magic;
+  std::string dimensions;
+  ASSERT_TRUE(std::getline(in, magic));
+  ASSERT_TRUE(std::getline(in, dimensions));
+  EXPECT_EQ(magic, "P4");
+  EXPECT_EQ(dimensions, "528 792");
+  in.seekg(0, std::ios::end);
+  const std::streamoff fileSize = in.tellg();
+  constexpr std::streamoff kHeaderBytes = 11;  // "P4\n528 792\n"
+  EXPECT_EQ(fileSize, kHeaderBytes + static_cast<std::streamoff>(528 * 792 / 8));
+  EXPECT_NE(std::find(canvas.pixels().begin(), canvas.pixels().end(), 1), canvas.pixels().end())
+      << "the artifact must contain black pixels (the header is a black band)";
 }
 
 }  // namespace
