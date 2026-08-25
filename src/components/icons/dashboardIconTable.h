@@ -11,7 +11,7 @@
 
 namespace dashboard {
 
-constexpr size_t DASHBOARD_ICON_COUNT = 64;
+constexpr size_t DASHBOARD_ICON_COUNT = 65;
 
 // 32px variants, indexed by iconId.
 static const freeink::Icon* const DASHBOARD_ICONS_32[] = {
@@ -80,6 +80,7 @@ static const freeink::Icon* const DASHBOARD_ICONS_32[] = {
     &icon_trash_32,
     &icon_users_32,
     &icon_utensils_32,
+    &icon_message_circle_32,
 };
 
 // 48px variants, indexed by iconId.
@@ -149,6 +150,7 @@ static const freeink::Icon* const DASHBOARD_ICONS_48[] = {
     &icon_trash_48,
     &icon_users_48,
     &icon_utensils_48,
+    &icon_message_circle_48,
 };
 
 }  // namespace dashboard

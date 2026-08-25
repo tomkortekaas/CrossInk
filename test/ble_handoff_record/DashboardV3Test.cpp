@@ -93,4 +93,17 @@ TEST(DashboardV3Decode, RejectsReservedHeatingBits) {
   EXPECT_EQ(dashboard::v3::decodeDashboardV3(bytes.data(), bytes.size(), package), dashboard::Status::InvalidArgument);
 }
 
+TEST(DashboardV3Decode, AcceptsMessageIcon65AndRejectsIconIdAbove65) {
+  auto bytes = minimalSwiftPackage();
+  dashboard::v3::DashboardV3Package package{};
+  bytes[36] = 65;
+  writeU32(bytes, 76, dashboard::crc32(bytes.data(), 76));
+  ASSERT_EQ(dashboard::v3::decodeDashboardV3(bytes.data(), bytes.size(), package), dashboard::Status::Ok);
+  EXPECT_EQ(package.weather.conditionIconId, 65);
+
+  bytes[36] = 66;
+  writeU32(bytes, 76, dashboard::crc32(bytes.data(), 76));
+  EXPECT_EQ(dashboard::v3::decodeDashboardV3(bytes.data(), bytes.size(), package), dashboard::Status::InvalidArgument);
+}
+
 }  // namespace

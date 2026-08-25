@@ -31,7 +31,7 @@ constexpr size_t MAX_LIST_WIDGETS = 3;
 // Global style byte at offset 30, introduced with schema 2. Bits 0-2 select
 // the border treatment, bits 3-4 the tile padding density, bit 5 toggles list
 // row dividers, and bits 6-7 are reserved and must be zero.
-constexpr uint8_t MAX_ICON_ID = 64;
+constexpr uint8_t MAX_ICON_ID = 65;
 constexpr uint8_t GLOBAL_STYLE_BORDER_LEVEL_SHIFT = 0;
 constexpr uint8_t GLOBAL_STYLE_DENSITY_SHIFT = 3;
 constexpr uint8_t GLOBAL_STYLE_LIST_DIVIDERS_SHIFT = 5;

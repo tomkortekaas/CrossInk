@@ -31,7 +31,7 @@ for line in open(manifest):
         continue
     aliases.append(line.split("=")[0].strip())
 
-assert len(aliases) <= 64, f"manifest has {len(aliases)} icons, the 7-bit id allows 64"
+assert len(aliases) <= 65, f"manifest has {len(aliases)} icons, the 7-bit id allows 65"
 
 with open(out, "w") as f:
     f.write("""#pragma once

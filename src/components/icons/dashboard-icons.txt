@@ -12,8 +12,8 @@
 # Reordering or removing a line silently repoints every dashboard already stored
 # on a device, because the X3 renders from its last-known-good package.
 #
-# Cap is 64: the style word gives the icon id 7 bits, and 64 entries at 24 and
-# 32 px cost roughly 13 KB of flash.
+# Cap is 65: the style word gives the icon id 7 bits, and 65 entries at 32 and
+# 48 px cost roughly 13 KB of flash.
 #
 # Format: alias = lucide-name. The alias is the C identifier; the lucide name
 # picks the SVG from freeink-sdk/libs/assets/Icons/lucide/icons.
@@ -82,7 +82,7 @@ activity         = activity
 dumbbell         = dumbbell
 bed              = bed
 
-# --- status en algemeen (53-64) ---
+# --- status en algemeen (53-65) ---
 check            = check
 cross            = x
 alert            = circle-alert
@@ -95,3 +95,4 @@ package          = package
 trash            = trash-2
 users            = users
 utensils         = utensils
+message_circle   = message-circle

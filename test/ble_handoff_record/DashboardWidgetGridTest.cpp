@@ -152,16 +152,19 @@ TEST(DashboardWidgetGrid, RejectsReservedBitsInWidgetStyle) {
   EXPECT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::InvalidArgument);
 }
 
-TEST(DashboardWidgetGrid, RejectsIconIdAbove64) {
+TEST(DashboardWidgetGrid, AcceptsMessageIcon65AndRejectsIconIdAbove65) {
   auto package = validPackage();
   package.widgets[0].style = dashboard::makeWidgetStyle(/*iconId=*/65, 0, 0);
   dashboard::PackageBytes bytes{};
   size_t length = 0;
+  EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
+
+  package.widgets[0].style = dashboard::makeWidgetStyle(/*iconId=*/66, 0, 0);
   EXPECT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::InvalidArgument);
 
   package.widgets[0].style = 0;
   ASSERT_EQ(dashboard::encodeWidgetGridPackage(package, bytes, length), dashboard::Status::Ok);
-  bytes[39] = 65;
+  bytes[39] = 66;
   rewriteCrc(bytes, length);
   dashboard::WidgetGridPackage decoded{};
   EXPECT_EQ(dashboard::decodeWidgetGridPackage(bytes.data(), length, decoded), dashboard::Status::InvalidArgument);
