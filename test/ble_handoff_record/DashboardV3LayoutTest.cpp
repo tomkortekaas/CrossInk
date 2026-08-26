@@ -8,12 +8,14 @@ TEST(DashboardV3Layout, PortraitCanvasMatchesApprovedBandsAndColumns) {
   const auto layout = dashboard::v3::computeDashboardV3Layout(528, 792, {});
 
   EXPECT_EQ(layout.header, (dashboard::v3::Rect{0, 0, 528, 77}));
-  EXPECT_EQ(layout.rain, (dashboard::v3::Rect{0, 77, 528, 117}));
-  EXPECT_EQ(layout.traffic, (dashboard::v3::Rect{0, 194, 528, 77}));
-  EXPECT_EQ(layout.body, (dashboard::v3::Rect{0, 271, 528, 459}));
+  // The rain band gave 21 px to the body when its chart became the mock-up's
+  // fixed 24 px intensity strip. The five bands still tile the canvas exactly.
+  EXPECT_EQ(layout.rain, (dashboard::v3::Rect{0, 77, 528, 96}));
+  EXPECT_EQ(layout.traffic, (dashboard::v3::Rect{0, 173, 528, 77}));
+  EXPECT_EQ(layout.body, (dashboard::v3::Rect{0, 250, 528, 480}));
   EXPECT_EQ(layout.footer, (dashboard::v3::Rect{0, 730, 528, 62}));
-  EXPECT_EQ(layout.bodyLeft, (dashboard::v3::Rect{0, 271, 270, 459}));
-  EXPECT_EQ(layout.bodyRight, (dashboard::v3::Rect{270, 271, 258, 459}));
+  EXPECT_EQ(layout.bodyLeft, (dashboard::v3::Rect{0, 250, 270, 480}));
+  EXPECT_EQ(layout.bodyRight, (dashboard::v3::Rect{270, 250, 258, 480}));
 }
 
 TEST(DashboardV3Layout, SafeInsetsKeepEveryBandInsideTheUsableCanvas) {

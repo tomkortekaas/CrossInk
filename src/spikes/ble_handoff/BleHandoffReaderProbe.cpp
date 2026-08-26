@@ -160,7 +160,7 @@ bool renderDashboardV3Template(GfxRenderer& renderer) {
 
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
   renderer.clearScreen();
-  dashboard::v3::renderDashboardV3(renderer, package, minuteOfDay);
+  dashboard::v3::renderDashboardV3(renderer, package, minuteOfDay, SETTINGS.clockUtcOffsetQ);
   renderer.displayBuffer(HalDisplay::HALF_REFRESH, true);
   return true;
 }

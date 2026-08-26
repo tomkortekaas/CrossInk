@@ -2,6 +2,10 @@
 
 ### Added
 
+- The V3 dashboard now shows the values it previously left blank: whether the wood burner may be lit, the car and home battery levels, and up to three market movements, each read from a Home Assistant entity you pick under Instellingen → Gegevensbronnen → Dashboard V3. A source that cannot be reached keeps its last known reading rather than falling back to a dash.
+- The V3 dashboard carries up to eight appointments and seven WhatsApp conversations, matching the design it was drawn from; it previously stopped at five and three.
+- The rain band shows the next two hours as a single strip whose blocks darken with the expected intensity, replacing the bar chart. It reads in one glance and gives the space it saves back to the agenda.
+- A desktop tool renders the dashboard with the device's own fonts and reports every line it had to shorten, so text that does not fit is found before flashing rather than after photographing the panel.
 - A new sleep-screen mode, "Font Test", shows a single print/ink test sheet on the panel: the agenda's text at every typeface and weight from size 8 to 28 (the smallest sizes 8 and 9 are added to firmware purely for this card), plus a draft-quality gauge of 1-, 2- and 3-pixel rules and a mock value tile with a thin label. By photographing the panel you read off, in one shot, the smallest size and thinnest rule that stay legible — the basis for deciding whether agenda, messages and dashboard values can be set smaller.
 - The BLE dashboard receiver now reports why it refused a package, not just that it did, so a rejected dashboard update can be diagnosed from the phone instead of from a USB serial capture.
 - Dashboard tiles can carry an icon, chosen from a set of 64, and can be emphasised with a light or dark shade or reversed to white on black — so one tile can stand out the way a colour would on a colour screen.
@@ -11,6 +15,9 @@
 
 ### Fixed
 
+- Text on the V3 dashboard no longer overflows its box. The font ladder was chosen by name, but the built-in "Lexend 10" face is over twice as tall as its name suggests on this panel, so nearly everything was set at roughly double the intended size and was cut short.
+- The bars on the V3 status rows no longer run through their own labels.
+- A shortened value on the V3 dashboard no longer ends in a black lozenge. The ellipsis it appended is missing from the condensed number fonts, which draw an unknown character as a filled box.
 - The X3 no longer switches itself off when it goes to sleep with a scheduled wake-up pending, so a dashboard left on battery keeps refreshing instead of going dark until the power button is pressed. Its power latch and its SD-card power switch turn out to be the same pin, and releasing it for sleep cut the battery rail; on USB the device stayed powered through the cable and the problem was invisible.
 
 ### Changed

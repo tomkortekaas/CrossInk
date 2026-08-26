@@ -69,11 +69,14 @@ Status decodeDashboardV3(const uint8_t* bytes, size_t size, DashboardV3Package& 
   uint8_t version = 0;
   uint8_t flags = 0;
   uint8_t temperature = 0;
-  if (!cursor.read8(version) || version != FORMAT_VERSION || !cursor.read8(flags) || (flags & 0xFCU) != 0) {
+  if (!cursor.read8(version) || version != FORMAT_VERSION || !cursor.read8(flags) || (flags & 0xF8U) != 0) {
     return Status::InvalidArgument;
   }
   candidate.heatingKnown = (flags & 1U) != 0;
   candidate.heatingAllowed = (flags & 2U) != 0;
+  // Bit 2 marks the forecast absent, so a package from a phone build that
+  // predates the flag still decodes as known.
+  candidate.rainKnown = (flags & 4U) == 0;
   if (!candidate.heatingKnown && candidate.heatingAllowed) return Status::InvalidArgument;
   if (!cursor.read8(temperature)) return Status::InvalidLength;
   candidate.weather.currentCelsius = static_cast<int8_t>(temperature);

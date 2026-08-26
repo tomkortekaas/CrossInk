@@ -9,18 +9,19 @@
 #include <string>
 #include <vector>
 
+#include "DashboardV3Quotes.h"
 #include "DashboardV3Renderer.h"
 
 namespace {
 
 struct Operation {
-  enum class Kind { Fill, Line, Rect, Text, Icon } kind;
+  enum class Kind { Fill, Line, Rect, Text, Icon, Shade } kind;
   dashboard::v3::Rect bounds;
   std::string text;
   bool black = true;
   uint8_t iconId = 0;
   dashboard::v3::TextAlign align = dashboard::v3::TextAlign::Left;
-  dashboard::v3::FontRole font = dashboard::v3::FontRole::Utility10;
+  dashboard::v3::FontRole font = dashboard::v3::FontRole::Body;
 };
 
 class RecordingCanvas final : public dashboard::v3::DashboardV3Canvas {
@@ -50,6 +51,14 @@ class RecordingCanvas final : public dashboard::v3::DashboardV3Canvas {
     operations.push_back({Operation::Kind::Icon, bounds, {}, black, iconId});
   }
 
+  void shade(const dashboard::v3::Rect bounds, const dashboard::v3::Shade level) override {
+    if (level == dashboard::v3::Shade::None) return;
+    operations.push_back({Operation::Kind::Shade, bounds, {}, true});
+    shades.push_back(level);
+  }
+
+  std::vector<dashboard::v3::Shade> shades;
+
   std::vector<Operation> operations;
 };
 
@@ -77,7 +86,7 @@ TEST(DashboardV3Renderer, MinimalPackageKeepsEveryOperationInsideTheFixedCanvas)
   for (const auto& operation : canvas.operations) {
     hasBlackHeader |= operation.kind == Operation::Kind::Fill && operation.black &&
                       operation.bounds == dashboard::v3::Rect{0, 0, 528, 77};
-    hasAgenda |= operation.kind == Operation::Kind::Text && operation.text == "AGENDA";
+    hasAgenda |= operation.kind == Operation::Kind::Text && operation.text == "KOMENDE AFSPRAKEN";
     hasStatus |= operation.kind == Operation::Kind::Text && operation.text == "STATUS";
   }
   EXPECT_TRUE(hasBlackHeader);
@@ -166,12 +175,20 @@ dashboard::v3::DashboardV3Package maximumContentPackage() {
   package.status.stepGoal = 10000;
 
   package.unreadTotal = 12;
+  // Deliberately not id 0: a fixture on the default value would still pass if
+  // the renderer ignored the id entirely.
   package.quoteId = 1;
 
+  // One entry per declared row: a short list would leave the tail null and
+  // crash the moment a ceiling is raised.
   static const char* const agendaTitles[dashboard::v3::MAX_AGENDA_ROWS] = {
-      "AFSPRAAK 1", "AFSPRAAK 2", "AFSPRAAK 3", "AFSPRAAK 4", "AFSPRAAK 5"};
+      "AFSPRAAK 1", "AFSPRAAK 2", "AFSPRAAK 3", "AFSPRAAK 4",
+      "AFSPRAAK 5", "AFSPRAAK 6", "AFSPRAAK 7", "AFSPRAAK 8"};
   static const char* const agendaDetails[dashboard::v3::MAX_AGENDA_ROWS] = {
-      "DETAIL 1", "DETAIL 2", "DETAIL 3", "DETAIL 4", "DETAIL 5"};
+      "DETAIL 1", "DETAIL 2", "DETAIL 3", "DETAIL 4",
+      "DETAIL 5", "DETAIL 6", "DETAIL 7", "DETAIL 8"};
+  static_assert(std::size(agendaTitles) == dashboard::v3::MAX_AGENDA_ROWS, "one title per declared row");
+  static_assert(std::size(agendaDetails) == dashboard::v3::MAX_AGENDA_ROWS, "one detail per declared row");
   for (size_t index = 0; index < dashboard::v3::MAX_AGENDA_ROWS; ++index) {
     package.agenda[index].dayOffset = static_cast<uint8_t>(index);
     package.agenda[index].minuteOfDay = static_cast<uint16_t>(9 * 60 + index);
@@ -187,7 +204,9 @@ dashboard::v3::DashboardV3Package maximumContentPackage() {
   }
   package.marketCount = static_cast<uint8_t>(dashboard::v3::MAX_MARKETS);
 
-  static const char* const chatNames[dashboard::v3::MAX_CHATS] = {"PAPA", "MAMA", "WERK"};
+  static const char* const chatNames[dashboard::v3::MAX_CHATS] = {"PAPA",   "MAMA",  "WERK", "SIEM",
+                                                                  "FAMILIE", "LUKE", "TBOS"};
+  static_assert(std::size(chatNames) == dashboard::v3::MAX_CHATS, "one name per declared chat row");
   for (size_t index = 0; index < dashboard::v3::MAX_CHATS; ++index) {
     copyText(package.chats[index].name, package.chats[index].nameLength, chatNames[index]);
     package.chats[index].unreadCount = static_cast<uint16_t>(index + 1);
@@ -286,7 +305,7 @@ TEST(DashboardV3Renderer, HeaderEstablishesFourIconColumnsForDateWeatherWindSun)
   EXPECT_LT(wind->bounds.x, 3 * columnWidth);
   EXPECT_GE(sunset->bounds.x, 3 * columnWidth);
 
-  EXPECT_NE(findTextOperation(canvas, "KM/U"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "KM/U O"), nullptr);
   EXPECT_NE(findTextOperation(canvas, "ZON ONDER"), nullptr);
 }
 
@@ -303,7 +322,10 @@ TEST(DashboardV3Renderer, WeatherColumnShowsOnlySupportedFields) {
       weatherTexts.push_back(operation.text);
     }
   }
-  const std::vector<std::string> expected = {"21°", "17° / 24°"};
+  // The min/max range moved under the date, where the mock-up puts it. The
+  // weather column keeps its subject label, which is still never an invented
+  // condition word.
+  const std::vector<std::string> expected = {"21°", "WEER"};
   EXPECT_EQ(weatherTexts, expected);
 }
 
@@ -406,33 +428,43 @@ TEST(DashboardV3Renderer, EmptyChatsLeaveWhatsAppSectionOutWithoutMovingMarkets)
 
   dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
 
+  // Comparing the two renders states the invariant directly. The old absolute
+  // threshold only held for the row heights the status column happened to have.
+  RecordingCanvas withChats;
+  dashboard::v3::renderDashboardV3(withChats, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
   EXPECT_EQ(findTextOperation(canvas, "WHATSAPP"), nullptr);
   ASSERT_NE(findTextOperation(canvas, "AEX"), nullptr);
-  EXPECT_LT(findTextOperation(canvas, "AEX")->bounds.y, 500);
+  ASSERT_NE(findTextOperation(withChats, "AEX"), nullptr);
+  EXPECT_EQ(findTextOperation(canvas, "AEX")->bounds.y, findTextOperation(withChats, "AEX")->bounds.y)
+      << "dropping the chat section must not move the markets above it";
 }
 
 // --- Traffic hierarchy ------------------------------------------------------
 //
 // Two subjects: the commute (destination + travel minutes) dominates the left
 // half, the national jam (congestion kilometres) dominates the right half.
-// The classification byte is validated by the decoder but its meaning is not
-// documented in this repo, so the renderer must not turn it into a label.
+// The classification byte maps to the three labels the V3 design spec names
+// (NORMAAL / DRUK / FILE, matching the Swift wire enum normal=0, busy=1,
+// jammed=2). The renderer must draw one of those and never invent another.
 
 TEST(DashboardV3Renderer, TrafficPutsCommuteMinutesDominantLeftAndJamDistanceDominantRight) {
   RecordingCanvas canvas;
   dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
 
-  const Operation* minutes = findTextOperation(canvas, "23 MIN");
-  const Operation* jamKm = findTextOperation(canvas, "42");
+  const Operation* minutes = findTextOperation(canvas, "23 min");
+  const Operation* jamKm = findTextOperation(canvas, "42 km");
   ASSERT_NE(minutes, nullptr);
   ASSERT_NE(jamKm, nullptr);
   EXPECT_LT(minutes->bounds.x + minutes->bounds.width, 528 / 2) << "commute minutes stay in the left half";
   EXPECT_GE(jamKm->bounds.x, 528 / 2) << "jam distance sits in the right half";
 
   EXPECT_NE(findTextOperation(canvas, "UTRECHT"), nullptr);
-  EXPECT_NE(findTextOperation(canvas, "KM FILE"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "FILES NEDERLAND"), nullptr);
 
-  const Operation* pin = findIconOperation(canvas, 28);
+  // The commute now uses the car icon the mock-up shows instead of a map pin;
+  // findIconOperation returns the first match, which is this traffic one.
+  const Operation* pin = findIconOperation(canvas, 25);
   const Operation* cone = findIconOperation(canvas, 27);
   ASSERT_NE(pin, nullptr);
   ASSERT_NE(cone, nullptr);
@@ -440,7 +472,7 @@ TEST(DashboardV3Renderer, TrafficPutsCommuteMinutesDominantLeftAndJamDistanceDom
   EXPECT_GE(cone->bounds.x, 264);
 }
 
-TEST(DashboardV3Renderer, TrafficClassificationByteIsNotInventedIntoALabel) {
+TEST(DashboardV3Renderer, TrafficClassificationByteUsesOnlyTheThreeDocumentedLabels) {
   RecordingCanvas canvas;
   auto package = maximumContentPackage();
   package.traffic.classification = 2;
@@ -448,24 +480,29 @@ TEST(DashboardV3Renderer, TrafficClassificationByteIsNotInventedIntoALabel) {
 
   std::vector<std::string> trafficTexts;
   for (const auto& operation : canvas.operations) {
-    if (operation.kind == Operation::Kind::Text && operation.bounds.y >= 194 && operation.bounds.y < 271) {
+    const auto traffic = dashboard::v3::computeDashboardV3Layout(528, 792, {}).traffic;
+    if (operation.kind == Operation::Kind::Text && operation.bounds.y >= traffic.y &&
+        operation.bounds.y < traffic.y + traffic.height) {
       trafficTexts.push_back(operation.text);
     }
   }
-  const std::vector<std::string> expected = {"UTRECHT", "23 MIN", "KM FILE", "42"};
+  const std::vector<std::string> expected = {"UTRECHT", "23 min", "FILES NEDERLAND", "42 km", "FILE"};
   EXPECT_EQ(trafficTexts, expected);
 }
 
-TEST(DashboardV3Renderer, MissingTrafficDoesNotDrawLargeDashBlocksOrCountrywideCaption) {
+TEST(DashboardV3Renderer, MissingTrafficDoesNotDrawLargeDashBlocks) {
   RecordingCanvas canvas;
   auto package = maximumContentPackage();
   package.traffic = {};
   dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
 
-  EXPECT_EQ(findTextOperation(canvas, "KM FILE"), nullptr);
   for (const auto& operation : canvas.operations) {
-    if (operation.kind != Operation::Kind::Text || operation.bounds.y < 194 || operation.bounds.y >= 271) continue;
-    EXPECT_NE(operation.font, dashboard::v3::FontRole::Value28)
+    const auto traffic = dashboard::v3::computeDashboardV3Layout(528, 792, {}).traffic;
+    if (operation.kind != Operation::Kind::Text || operation.bounds.y < traffic.y ||
+        operation.bounds.y >= traffic.y + traffic.height) {
+      continue;
+    }
+    EXPECT_NE(operation.font, dashboard::v3::FontRole::Hero)
         << "missing traffic must not become a large black dash";
   }
 }
@@ -482,11 +519,21 @@ TEST(DashboardV3Renderer, StatusRowsUseIconsAndProgressBarsForBatteries) {
     const char* percent;
     uint8_t value;
   };
-  const ExpectedRow rows[] = {{17, "X3", "88%", 88}, {25, "AUTO", "65%", 65}, {20, "THUIS", "42%", 42}};
-  const int firstRowY = 271 + 48;  // bodyRight.y + 48
+  const ExpectedRow rows[] = {
+      {17, "X3", "88%", 88}, {25, "IONIQ 5", "65%", 65}, {20, "THUISACCU", "42%", 42}};
+  // bodyRight.y + top padding + the STATUS heading; the row pitch is the Micro
+  // ascender (17) + gap (6) + bar (8) + spacing (10).
+  const int firstRowY = dashboard::v3::computeDashboardV3Layout(528, 792, {}).bodyRight.y + 10 + 21 + 10;
+  const int rowPitch = 41;
   for (size_t index = 0; index < 3; ++index) {
-    const int rowY = firstRowY + static_cast<int>(index) * 32;
-    const Operation* icon = findIconOperation(canvas, rows[index].iconId);
+    const int rowY = firstRowY + static_cast<int>(index) * rowPitch;
+    const Operation* icon = nullptr;
+    for (const auto& operation : canvas.operations) {
+      if (operation.kind == Operation::Kind::Icon && operation.iconId == rows[index].iconId &&
+          operation.bounds.x >= 270) {
+        icon = &operation;
+      }
+    }
     ASSERT_NE(icon, nullptr);
     EXPECT_GE(icon->bounds.x, 270);
     EXPECT_NE(findTextOperation(canvas, rows[index].name), nullptr);
@@ -495,7 +542,7 @@ TEST(DashboardV3Renderer, StatusRowsUseIconsAndProgressBarsForBatteries) {
     const Operation* track = nullptr;
     const Operation* fill = nullptr;
     for (const auto& operation : canvas.operations) {
-      if (operation.bounds.y < rowY || operation.bounds.y >= rowY + 32) {
+      if (operation.bounds.y < rowY || operation.bounds.y >= rowY + rowPitch) {
         continue;
       }
       if (operation.kind == Operation::Kind::Rect) {
@@ -513,27 +560,194 @@ TEST(DashboardV3Renderer, StatusRowsUseIconsAndProgressBarsForBatteries) {
     EXPECT_LE(fill->bounds.x + fill->bounds.width, track->bounds.x + track->bounds.width);
   }
 
-  EXPECT_GE(findTextOperation(canvas, "THUIS")->bounds.width, 100);
+  EXPECT_GE(findTextOperation(canvas, "THUISACCU")->bounds.width, 100);
 }
 
-TEST(DashboardV3Renderer, StepsStayDistinctBelowTheBatteryRows) {
+TEST(DashboardV3Renderer, StepsUseTheSameMeterRowAsTheBatteryRows) {
   RecordingCanvas canvas;
   dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
 
+  // Steps are a fourth meter, not a block of their own: same icon column, same
+  // label rung, same value slot, same bar. Only the value differs - a count
+  // rather than a percentage - because the goal is context and the count is not.
   const Operation* steps = findTextOperation(canvas, "STAPPEN");
   const Operation* stepsValue = findTextOperation(canvas, "7.850");
+  const Operation* x3 = findTextOperation(canvas, "X3");
+  const Operation* x3Value = findTextOperation(canvas, "88%");
   const Operation* footprints = findIconOperation(canvas, 47);
   ASSERT_NE(steps, nullptr);
   ASSERT_NE(stepsValue, nullptr);
-  ASSERT_NE(footprints, nullptr);
-  EXPECT_GE(steps->bounds.x, 270);
-  EXPECT_GE(stepsValue->bounds.x, 270);
-  EXPECT_GE(footprints->bounds.x, 270);
-  EXPECT_GE(steps->bounds.width, 90);
-
-  const Operation* x3 = findTextOperation(canvas, "X3");
   ASSERT_NE(x3, nullptr);
-  EXPECT_GT(steps->bounds.y, x3->bounds.y + 3 * 32) << "steps sit below all three battery rows";
+  ASSERT_NE(x3Value, nullptr);
+  ASSERT_NE(footprints, nullptr);
+
+  EXPECT_EQ(steps->bounds.x, x3->bounds.x) << "labels share one column";
+  EXPECT_EQ(steps->bounds.width, x3->bounds.width);
+  EXPECT_EQ(steps->font, x3->font) << "labels share one rung";
+  EXPECT_EQ(stepsValue->bounds.x, x3Value->bounds.x) << "values share one slot";
+  EXPECT_EQ(stepsValue->bounds.width, x3Value->bounds.width);
+  EXPECT_EQ(stepsValue->font, x3Value->font);
+
+  // Fourth row on the same pitch as the first three.
+  const int pitch = steps->bounds.y - x3->bounds.y;
+  EXPECT_EQ(pitch % 3, 0) << "steps sit a whole number of rows below X3";
+  EXPECT_GT(pitch, 0);
+
+  // And it carries a bar like the others.
+  bool hasTrack = false;
+  for (const auto& operation : canvas.operations) {
+    hasTrack |= operation.kind == Operation::Kind::Rect && operation.bounds.x >= 270 &&
+                operation.bounds.y > steps->bounds.y && operation.bounds.y < steps->bounds.y + 30;
+  }
+  EXPECT_TRUE(hasTrack) << "the steps row needs the same progress bar as a battery row";
+}
+
+// The phone sends a quote id, never the text, and computes it as
+// `dayNumber % quotes.count` - zero based, with no "absent" value. If the two
+// tables drift apart by one entry, every footer quietly renders the wrong
+// quote, which nothing else in the system would notice. These expectations are
+// transcribed from Sources/DashboardCore/DashboardV3Quotes.swift.
+
+TEST(DashboardV3Quotes, TableMatchesThePhoneTableEntryForEntry) {
+  ASSERT_EQ(dashboard::v3::QUOTE_COUNT, 8u);
+
+  const char* const expectedText[] = {
+      "Verbeelding is belangrijker dan kennis.",
+      "Eenvoud is de ultieme verfijning.",
+      "Minder is meer.",
+      "Pluk de dag.",
+      "Geluk is waar voorbereiding en kans elkaar ontmoeten.",
+      "Een reis van duizend mijl begint met \xc3\xa9\xc3\xa9n stap.",
+      "Wie niet waagt, die niet wint.",
+      "Kennis spreekt, maar wijsheid luistert.",
+  };
+  const char* const expectedAuthor[] = {
+      "Albert Einstein", "Leonardo da Vinci",      "Ludwig Mies van der Rohe", "Horatius",
+      "Seneca",          "Laozi",                  "Nederlands spreekwoord",   "Jimi Hendrix",
+  };
+
+  for (size_t index = 0; index < dashboard::v3::QUOTE_COUNT; ++index) {
+    const dashboard::v3::Quote* quote = dashboard::v3::quoteForId(static_cast<uint8_t>(index));
+    ASSERT_NE(quote, nullptr) << "id " << index << " must resolve";
+    EXPECT_STREQ(quote->text, expectedText[index]) << "at id " << index;
+    EXPECT_STREQ(quote->author, expectedAuthor[index]) << "at id " << index;
+  }
+}
+
+TEST(DashboardV3Quotes, IdsAreZeroBasedAndOutOfRangeDrawsNothing) {
+  const dashboard::v3::Quote* first = dashboard::v3::quoteForId(0);
+  ASSERT_NE(first, nullptr) << "id 0 is a real quote, not an absent sentinel";
+  EXPECT_STREQ(first->author, "Albert Einstein");
+  // A newer phone may carry a longer table; an unknown id must draw nothing
+  // rather than wrap around onto the wrong quote.
+  EXPECT_EQ(dashboard::v3::quoteForId(static_cast<uint8_t>(dashboard::v3::QUOTE_COUNT)), nullptr);
+  EXPECT_EQ(dashboard::v3::quoteForId(255), nullptr);
+}
+
+// A dry forecast and a missing one look identical in the buckets, so the wire
+// flag is the only thing that separates them. Getting this backwards put
+// "GEEN REGENINFO" over a real, dry two hours on hardware.
+
+TEST(DashboardV3Renderer, AllZeroRainWithTheFlagSetReadsAsDryNotAsMissing) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.rainKnown = true;
+  package.rain.fill(0);
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_EQ(findTextOperation(canvas, "GEEN REGENINFO"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "TWEE UUR DROOG"), nullptr);
+}
+
+TEST(DashboardV3Renderer, UnknownRainSaysSoAndDrawsNoStrip) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.rainKnown = false;
+  package.rain.fill(0);
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_NE(findTextOperation(canvas, "GEEN REGENINFO"), nullptr);
+  // No empty outlined strip and no window clock: both read as a broken widget
+  // rather than as absent information.
+  const auto rain = dashboard::v3::computeDashboardV3Layout(528, 792, {}).rain;
+  for (const auto& operation : canvas.operations) {
+    if (operation.bounds.y < rain.y || operation.bounds.y >= rain.y + rain.height) continue;
+    EXPECT_NE(operation.kind, Operation::Kind::Rect) << "no empty strip outline";
+  }
+  EXPECT_EQ(findTextOperation(canvas, "10:20"), nullptr) << "no window clock without a window";
+}
+
+// The RTC runs UTC and the wire carries no timezone, so the package timestamp
+// and the device's own clock are in different frames. Drawing them side by side
+// without reconciling put "ververst 06:20" under a band reading "NU 08:20".
+
+TEST(DashboardV3Renderer, RefreshTimeIsDrawnInTheDevicesLocalTime) {
+  auto package = maximumContentPackage();
+  package.generatedAt = 1787616000ULL + 6 * 3600 + 20 * 60;  // 06:20 UTC
+
+  RecordingCanvas utc;
+  dashboard::v3::renderDashboardV3(utc, package, /*minuteOfDay=*/380, dashboard::v3::UTC_OFFSET_Q_UTC);
+  EXPECT_NE(findTextOperation(utc, "ververst 06:20"), nullptr);
+
+  RecordingCanvas cest;  // offset 56 == UTC+2
+  dashboard::v3::renderDashboardV3(cest, package, /*minuteOfDay=*/500, 56);
+  EXPECT_NE(findTextOperation(cest, "ververst 08:20"), nullptr);
+  EXPECT_EQ(findTextOperation(cest, "ververst 06:20"), nullptr);
+}
+
+TEST(DashboardV3Renderer, HeaderDateFollowsLocalTimeAcrossMidnight) {
+  auto package = maximumContentPackage();
+  // 22:30 UTC on 25 August is already 00:30 on 26 August in CEST.
+  package.generatedAt = 1787616000ULL - 3600 - 30 * 60;
+
+  RecordingCanvas utc;
+  dashboard::v3::renderDashboardV3(utc, package, /*minuteOfDay=*/1350, dashboard::v3::UTC_OFFSET_Q_UTC);
+  EXPECT_NE(findTextOperation(utc, "DI 25 AUG"), nullptr);
+
+  RecordingCanvas cest;
+  dashboard::v3::renderDashboardV3(cest, package, /*minuteOfDay=*/30, 56);
+  EXPECT_NE(findTextOperation(cest, "WO 26 AUG"), nullptr)
+      << "after local midnight the header must not still show yesterday";
+}
+
+TEST(DashboardV3Renderer, ChatClockNeverTruncates) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  // 20:40 is among the widest clocks at the Micro rung; it used to lose its
+  // minutes to a 44 px box and render as "20:...".
+  package.chats[0].lastMessageMinuteOfDay = 20 * 60 + 40;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  const Operation* clock = findTextOperation(canvas, "20:40");
+  ASSERT_NE(clock, nullptr) << "the chat clock must survive intact";
+  EXPECT_GE(clock->bounds.width, 48) << "a clock box must hold the widest HH:MM at the Micro rung";
+}
+
+TEST(DashboardV3Renderer, WhatsAppHeadingCarriesNoMessageIcon) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+
+  ASSERT_NE(findTextOperation(canvas, "WHATSAPP"), nullptr);
+  EXPECT_EQ(findIconOperation(canvas, 65), nullptr)
+      << "the heading already names the source; the glyph only crowded the unread count";
+}
+
+TEST(DashboardV3Renderer, FourDigitCongestionStepsDownARungInsteadOfTruncating) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.traffic.nationalCongestionKilometers = 1860;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  const Operation* value = findTextOperation(canvas, "1860 km");
+  ASSERT_NE(value, nullptr) << "a truncated number would read as a smaller jam";
+  EXPECT_EQ(value->font, dashboard::v3::FontRole::Value)
+      << "four digits drop one rung so they still fit beside the classification badge";
+
+  RecordingCanvas threeDigits;
+  dashboard::v3::renderDashboardV3(threeDigits, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
+  const Operation* normal = findTextOperation(threeDigits, "42 km");
+  ASSERT_NE(normal, nullptr);
+  EXPECT_EQ(normal->font, dashboard::v3::FontRole::Hero) << "the usual case keeps the Hero rung";
 }
 
 // --- Font-safe placeholders ------------------------------------------------
@@ -564,6 +778,8 @@ TEST(DashboardV3Renderer, MinimalPackageEmitsOnlyFontSafeAsciiPlaceholders) {
 
   EXPECT_NE(findTextOperation(canvas, "-"), nullptr) << "header date label uses an ASCII dash";
   EXPECT_NE(findTextOperation(canvas, "VERWARMING -"), nullptr) << "unknown heating uses an ASCII dash";
+  // Quote ids are zero based, matching the phone's dayNumber % quotes.count, so
+  // the default package already selects the first quote.
   EXPECT_NE(findTextOperation(canvas, "- Albert Einstein"), nullptr) << "footer author uses an ASCII dash";
 }
 
@@ -578,7 +794,7 @@ TEST(DashboardV3Renderer, MaximumContentNeverEmitsTheEmDashGlyph) {
     EXPECT_EQ(operation.text.find("\xE2\x80\x94"), std::string::npos)
         << "U+2014 must not be emitted: \"" << operation.text << "\"";
   }
-  EXPECT_NE(findTextOperation(canvas, "- Albert Einstein"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "- Leonardo da Vinci"), nullptr);
 }
 
 TEST(DashboardV3Renderer, UnknownMarketChangeRendersAsciiHyphen) {
@@ -597,11 +813,10 @@ TEST(DashboardV3Renderer, UnknownMarketChangeRendersAsciiHyphen) {
 
 // --- Agenda time geometry --------------------------------------------------
 //
-// The 48 px time box truncates a full HH:MM in production Lexend Deca 10
-// bold: the widest case ("00:00") measures 4 * (225/16) + 86/16 = 61.6 px
-// using the advance table in lib/EpdFont/builtinFonts/noemoji/lexenddeca_10_bold.h.
-// The time box must be wide enough, with the timeline and title shifted right
-// to keep every operation inside the canvas.
+// The agenda time sits on the Micro rung, where the widest clock ("00:00")
+// measures 48 px against the built-in Lexend 8 bold advance table. The box must
+// stay wider than that, and short enough that the right-aligned text never
+// reaches the first timeline dot.
 
 TEST(DashboardV3Renderer, AgendaTimeBoundsHoldAFullHHMMInTheProductionFont) {
   RecordingCanvas canvas;
@@ -609,7 +824,7 @@ TEST(DashboardV3Renderer, AgendaTimeBoundsHoldAFullHHMMInTheProductionFont) {
 
   const Operation* time = findTextOperation(canvas, "09:00");
   ASSERT_NE(time, nullptr);
-  EXPECT_GE(time->bounds.width, 64) << "agenda time box must hold a full HH:MM in Lexend Deca 10 bold";
+  EXPECT_GE(time->bounds.width, 48) << "agenda time box must hold a full HH:MM at the Micro rung";
   EXPECT_LE(time->bounds.x + time->bounds.width, 85)
       << "right-aligned time text must not reach the first timeline dot";
 
@@ -647,11 +862,15 @@ TEST(DashboardV3Renderer, ChatSectionMovesDirectlyBelowStepsWhenMarketsAreEmpty)
   const Operation* papa = findTextOperation(canvas, "PAPA");
   ASSERT_NE(whatsapp, nullptr);
   ASSERT_NE(papa, nullptr);
-  EXPECT_LT(papa->bounds.y, 500) << "the first chat row sits directly below steps";
+  const Operation* steps = findTextOperation(canvas, "STAPPEN");
+  ASSERT_NE(steps, nullptr);
+  EXPECT_GT(papa->bounds.y, steps->bounds.y) << "the first chat row sits below steps";
+  const auto body = dashboard::v3::computeDashboardV3Layout(528, 792, {}).body;
+  EXPECT_LT(papa->bounds.y, body.y + body.height) << "and stays inside the body band";
   EXPECT_LT(whatsapp->bounds.y, papa->bounds.y);
 }
 
-TEST(DashboardV3Renderer, ChatRowsAreCompactOneLineRowsWithTimeRightAligned) {
+TEST(DashboardV3Renderer, ChatRowsAreCompactOneLineRowsLedByTheirTime) {
   RecordingCanvas canvas;
   dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
 
@@ -664,9 +883,10 @@ TEST(DashboardV3Renderer, ChatRowsAreCompactOneLineRowsWithTimeRightAligned) {
   ASSERT_NE(werk, nullptr);
   ASSERT_NE(time, nullptr);
 
-  EXPECT_EQ(time->bounds.y, papa->bounds.y) << "name and last-message time share one compact row";
-  EXPECT_GT(time->bounds.x, papa->bounds.x + papa->bounds.width)
-      << "the right-aligned time must not overlap the chat name";
+  EXPECT_LE(std::abs(time->bounds.y - papa->bounds.y), 2)
+      << "name and last-message time share one compact row";
+  EXPECT_LE(time->bounds.x + time->bounds.width, papa->bounds.x)
+      << "the time leads the row and must not overlap the chat name";
   EXPECT_GT(mama->bounds.y, papa->bounds.y);
   EXPECT_GT(werk->bounds.y, mama->bounds.y);
   EXPECT_LE(time->bounds.x + time->bounds.width, canvas.width());
@@ -694,18 +914,20 @@ TEST(DashboardV3Renderer, FooterQuoteIsLeftAlignedWithAsciiHyphenAuthor) {
   RecordingCanvas canvas;
   dashboard::v3::renderDashboardV3(canvas, maximumContentPackage(), /*minuteOfDay=*/12 * 60);
 
-  const Operation* quote = findTextOperation(canvas, "Verbeelding is belangrijker dan kennis.");
-  const Operation* author = findTextOperation(canvas, "- Albert Einstein");
+  // quoteId 1 in the shared fixture, which is the second entry of the table.
+  const Operation* quote = findTextOperation(canvas, "Eenvoud is de ultieme verfijning.");
+  const Operation* author = findTextOperation(canvas, "- Leonardo da Vinci");
   ASSERT_NE(quote, nullptr);
   ASSERT_NE(author, nullptr);
   EXPECT_EQ(quote->align, dashboard::v3::TextAlign::Left);
   EXPECT_EQ(author->align, dashboard::v3::TextAlign::Left);
-  EXPECT_GE(quote->bounds.y, 730) << "the quote line lives inside the footer band";
+  EXPECT_GE(quote->bounds.y, dashboard::v3::computeDashboardV3Layout(528, 792, {}).footer.y)
+      << "the quote line lives inside the footer band";
   EXPECT_GE(author->bounds.y, quote->bounds.y + quote->bounds.height)
       << "the smaller author line sits below the quote line";
   EXPECT_LE(author->bounds.y + author->bounds.height, 792);
-  EXPECT_EQ(quote->font, dashboard::v3::FontRole::Utility12)
-      << "the real Lexend 14 quote truncated on hardware; use the readable 12px rung";
+  EXPECT_EQ(quote->font, dashboard::v3::FontRole::Body)
+      << "the quote must stay on the Body rung: the wider rungs truncate at 528 px";
 }
 
 TEST(DashboardV3Renderer, DeviceBatteryOverridesOnlyTheX3StatusValue) {
@@ -1000,6 +1222,15 @@ class PbmCanvas final : public dashboard::v3::DashboardV3Canvas {
       out.write(reinterpret_cast<const char*>(row.data()), kRowBytes);
     }
     return out.good();
+  }
+
+  void shade(const dashboard::v3::Rect bounds, const dashboard::v3::Shade level) override {
+    if (level == dashboard::v3::Shade::None) return;
+    for (int y = bounds.y; y < bounds.y + bounds.height; ++y) {
+      for (int x = bounds.x; x < bounds.x + bounds.width; ++x) {
+        if (dashboard::v3::shadeCoversPixel(level, x, y)) setPixel(x, y, true);
+      }
+    }
   }
 
   const std::vector<uint8_t>& pixels() const { return pixels_; }

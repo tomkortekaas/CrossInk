@@ -6,9 +6,12 @@ namespace {
 constexpr int REFERENCE_WIDTH = 528;
 constexpr int REFERENCE_HEIGHT = 792;
 constexpr int HEADER_HEIGHT = 77;
-constexpr int RAIN_HEIGHT = 117;
+// The rain band shrank from 117 when its chart became the mock-up's fixed
+// 24 px intensity strip. The 21 px it gave up went to the body, which is the
+// band that runs out of room first: it is where the agenda rows live.
+constexpr int RAIN_HEIGHT = 96;
 constexpr int TRAFFIC_HEIGHT = 77;
-constexpr int BODY_HEIGHT = 459;
+constexpr int BODY_HEIGHT = 480;
 constexpr int LEFT_COLUMN_WIDTH = 270;
 
 int scaled(const int available, const int reference) {

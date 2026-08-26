@@ -11,9 +11,15 @@ namespace dashboard::v3 {
 constexpr uint8_t TEMPLATE_DASHBOARD_V3 = 5;
 constexpr uint8_t FORMAT_VERSION = 1;
 constexpr size_t RAIN_BUCKET_COUNT = 24;
-constexpr size_t MAX_AGENDA_ROWS = 5;
+// Row ceilings, mirroring DashboardV3PackageLayout in the iOS repository. They
+// are not typical counts: the phone's composer fits real content under its
+// 512-byte target, and the renderer draws only as many rows as the band has
+// height for. Raising a ceiling is backwards compatible in this direction —
+// the sections are count-prefixed, so a phone still sending fewer rows decodes
+// unchanged.
+constexpr size_t MAX_AGENDA_ROWS = 8;
 constexpr size_t MAX_MARKETS = 3;
-constexpr size_t MAX_CHATS = 3;
+constexpr size_t MAX_CHATS = 7;
 constexpr size_t MAX_DESTINATION_BYTES = 16;
 constexpr size_t MAX_AGENDA_TITLE_BYTES = 32;
 constexpr size_t MAX_AGENDA_DETAIL_BYTES = 24;
@@ -83,6 +89,9 @@ struct DashboardV3Package {
   std::array<uint8_t, RAIN_BUCKET_COUNT> rain{};
   bool heatingKnown = false;
   bool heatingAllowed = false;
+  /// Whether the rain forecast is known at all. Twenty-four zeroes is a valid
+  /// forecast — two dry hours — so absence cannot be read from the buckets.
+  bool rainKnown = true;
   Traffic traffic{};
   StatusValues status{};
   uint16_t unreadTotal = 0;
