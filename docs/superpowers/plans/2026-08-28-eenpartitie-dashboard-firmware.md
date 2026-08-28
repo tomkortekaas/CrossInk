@@ -10,6 +10,60 @@
 
 ---
 
+## Voortgang (bijgewerkt 2026-08-28, na uitvoering van taak 0 t/m 3)
+
+Taak 0 t/m 3 zijn af, maar anders gelopen dan hieronder beschreven. **Lees dit
+eerst; de taakteksten daaronder zijn de oorspronkelijke, deels achterhaalde
+versie.**
+
+- **Taak 0 — af.** `cmake` geïnstalleerd (via Homebrew), testbuild draait in
+  `build/tests`. Baseline: 189 tests, 188 geslaagd, 1 overgeslagen.
+- **Taak 1 en 2 — anders opgelost.** De verzonnen vlaggen
+  `CROSSINK_WITHOUT_DICTIONARY`/`_OPDS` bestonden niet en zijn niet gemaakt:
+  ze zouden `#ifdef`s dwars door de leescode vergen, wat de upstream-merge
+  duurder maakt. In plaats daarvan alleen het taalfilter, met twee
+  randvoorwaarden die pas bij het bouwen bleken:
+  - De V1-migratietabel wordt geïndexeerd met een byte van schijf. Hij houdt
+    zijn lengte en laat ontbrekende talen op Engels uitkomen; inkorten zou elke
+    latere positie verschuiven en een oude instelling stil naar de verkeerde
+    taal laten wijzen.
+  - `KeyboardEntryActivity` noemt `Language::FR`, `DE` en `ES` bij naam. Die
+    moeten meegecompileerd blijven of de build breekt in plaats van te krimpen.
+
+  Vandaar `custom_i18n_languages = NL,EN,FR,DE,ES` in de nieuwe env.
+- **Taak 3 — af, en de schatting was mis.** De radio kost **~243 KB**, niet de
+  ~169 KB die uit de symbolen van de ontvanger volgde; die telling miste de
+  controller- en HCI-blobs. Belangrijker: BLE aanzetten is geen kwestie van
+  linken. De basisconfiguratie herbouwt de IDF met een eigen `custom_sdkconfig`
+  en dáár staat Bluetooth uit, dus een reader-build heeft de headers niet eens.
+  De env zet `CONFIG_BT_ENABLED`/`CONFIG_BT_NIMBLE_ENABLED` aan.
+
+**Stand na commit `6a1cec3c`:**
+
+| Build | Flash | Opmerking |
+|---|---|---|
+| `dashboard-x3` | 6.245.307 (95,3%) | mét radio, 308 KB marge |
+| `spike-ble-reader-x3` | 6.321.791 | onveranderd, alle 28 talen |
+| `spike-ble-receiver-x3` | bouwt | de terugweg |
+
+Statisch RAM met radio: 77.956 bytes tegen 76.292 zonder — slechts 1,7 KB erbij.
+
+**Correctie op taak 5, gevonden door een gedelegeerde review vóór er code
+geschreven werd:** `returnToReader` stuurt de `accepted`-notificatie (0x03) naar
+de telefoon, en doet dat ná de partitiewissel. Het oorspronkelijke ontwerp brak
+de stack af vóór dat moment, waardoor die bevestiging nooit verstuurd zou
+worden en de app elke geslaagde overdracht als `send timedout` zou loggen. De
+ontvanger wordt daarom in drieën gesplitst — luisteren, notificeren, afbreken —
+zodat de aanroeper de regie houdt over wat er tussen het einde van het venster
+en het uitzetten van de radio gebeurt. De partitieroute behoudt zo zijn wissel
+én zijn `boot-switch-failed`-melding (0x14).
+
+**Openstaand:** taak 5 (ontvanger verplaatsen), 6, 7, en de metingen 4, 8 en 9.
+Bij de eerste flash moeten firmware én app samen naar wire-versie 2; beide
+repos staan daar al op, de apparaten nog op versie 1.
+
+---
+
 ## Uitgangswaarden (gemeten 2026-08-28)
 
 Deze getallen zijn de nulmeting. Zonder deze kan achteraf niet worden aangetoond dat het gewerkt heeft.
@@ -23,7 +77,7 @@ Reproduceer ze met `python3 scripts/trace_power_report.py <tracebestand>`.
 | Kosten per wakecyclus | ~313 µAh | verschil van bovenstaande |
 | Aandeel wakes in dagverbruik | ~25% (19 van 75 mAh) | afgeleid, 60 cycli/dag |
 | Flash reader | 6.321.935 van 6.553.600 bytes (96,5%) | build |
-| Flash BLE-stack alleen | ~169 KB | symbolen `spike-ble-receiver-x3` |
+| Flash BLE-stack alleen | ~243 KB gemeten (schatting uit symbolen was ~169 KB en te laag) | build `dashboard-x3` |
 | Statisch RAM reader | 76.292 bytes (23%) | build |
 | Heap vrij met boek open, laagste punt | 82.932 bytes | serieel, `[MEM] Periodic` |
 | Grootste aaneengesloten blok | 61.428 bytes | idem |
