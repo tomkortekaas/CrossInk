@@ -96,11 +96,10 @@ WriteCallbacks writeCallbacks;
 
 namespace dashboard {
 
-ReceiverResult runReceiverWindow(uint32_t windowMs) {
-  // The window is enforced by the shared ReceiverWindow (20s, the same hard
-  // deadline the partition receiver uses). `windowMs` stays in the signature so
-  // the caller keeps stating the contract explicitly.
-  (void)windowMs;
+ReceiverResult runReceiverWindow(const uint32_t windowMs) {
+  // Start the clock before the radio comes up, so the time the stack takes to
+  // initialise counts against the window rather than extending it.
+  receiverWindow = ReceiverWindow(millis(), windowMs);
   if (!BLEDevice::init(DEVICE_NAME)) return ReceiverResult::TimedOut;
   BLEServer* server = BLEDevice::createServer();
   if (server == nullptr) return ReceiverResult::TimedOut;
