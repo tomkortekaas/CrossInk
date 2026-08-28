@@ -72,6 +72,51 @@ TEST(AgendaWakePolicy, ClosesTheWindowOnLocalTimeNotUtc) {
             static_cast<uint64_t>(CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES) * 60ULL * 1000000ULL);
 }
 
+// The wake window has to land on a fixed grid — :00, :15, :30, :45 for the
+// default interval — rather than "interval minutes from whenever we happened to
+// fall asleep".
+//
+// Two reasons, and the second is the important one. A button press wakes the
+// device, and going back to sleep used to restart the count, so every touch
+// pushed the next BLE window later; the X3 sticks to the back of a phone, so it
+// gets touched. And a drifting window cannot be predicted by the phone, which
+// is what any fix on that side needs: you cannot wake an app in time for a
+// moment you cannot compute. Anchoring to the clock makes the schedule the same
+// on both devices without them having to agree on anything.
+TEST(AgendaWakePolicy, AnchorsWakesToTheClockGridNotToWhenItFellAsleep) {
+  // 12:07 -> the next grid point is 12:15, so 8 minutes. Waking at 12:22
+  // (a full interval later) is the drift this prevents.
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 12, 7), 8ULL * 60ULL * 1000000ULL);
+  // A button press a minute later must not push the window out again: 12:08
+  // still targets 12:15.
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 12, 8), 7ULL * 60ULL * 1000000ULL);
+  // Just before a grid point, the wait is short rather than rounded up.
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 12, 14), 1ULL * 60ULL * 1000000ULL);
+  // Exactly on a grid point takes the whole interval to the next one — never
+  // zero, which would wake the device immediately and spin.
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 12, 15),
+            static_cast<uint64_t>(CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES) * 60ULL * 1000000ULL);
+}
+
+// A phone-supplied interval that does not divide the hour still gets a stable
+// grid: the anchor is midnight, so the schedule repeats daily even when it does
+// not repeat hourly.
+TEST(AgendaWakePolicy, AnchorsAnUnevenIntervalToMidnight) {
+  // 7-minute interval from 07:00: grid points are 07:00, 07:07, 07:14...
+  // At 07:10 the next one is 07:14, so 4 minutes.
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 7, 10, 7, 7, 22), 4ULL * 60ULL * 1000000ULL);
+  // And exactly on one still takes the full interval.
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 7, 14, 7, 7, 22), 7ULL * 60ULL * 1000000ULL);
+}
+
+// The window end still wins over the grid: the last tick of the day is capped
+// there, so the device never wakes for a window that has already closed.
+TEST(AgendaWakePolicy, StillCapsTheGridAtTheWindowEnd) {
+  // 21:58 with a 15-minute grid: the next grid point is 22:00, which is also
+  // the window end — 2 minutes, and the wake after that is the night block.
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 21, 58), 2ULL * 60ULL * 1000000ULL);
+}
+
 TEST(AgendaWakePolicy, RoutesOnlyTimerWakeToReceiver) {
   EXPECT_EQ(dashboard::chooseAgendaBootRoute(true, dashboard::WakeSource::Timer), dashboard::AgendaBootRoute::Receiver);
   EXPECT_EQ(dashboard::chooseAgendaBootRoute(true, dashboard::WakeSource::PowerButton),

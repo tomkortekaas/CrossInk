@@ -32,8 +32,23 @@ uint64_t sleepTimerIntervalUs(const bool agendaSleep, const uint8_t currentHour,
   } else if (nowMinute >= windowEndMinute) {
     sleepMinutes = (MINUTES_PER_DAY - nowMinute) + windowStartMinute;
   } else {
+    // Sleep to the next point on a fixed grid anchored at midnight, not for a
+    // whole interval from now. Those are the same thing only when the device
+    // fell asleep on a grid point, and it usually does not: a button press
+    // wakes it mid-interval, and counting afresh from there pushed the next BLE
+    // window later every single time. The X3 sticks to the back of a phone, so
+    // it gets pressed, and the window drifted all day.
+    //
+    // The grid also makes the schedule computable from the clock alone, which
+    // is what lets the phone know when to be awake without the two devices
+    // having to agree on anything.
+    const uint32_t interval = intervalMinutes > 0 ? intervalMinutes : 1;
+    // Runs 1..interval rather than 0..interval-1: landing exactly on a grid
+    // point means the *next* one is a full interval away. A zero here would
+    // arm a timer that fires immediately and spin the device.
+    const uint32_t minutesUntilGrid = interval - (nowMinute % interval);
     const uint32_t minutesUntilWindowEnd = windowEndMinute - nowMinute;
-    sleepMinutes = minutesUntilWindowEnd < intervalMinutes ? minutesUntilWindowEnd : intervalMinutes;
+    sleepMinutes = minutesUntilWindowEnd < minutesUntilGrid ? minutesUntilWindowEnd : minutesUntilGrid;
   }
   return static_cast<uint64_t>(sleepMinutes) * 60ULL * 1000000ULL;
 }

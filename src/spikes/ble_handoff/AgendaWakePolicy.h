@@ -26,10 +26,18 @@ struct WakeSettings {
 };
 
 // Microseconds to sleep before the next Agenda BLE wake, given the current
-// local time. Wakes happen every `intervalMinutes` between `windowStartHour`
-// and `windowEndHour`; outside that window, sleeps in one block straight
-// through to the next `windowStartHour`. The three settings default to the
-// compiled-in fallback so every existing call site keeps working unchanged.
+// local time. Wakes land on a fixed grid of `intervalMinutes` anchored at
+// midnight — :00, :15, :30, :45 at the default — between `windowStartHour` and
+// `windowEndHour`, with the last tick of the day capped at the window end.
+// Outside the window, sleeps in one block straight through to the next
+// `windowStartHour`. The three settings default to the compiled-in fallback so
+// every existing call site keeps working unchanged.
+//
+// The grid is anchored to the clock rather than to the moment of falling
+// asleep, because a button press wakes the device mid-interval and counting
+// afresh from there pushed every subsequent window later. It also makes the
+// schedule predictable from the clock alone, which is what any phone-side fix
+// needs: an app cannot be woken in time for a moment it cannot compute.
 uint64_t sleepTimerIntervalUs(bool agendaSleep, uint8_t currentHour, uint8_t currentMinute,
                                uint32_t intervalMinutes = AGENDA_WAKE_INTERVAL_MINUTES,
                                uint8_t windowStartHour = AGENDA_WAKE_WINDOW_START_HOUR,
