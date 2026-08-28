@@ -75,9 +75,10 @@ uint16_t localMinuteOfDay(const uint8_t utcHour, const uint8_t utcMinute, const 
   return static_cast<uint16_t>((shifted % perDay + perDay) % perDay);
 }
 
-AgendaBootRoute chooseAgendaBootRoute(const bool agendaCycleArmed, const WakeSource wakeSource) {
-  return agendaCycleArmed && wakeSource == WakeSource::Timer ? AgendaBootRoute::Receiver
-                                                             : AgendaBootRoute::NormalReader;
+AgendaBootRoute chooseAgendaBootRoute(const bool agendaCycleArmed, const WakeSource wakeSource,
+                                      const bool inProcessAvailable) {
+  if (!agendaCycleArmed || wakeSource != WakeSource::Timer) return AgendaBootRoute::NormalReader;
+  return inProcessAvailable ? AgendaBootRoute::InProcessReceiver : AgendaBootRoute::Receiver;
 }
 
 uint32_t encodeReceiverResultWord(const ReceiverResult result) {

@@ -125,6 +125,17 @@ TEST(AgendaWakePolicy, RoutesOnlyTimerWakeToReceiver) {
             dashboard::AgendaBootRoute::NormalReader);
 }
 
+TEST(AgendaWakePolicy, PrefersTheInProcessReceiverWhenAvailable) {
+  EXPECT_EQ(dashboard::chooseAgendaBootRoute(true, dashboard::WakeSource::Timer, true),
+            dashboard::AgendaBootRoute::InProcessReceiver);
+  EXPECT_EQ(dashboard::chooseAgendaBootRoute(true, dashboard::WakeSource::Timer, false),
+            dashboard::AgendaBootRoute::Receiver);
+  EXPECT_EQ(dashboard::chooseAgendaBootRoute(true, dashboard::WakeSource::PowerButton, true),
+            dashboard::AgendaBootRoute::NormalReader);
+  EXPECT_EQ(dashboard::chooseAgendaBootRoute(false, dashboard::WakeSource::Timer, true),
+            dashboard::AgendaBootRoute::NormalReader);
+}
+
 TEST(AgendaWakePolicy, AcceptsOnlyValidOneShotReceiverResults) {
   EXPECT_EQ(dashboard::decodeReceiverResultWord(
                 dashboard::encodeReceiverResultWord(dashboard::ReceiverResult::AwaitingWindow)),

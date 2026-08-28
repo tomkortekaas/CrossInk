@@ -5,7 +5,7 @@
 namespace dashboard {
 
 enum class WakeSource : uint8_t { Other, PowerButton, Timer };
-enum class AgendaBootRoute : uint8_t { NormalReader, Receiver };
+enum class AgendaBootRoute : uint8_t { NormalReader, Receiver, InProcessReceiver };
 enum class ReceiverResult : uint8_t { None, AwaitingWindow, Accepted, TimedOut };
 
 #ifndef CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES
@@ -60,7 +60,7 @@ WakeSettings clampWakeSettings(uint8_t rawIntervalMinutes, uint8_t rawWindowStar
 // checked on the host. Out-of-range offsets fall back to UTC.
 uint16_t localMinuteOfDay(uint8_t utcHour, uint8_t utcMinute, uint8_t offsetQ);
 
-AgendaBootRoute chooseAgendaBootRoute(bool agendaCycleArmed, WakeSource wakeSource);
+AgendaBootRoute chooseAgendaBootRoute(bool agendaCycleArmed, WakeSource wakeSource, bool inProcessAvailable = false);
 uint32_t encodeReceiverResultWord(ReceiverResult result);
 ReceiverResult decodeReceiverResultWord(uint32_t word);
 
