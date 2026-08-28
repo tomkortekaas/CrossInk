@@ -69,9 +69,13 @@ Status decodeDashboardV3(const uint8_t* bytes, size_t size, DashboardV3Package& 
   uint8_t version = 0;
   uint8_t flags = 0;
   uint8_t temperature = 0;
-  if (!cursor.read8(version) || version != FORMAT_VERSION || !cursor.read8(flags) || (flags & 0xF8U) != 0) {
-    return Status::InvalidArgument;
-  }
+  if (!cursor.read8(version)) return Status::InvalidArgument;
+  // A version mismatch is its own status, not InvalidArgument: an older package
+  // is a stale cache that heals once the phone sends a fresh one, not a corrupt
+  // payload. The decoder reports only "unsupported"; which direction it is
+  // (package older vs firmware behind) is the reader's call.
+  if (version != FORMAT_VERSION) return Status::UnsupportedVersion;
+  if (!cursor.read8(flags) || (flags & 0xF8U) != 0) return Status::InvalidArgument;
   candidate.heatingKnown = (flags & 1U) != 0;
   candidate.heatingAllowed = (flags & 2U) != 0;
   // Bit 2 marks the forecast absent, so a package from a phone build that

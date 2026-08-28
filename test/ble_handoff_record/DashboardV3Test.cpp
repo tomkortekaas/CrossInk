@@ -123,6 +123,27 @@ TEST(DashboardV3Decode, RejectsReservedHeatingBits) {
 // (which heals once the phone sends a fresh one) is not lumped in with a
 // corrupt package. The decoder reports the same status for both directions;
 // telling "old package" apart from "newer firmware" is the reader's job.
+TEST(DashboardV3Decode, RejectsOlderFormatVersionAsUnsupportedVersion) {
+  auto bytes = minimalSwiftPackage();
+  bytes[31] = dashboard::v3::FORMAT_VERSION - 1;  // the last-known-good package is older
+  writeU32(bytes, 78, dashboard::crc32(bytes.data(), 78));
+  dashboard::v3::DashboardV3Package package{};
+
+  const dashboard::Status status = dashboard::v3::decodeDashboardV3(bytes.data(), bytes.size(), package);
+  EXPECT_EQ(status, dashboard::Status::UnsupportedVersion);
+  EXPECT_NE(status, dashboard::Status::InvalidArgument);
+}
+
+TEST(DashboardV3Decode, RejectsNewerFormatVersionAsUnsupportedVersion) {
+  auto bytes = minimalSwiftPackage();
+  bytes[31] = dashboard::v3::FORMAT_VERSION + 1;  // firmware is behind the phone
+  writeU32(bytes, 78, dashboard::crc32(bytes.data(), 78));
+  dashboard::v3::DashboardV3Package package{};
+
+  EXPECT_EQ(dashboard::v3::decodeDashboardV3(bytes.data(), bytes.size(), package),
+            dashboard::Status::UnsupportedVersion);
+}
+
 TEST(DashboardV3Decode, AcceptsMessageIcon65AndRejectsIconIdAbove65) {
   auto bytes = minimalSwiftPackage();
   dashboard::v3::DashboardV3Package package{};

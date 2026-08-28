@@ -140,13 +140,33 @@ bool renderWidgetGridV2Template(GfxRenderer& renderer) {
   return true;
 }
 
-bool renderDashboardV3Template(GfxRenderer& renderer) {
+bool renderDashboardV3Template(GfxRenderer& renderer, DashboardSkipReason* const reasonOut) {
   // Keep the decoded maximum-size V3 package out of the render task's stack,
   // matching the established template-4 path above.
   static dashboard::v3::DashboardV3Package package;
   package = {};
-  if (dashboard::v3::decodeDashboardV3(persisted.bytes.data(), persisted.length, package) !=
-      dashboard::Status::Ok) {
+  const auto decodeStatus = dashboard::v3::decodeDashboardV3(persisted.bytes.data(), persisted.length, package);
+  if (decodeStatus != dashboard::Status::Ok) {
+    // Without the status this reaches the panel as a bare "onleesbaar", which
+    // looks the same as a device that never received anything — and the reason
+    // is only reconstructable by reflashing with a log line added.
+    if (decodeStatus == dashboard::Status::UnsupportedVersion) {
+      // The version byte is the first byte of the V3 template body, directly
+      // after the shared prefix. The decoder only reports "unsupported"; the
+      // direction decides what the panel tells the user, so it is read here.
+      const uint8_t packageVersion = persisted.bytes[dashboard::SHARED_PREFIX_SIZE];
+      LOG_ERR("BLEPAY", "decodeDashboardV3 failed status=%u packageId=%u length=%u version=%u expected=%u",
+              static_cast<unsigned>(decodeStatus), persisted.header.packageId, persisted.length,
+              static_cast<unsigned>(packageVersion), static_cast<unsigned>(dashboard::v3::FORMAT_VERSION));
+      if (reasonOut != nullptr) {
+        *reasonOut = packageVersion < dashboard::v3::FORMAT_VERSION ? DashboardSkipReason::OlderPackage
+                                                                    : DashboardSkipReason::UnknownTemplate;
+      }
+    } else {
+      LOG_ERR("BLEPAY", "decodeDashboardV3 failed status=%u packageId=%u length=%u",
+              static_cast<unsigned>(decodeStatus), persisted.header.packageId, persisted.length);
+      if (reasonOut != nullptr) *reasonOut = DashboardSkipReason::Undecodable;
+    }
     return false;
   }
   dashboard::v3::applyDashboardV3DeviceBattery(package, powerManager.getBatteryPercentage());
@@ -286,6 +306,8 @@ const char* dashboardSkipReasonText(const DashboardSkipReason reason) {
       return "Dashboard nieuwer dan deze firmware";
     case DashboardSkipReason::Undecodable:
       return "Dashboard onleesbaar - firmware bijwerken";
+    case DashboardSkipReason::OlderPackage:
+      return "Wacht op nieuw dashboard";
     case DashboardSkipReason::None:
       return "";
   }
@@ -316,8 +338,13 @@ bool renderDashboardCard(GfxRenderer& renderer, DashboardSkipReason* const reaso
       setReason(DashboardSkipReason::Undecodable);
       return false;
     case dashboard::v3::TEMPLATE_DASHBOARD_V3:
-      if (renderDashboardV3Template(renderer)) return true;
-      setReason(DashboardSkipReason::Undecodable);
+      if (renderDashboardV3Template(renderer, reasonOut)) return true;
+      // renderDashboardV3Template sets the precise reason (OlderPackage,
+      // UnknownTemplate, Undecodable) when it can; only fall back when it left
+      // the reason untouched.
+      if (reasonOut == nullptr || *reasonOut == DashboardSkipReason::None) {
+        setReason(DashboardSkipReason::Undecodable);
+      }
       return false;
     default:
       // Niet corrupt, alleen niet iets dat deze build kan tekenen.

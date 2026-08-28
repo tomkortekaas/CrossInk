@@ -13,8 +13,9 @@ void logPersistedPayload();
 enum class DashboardSkipReason : uint8_t {
   None = 0,          // er is getekend
   NoPackage,         // niets in NVS
-  UnknownTemplate,   // byte 5 kent deze build niet
+  UnknownTemplate,   // byte 5 of de pakketversie kent deze build niet
   Undecodable,       // template bekend, inhoud niet
+  OlderPackage,      // versie lager dan deze build; de telefoon stuurt vanzelf een nieuwer pakket
 };
 
 const char* dashboardSkipReasonText(DashboardSkipReason reason);

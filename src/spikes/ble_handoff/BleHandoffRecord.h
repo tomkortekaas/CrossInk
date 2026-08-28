@@ -38,6 +38,9 @@ constexpr uint8_t SCHEMA_V1 = 1;
 constexpr uint8_t SCHEMA_V2 = 2;
 constexpr uint8_t TEMPLATE_AGENDA = 1;
 
+// Numeric values are logged (e.g. `decodeDashboardV3 failed status=%u`), so new
+// values must only ever be appended. Inserting in the middle would silently
+// reinterpret older log lines.
 enum class Status : uint8_t {
   Ok,
   InvalidArgument,
@@ -52,6 +55,10 @@ enum class Status : uint8_t {
   InvalidUtf8,
   InvalidCrc,
   StalePackage,
+  // The package's format version is not the one this build expects. Direction
+  // (older package vs newer firmware) is a reader concern, not a decode
+  // failure: the decoder only reports "version not supported".
+  UnsupportedVersion,
 };
 
 using PackageBytes = std::array<uint8_t, MAX_PACKAGE_SIZE>;
