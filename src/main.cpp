@@ -112,7 +112,7 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "spikes/ble_handoff/AgendaWakeRetention.h"
 #include "spikes/ble_handoff/BleHandoffNvs.h"
 #ifdef CROSSINK_IN_PROCESS_RECEIVER
-#include <BLEDevice.h>
+#include "spikes/ble_handoff/InProcessReceiver.h"
 #endif
 #include "spikes/ble_handoff/BleHandoffReaderProbe.h"
 #include "spikes/ble_handoff/BleHandoffTrace.h"
@@ -899,27 +899,9 @@ void setupDisplayAndFonts(const bool seamless = false, const bool loadReaderReso
   }
 }
 
-#ifdef CROSSINK_IN_PROCESS_RECEIVER
-// TEMPORARY probe for the single-partition work: forces the linker to pull the
-// BLE stack in so its real flash cost can be measured before any logic moves.
-// `volatile` is what keeps it: without it the compiler proves the branch dead
-// and drops the stack again, and the build reports a saving that is not real.
-// Never runs — the flag is never written.
-volatile bool crossinkBleProbeEnabled = false;
-static void crossinkBleProbe() {
-  if (crossinkBleProbeEnabled) {
-    BLEDevice::init("x3-probe");
-    BLEDevice::deinit(true);
-  }
-}
-#endif
-
 void setup() {
 #ifdef SIMULATOR
   SimulatorLifecycle::restoreSilentRebootToken(silentRebootMagic, silentRebootTarget, silentRebootPayload);
-#endif
-#ifdef CROSSINK_IN_PROCESS_RECEIVER
-  crossinkBleProbe();
 #endif
   BoardConfig::holdPowerRails();
 
@@ -1064,10 +1046,16 @@ void setup() {
   }
 
 #ifdef CROSSINK_BLE_HANDOFF_READER
-  if (dashboard::chooseAgendaBootRoute(
-          retainedResult == dashboard::ReceiverResult::AwaitingWindow,
-          wakeupReason == HalGPIO::WakeupReason::Timer ? dashboard::WakeSource::Timer : dashboard::WakeSource::Other) ==
-      dashboard::AgendaBootRoute::Receiver) {
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+  constexpr bool inProcessAvailable = true;
+#else
+  constexpr bool inProcessAvailable = false;
+#endif
+  const dashboard::AgendaBootRoute agendaRoute = dashboard::chooseAgendaBootRoute(
+      retainedResult == dashboard::ReceiverResult::AwaitingWindow,
+      wakeupReason == HalGPIO::WakeupReason::Timer ? dashboard::WakeSource::Timer : dashboard::WakeSource::Other,
+      inProcessAvailable);
+  if (agendaRoute == dashboard::AgendaBootRoute::Receiver) {
     LOG_INF("BLEPAY", "Agenda timer wake; switching to isolated dashboard receiver");
     // Written before the hand-off, not after it: this is the one line that says
     // a timer wake happened at all. If the switch fails, or the receiver hangs
@@ -1082,6 +1070,22 @@ void setup() {
     dashboard::retainReceiverResult(dashboard::ReceiverResult::None);
     LOG_ERR("BLEPAY", "Receiver slot unavailable; continuing reader boot");
   }
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+  else if (agendaRoute == dashboard::AgendaBootRoute::InProcessReceiver) {
+    LOG_INF("BLEPAY", "Agenda timer wake; running in-process dashboard receiver");
+    // Same trace stage as the partition route so old and new traces keep the
+    // same shape and can be compared side by side.
+    dashboard::appendEarlyBootTrace(static_cast<uint8_t>(wakeupReason), retainedResult,
+                                    dashboard::BootTraceStage::ReceiverHandoff, resetReasonName(rawResetReason));
+    const auto result = dashboard::runReceiverWindow(20000);
+    if (result == dashboard::ReceiverResult::Accepted) {
+      dashboard::notifyReceiverStatus(0x03);
+      resumeAgendaAfterAccepted = true;
+    }
+    dashboard::teardownReceiver();
+    dashboard::retainReceiverResult(result);
+  }
+#endif
 
 #endif
 
