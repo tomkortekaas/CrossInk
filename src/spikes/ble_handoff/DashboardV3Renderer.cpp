@@ -316,49 +316,75 @@ void renderHeader(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3P
   }
 }
 
-/// Describes the next dry/wet transition in the two-hour window, e.g.
-/// "NOG 27 MIN DROOG" or "REGEN OVER 18 MIN". Returns false when the window
-/// carries no usable data, so the caller can say so instead of drawing an
-/// empty chart that looks like a forecast of no rain.
-bool describeRain(const std::array<uint8_t, RAIN_BUCKET_COUNT>& buckets, char (&out)[32]) {
-  bool anyRain = false;
-  for (const uint8_t bucket : buckets) {
-    if (bucket > 0) {
-      anyRain = true;
-      break;
+/// Describes the two-hour window with an absolute clock time anchored to the
+/// package's rainStartMinute rather than the panel's own clock, which can be a
+/// quarter hour ahead of the data. The four outcomes are:
+///   - all dry:    "DROOG TOT HH:MM"          (end of the window)
+///   - all wet:    "REGEN TOT NA HH:MM"       (rain continues past the window)
+///   - dry now:    "HH:MM LICHTE|MATIGE|HEVIGE REGEN" (first wet bucket, peak of
+///                 the contiguous wet run that starts there)
+///   - wet now:    "HH:MM DROOG"              (first dry bucket)
+/// All times are modulo 24 hours.
+bool describeRain(const std::array<uint8_t, RAIN_BUCKET_COUNT>& buckets, const uint16_t rainStartMinute,
+                  char (&out)[32]) {
+  const auto timeAt = [&](const size_t bucketIndex, char (&time)[8]) {
+    const uint16_t minute =
+        static_cast<uint16_t>((static_cast<uint32_t>(rainStartMinute) + bucketIndex * RAIN_MINUTES_PER_BUCKET) % 1440);
+    formatMinute(minute, time);
+  };
+
+  size_t firstWet = 0;
+  while (firstWet < RAIN_BUCKET_COUNT && buckets[firstWet] == 0) ++firstWet;
+
+  if (firstWet == RAIN_BUCKET_COUNT) {
+    char endTime[8];
+    timeAt(RAIN_BUCKET_COUNT, endTime);
+    std::snprintf(out, sizeof(out), "DROOG TOT %s", endTime);
+    return true;
+  }
+
+  if (firstWet == 0) {
+    size_t firstDry = 0;
+    while (firstDry < RAIN_BUCKET_COUNT && buckets[firstDry] > 0) ++firstDry;
+    if (firstDry == RAIN_BUCKET_COUNT) {
+      char endTime[8];
+      timeAt(RAIN_BUCKET_COUNT, endTime);
+      std::snprintf(out, sizeof(out), "REGEN TOT NA %s", endTime);
+      return true;
     }
-  }
-  const bool rainingNow = buckets[0] > 0;
-  if (!anyRain) {
-    std::snprintf(out, sizeof(out), "TWEE UUR DROOG");
+    char dryTime[8];
+    timeAt(firstDry, dryTime);
+    std::snprintf(out, sizeof(out), "%s DROOG", dryTime);
     return true;
   }
 
-  size_t transition = 0;
-  while (transition < RAIN_BUCKET_COUNT && (buckets[transition] > 0) == rainingNow) ++transition;
-  const int minutes = static_cast<int>(transition) * RAIN_MINUTES_PER_BUCKET;
-
-  if (transition >= RAIN_BUCKET_COUNT) {
-    std::snprintf(out, sizeof(out), rainingNow ? "TWEE UUR REGEN" : "TWEE UUR DROOG");
-    return true;
+  // Dry now, rain coming: the word follows the peak of the contiguous wet run
+  // that begins at firstWet, exactly as RainForecast.outlook does in the app.
+  // Anything after the first dry bucket belongs to a later shower and must not
+  // influence this headline.
+  uint8_t peak = 0;
+  size_t cursor = firstWet;
+  while (cursor < RAIN_BUCKET_COUNT && buckets[cursor] > 0) {
+    peak = std::max(peak, buckets[cursor]);
+    ++cursor;
   }
-  if (rainingNow) {
-    std::snprintf(out, sizeof(out), "NOG %d MIN REGEN", minutes);
-  } else {
-    std::snprintf(out, sizeof(out), "REGEN OVER %d MIN", minutes);
-  }
+  const char* word = peak >= 3 ? "HEVIGE" : peak == 2 ? "MATIGE" : "LICHTE";
+  char startTime[8];
+  timeAt(firstWet, startTime);
+  std::snprintf(out, sizeof(out), "%s %s REGEN", startTime, word);
   return true;
 }
 
-void renderRain(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3Package& package,
-                const uint16_t minuteOfDay) {
+void renderRain(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3Package& package) {
   // "Every bucket is zero" is a forecast, not an absence: it means two dry
   // hours. Only the wire flag can tell the difference, and reading it wrong is
-  // what put "GEEN REGENINFO" over a perfectly good dry morning.
-  const bool hasRainData = package.rainKnown;
+  // what put "GEEN REGENINFO" over a perfectly good dry morning. The window's
+  // clock is rainStartMinute, not the panel's own: the package can be a quarter
+  // hour old by the time it is drawn, so the panel clock would shift the axis.
+  const bool hasRainData = package.rainKnown && package.rainStartMinute != UINT16_MAX;
 
   char headline[32] = "GEEN REGENINFO";
-  if (hasRainData) describeRain(package.rain, headline);
+  if (hasRainData) describeRain(package.rain, package.rainStartMinute, headline);
   label(canvas, textBox(rect.x + PAD, rect.y + 10, 240, FontRole::Body), headline, FontRole::Body, true);
 
   // Heating badge, right-aligned against the panel edge.
@@ -394,9 +420,14 @@ void renderRain(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3Pac
       for (int bucket = 0; bucket < RAIN_BUCKETS_PER_SEGMENT; ++bucket) {
         peak = std::max(peak, package.rain[segment * RAIN_BUCKETS_PER_SEGMENT + bucket]);
       }
+      // The nibble is the Buienradar intensity band, not a rescaled byte, so
+      // these thresholds are the wire contract itself. The phone maps the same
+      // band to 0..3; keeping the two tables separate is what let a drizzle and
+      // a downpour collapse onto one half-tone. 4..15 stay valid on the wire
+      // and land in Solid; they are just not produced any more.
       const Shade level = peak == 0      ? Shade::None
-                          : peak < 5     ? Shade::Quarter
-                          : peak < 10    ? Shade::Half
+                          : peak < 2     ? Shade::Quarter
+                          : peak < 3     ? Shade::Half
                                          : Shade::Solid;
       if (level == Shade::None) continue;
       const int x1 = stripLeft + 1 + segment * (stripWidth - 2) / RAIN_SEGMENTS;
@@ -404,18 +435,19 @@ void renderRain(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3Pac
       canvas.shade({x1, innerTop, std::max(1, x2 - x1 - RAIN_SEGMENT_GAP), innerHeight}, level);
     }
   }
-  // The "now" edge of the window, so the strip has a reading direction.
+  // The left edge marks the first bucket, rainStartMinute: this is the start of
+  // the data window, not "now" (the package may already be a quarter hour old).
   canvas.fill({stripLeft + 1, stripTop - 3, 2, RAIN_STRIP_HEIGHT + 6}, true);
 
-  // The window's own clock, so a glance tells you which two hours these are.
+  // Absolute labels from the package, so the two-hour window is readable
+  // without trusting the panel's own clock.
   const int scaleY = stripTop + RAIN_STRIP_HEIGHT + 8;
-  char nowLabel[8];
+  char startLabel[8];
   char endLabel[8];
-  formatMinute(minuteOfDay, nowLabel);
-  formatMinute(static_cast<uint16_t>((minuteOfDay + RAIN_BUCKET_COUNT * RAIN_MINUTES_PER_BUCKET) % 1440), endLabel);
-  char nowText[24];
-  std::snprintf(nowText, sizeof(nowText), "NU %s", nowLabel);
-  label(canvas, textBox(stripLeft, scaleY, 120, FontRole::Micro), nowText, FontRole::Micro);
+  formatMinute(package.rainStartMinute, startLabel);
+  formatMinute(static_cast<uint16_t>((package.rainStartMinute + RAIN_BUCKET_COUNT * RAIN_MINUTES_PER_BUCKET) % 1440),
+               endLabel);
+  label(canvas, textBox(stripLeft, scaleY, 120, FontRole::Micro), startLabel, FontRole::Micro);
   label(canvas, textBox(stripLeft + stripWidth - 120, scaleY, 120, FontRole::Micro), endLabel, FontRole::Micro, false,
         true, TextAlign::Right);
 }
@@ -721,7 +753,7 @@ void renderDashboardV3(DashboardV3Canvas& canvas, const DashboardV3Package& pack
   const uint64_t localGenerated = localGeneratedAt(package.generatedAt, utcOffsetQ);
   canvas.fill({0, 0, canvas.width(), canvas.height()}, false);
   renderHeader(canvas, layout.header, package, minuteOfDay, localGenerated);
-  renderRain(canvas, layout.rain, package, minuteOfDay);
+  renderRain(canvas, layout.rain, package);
   renderTraffic(canvas, layout.traffic, package);
   canvas.line(0, layout.rain.y + layout.rain.height, canvas.width() - 1, layout.rain.y + layout.rain.height, true);
   canvas.line(0, layout.traffic.y + layout.traffic.height, canvas.width() - 1,

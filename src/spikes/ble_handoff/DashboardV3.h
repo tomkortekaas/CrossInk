@@ -9,7 +9,11 @@
 namespace dashboard::v3 {
 
 constexpr uint8_t TEMPLATE_DASHBOARD_V3 = 5;
-constexpr uint8_t FORMAT_VERSION = 1;
+constexpr uint8_t FORMAT_VERSION = 2;
+// The rain buckets carry one nibble each. The nibble is the Buienradar
+// intensity band shared with the iOS composer, not a rescaled byte:
+//   0 = dry (< 0.1 mm/u), 1 = light (0.1..1), 2 = moderate (1..5),
+//   3 = heavy (>= 5). 4..15 remain valid on the wire and render as heavy.
 constexpr size_t RAIN_BUCKET_COUNT = 24;
 // Row ceilings, mirroring DashboardV3PackageLayout in the iOS repository. They
 // are not typical counts: the phone's composer fits real content under its
@@ -87,6 +91,11 @@ struct DashboardV3Package {
   uint8_t wakeWindowEndHour = 0;
   Weather weather{};
   std::array<uint8_t, RAIN_BUCKET_COUNT> rain{};
+  /// Local clock minute (since midnight) of bucket 0. The panel can be woken a
+  /// quarter hour after the package was composed, so every rain text is derived
+  /// from this instead of the panel's own clock. UINT16_MAX means the window's
+  /// start is unknown and the rain band is treated like a missing forecast.
+  uint16_t rainStartMinute = UINT16_MAX;
   bool heatingKnown = false;
   bool heatingAllowed = false;
   /// Whether the rain forecast is known at all. Twenty-four zeroes is a valid

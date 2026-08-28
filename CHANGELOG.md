@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- A heavy shower now reads as solid black on the V3 rain strip. Intensity was carried on a scale whose darkest band only began around 44 mm/h — heavier than any shower the Netherlands gets — so drizzle and a downpour were drawn in the same half tone and the strip was in effect a wet/dry bar.
+- The V3 rain strip says when it will rain instead of in how many minutes, and the clock under it comes from the forecast rather than from the panel. The device reads a package that is often a quarter of an hour old, which made every countdown wrong by exactly that much; a time of day stays true however long the package sits on the screen.
 - Text on the V3 dashboard no longer overflows its box. The font ladder was chosen by name, but the built-in "Lexend 10" face is over twice as tall as its name suggests on this panel, so nearly everything was set at roughly double the intended size and was cut short.
 - The bars on the V3 status rows no longer run through their own labels.
 - A shortened value on the V3 dashboard no longer ends in a black lozenge. The ellipsis it appended is missing from the condensed number fonts, which draw an unknown character as a filled box.

@@ -159,6 +159,9 @@ dashboard::v3::DashboardV3Package maximumContentPackage() {
   package.weather.sunriseTomorrowMinute = 6 * 60 + 31;
 
   for (uint8_t& bucket : package.rain) bucket = 15;
+  // The rain band's absolute clock. Tests that exercise a specific headline
+  // override this; everything else just needs a valid two-hour window.
+  package.rainStartMinute = 12 * 60;
 
   package.heatingKnown = true;
   package.heatingAllowed = true;
@@ -652,11 +655,12 @@ TEST(DashboardV3Renderer, AllZeroRainWithTheFlagSetReadsAsDryNotAsMissing) {
   RecordingCanvas canvas;
   auto package = maximumContentPackage();
   package.rainKnown = true;
+  package.rainStartMinute = 12 * 60;
   package.rain.fill(0);
   dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
 
   EXPECT_EQ(findTextOperation(canvas, "GEEN REGENINFO"), nullptr);
-  EXPECT_NE(findTextOperation(canvas, "TWEE UUR DROOG"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "DROOG TOT 14:00"), nullptr);
 }
 
 TEST(DashboardV3Renderer, UnknownRainSaysSoAndDrawsNoStrip) {
@@ -675,6 +679,176 @@ TEST(DashboardV3Renderer, UnknownRainSaysSoAndDrawsNoStrip) {
     EXPECT_NE(operation.kind, Operation::Kind::Rect) << "no empty strip outline";
   }
   EXPECT_EQ(findTextOperation(canvas, "10:20"), nullptr) << "no window clock without a window";
+}
+
+// The rain nibble is an intensity band, not a rescaled Buienradar byte. The
+// phone and this renderer must both use the same table, or a drizzle and a
+// downpour collapse into the same half-tone (the bug this guards against):
+//   0 = dry, 1 = light, 2 = moderate, 3 = heavy, 4..15 = heavy as well.
+std::vector<dashboard::v3::Shade> rainShadeLevels(const RecordingCanvas& canvas) {
+  const dashboard::v3::Rect rain = dashboard::v3::computeDashboardV3Layout(528, 792, {}).rain;
+  std::vector<dashboard::v3::Shade> levels;
+  size_t shadeIndex = 0;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Shade) continue;
+    const dashboard::v3::Shade level = canvas.shades[shadeIndex++];
+    if (operation.bounds.y >= rain.y && operation.bounds.y + operation.bounds.height <= rain.y + rain.height) {
+      levels.push_back(level);
+    }
+  }
+  return levels;
+}
+
+TEST(DashboardV3Renderer, RainShowerSpansQuarterHalfAndSolid) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.rainKnown = true;
+  // A shower building from dry through drizzle, steady rain and a heavy core:
+  // the strip must not collapse that arc onto a single half-tone.
+  package.rain.fill(0);
+  for (size_t index = 6; index < 12; ++index) package.rain[index] = 1;
+  for (size_t index = 12; index < 18; ++index) package.rain[index] = 2;
+  for (size_t index = 18; index < dashboard::v3::RAIN_BUCKET_COUNT; ++index) package.rain[index] = 3;
+
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  const std::vector<dashboard::v3::Shade> levels = rainShadeLevels(canvas);
+  ASSERT_FALSE(levels.empty());
+  EXPECT_NE(std::find(levels.begin(), levels.end(), dashboard::v3::Shade::Quarter), levels.end());
+  EXPECT_NE(std::find(levels.begin(), levels.end(), dashboard::v3::Shade::Half), levels.end());
+  EXPECT_NE(std::find(levels.begin(), levels.end(), dashboard::v3::Shade::Solid), levels.end());
+}
+
+TEST(DashboardV3Renderer, RainNibbleMapsDirectlyToShadeLevels) {
+  const auto renderLevels = [](const uint8_t nibble) {
+    RecordingCanvas canvas;
+    auto package = maximumContentPackage();
+    package.rainKnown = true;
+    package.rain.fill(nibble);
+    dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+    return rainShadeLevels(canvas);
+  };
+
+  const std::vector<dashboard::v3::Shade> light = renderLevels(1);
+  ASSERT_FALSE(light.empty());
+  EXPECT_TRUE(std::all_of(light.begin(), light.end(), [](const dashboard::v3::Shade level) {
+    return level == dashboard::v3::Shade::Quarter;
+  })) << "nibble 1 (light rain) must render as Quarter";
+
+  const std::vector<dashboard::v3::Shade> moderate = renderLevels(2);
+  ASSERT_FALSE(moderate.empty());
+  EXPECT_TRUE(std::all_of(moderate.begin(), moderate.end(), [](const dashboard::v3::Shade level) {
+    return level == dashboard::v3::Shade::Half;
+  })) << "nibble 2 (moderate rain) must render as Half";
+
+  const std::vector<dashboard::v3::Shade> heavy = renderLevels(3);
+  ASSERT_FALSE(heavy.empty());
+  EXPECT_TRUE(std::all_of(heavy.begin(), heavy.end(), [](const dashboard::v3::Shade level) {
+    return level == dashboard::v3::Shade::Solid;
+  })) << "nibble 3 (heavy rain) must render as Solid";
+}
+
+// The rain headline is an absolute clock time anchored to rainStartMinute, not
+// the panel's own clock: the package can be a quarter hour old by the time it
+// is drawn. The word for a shower that starts later follows the peak of the
+// contiguous wet run, exactly like RainForecast.outlook in the phone.
+
+TEST(DashboardV3Renderer, RainComingLaterWithHeavyPeakNamesTheStartAndSeverity) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.rainKnown = true;
+  package.rainStartMinute = 9 * 60;  // 09:00
+  package.rain.fill(0);
+  package.rain[4] = 3;               // first wet bucket, peak of the run
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_NE(findTextOperation(canvas, "09:20 HEVIGE REGEN"), nullptr);
+}
+
+TEST(DashboardV3Renderer, RainComingLaterWithOnlyLightRainStaysLight) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.rainKnown = true;
+  package.rainStartMinute = 10 * 60;  // 10:00
+  package.rain.fill(0);
+  package.rain[3] = 1;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_NE(findTextOperation(canvas, "10:15 LICHTE REGEN"), nullptr);
+}
+
+TEST(DashboardV3Renderer, LaterHeavierShowerDoesNotInfluenceTheFirstHeadline) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.rainKnown = true;
+  package.rainStartMinute = 11 * 60;  // 11:00
+  package.rain.fill(0);
+  package.rain[2] = 1;  // first shower: light, then a dry bucket
+  package.rain[4] = 3;  // second shower: heavy, but a later bui
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_NE(findTextOperation(canvas, "11:10 LICHTE REGEN"), nullptr);
+  EXPECT_EQ(findTextOperation(canvas, "HEVIGE REGEN"), nullptr);
+}
+
+TEST(DashboardV3Renderer, RainStoppingNamesTheFirstDryBucket) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.rainKnown = true;
+  package.rainStartMinute = 12 * 60;  // 12:00
+  package.rain.fill(0);
+  for (size_t index = 0; index < 6; ++index) package.rain[index] = 2;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_NE(findTextOperation(canvas, "12:30 DROOG"), nullptr);
+}
+
+TEST(DashboardV3Renderer, AllDryNamesTheWindowEnd) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.rainKnown = true;
+  package.rainStartMinute = 13 * 60;  // 13:00
+  package.rain.fill(0);
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_NE(findTextOperation(canvas, "DROOG TOT 15:00"), nullptr);
+}
+
+TEST(DashboardV3Renderer, AllWetSaysRainContinuesPastTheWindowEnd) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.rainKnown = true;
+  package.rainStartMinute = 14 * 60;  // 14:00
+  package.rain.fill(2);
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_NE(findTextOperation(canvas, "REGEN TOT NA 16:00"), nullptr);
+}
+
+TEST(DashboardV3Renderer, RainHeadlineWrapsAcrossMidnight) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.rainKnown = true;
+  package.rainStartMinute = 23 * 60 + 50;  // 23:50
+  package.rain.fill(0);
+  package.rain[4] = 3;                     // T + 5 * 4 = 00:10 the next day
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_NE(findTextOperation(canvas, "00:10 HEVIGE REGEN"), nullptr);
+}
+
+TEST(DashboardV3Renderer, RainStripLabelsShowThePackageWindowNotThePanelClock) {
+  RecordingCanvas canvas;
+  auto package = maximumContentPackage();
+  package.rainKnown = true;
+  package.rainStartMinute = 15 * 60;  // 15:00
+  package.rain.fill(1);
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_NE(findTextOperation(canvas, "15:00"), nullptr) << "left label is the first bucket's clock";
+  EXPECT_NE(findTextOperation(canvas, "17:00"), nullptr) << "right label is two hours later";
+  EXPECT_EQ(findTextOperation(canvas, "NU 12:00"), nullptr) << "the panel clock no longer labels the strip";
+  EXPECT_EQ(findTextOperation(canvas, "NU 15:00"), nullptr) << "the word NU is a lie on a stale package";
 }
 
 // The RTC runs UTC and the wire carries no timezone, so the package timestamp

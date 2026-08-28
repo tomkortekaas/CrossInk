@@ -100,7 +100,7 @@ Status decodeDashboardV3(const uint8_t* bytes, size_t size, DashboardV3Package& 
     candidate.rain[index] = packed & 0x0FU;
     candidate.rain[index + 1] = packed >> 4U;
   }
-  if (!cursor.read16(candidate.traffic.travelMinutes) ||
+  if (!cursor.read16(candidate.rainStartMinute) || !cursor.read16(candidate.traffic.travelMinutes) ||
       !cursor.read16(candidate.traffic.nationalCongestionKilometers) ||
       !cursor.read8(candidate.traffic.classification) || !cursor.read8(candidate.status.x3Battery) ||
       !cursor.read8(candidate.status.vehicleBattery) || !cursor.read8(candidate.status.homeBattery) ||
@@ -111,8 +111,9 @@ Status decodeDashboardV3(const uint8_t* bytes, size_t size, DashboardV3Package& 
   }
   if ((candidate.traffic.classification != UINT8_MAX && candidate.traffic.classification > 2) ||
       !validPercent(candidate.status.x3Battery) || !validPercent(candidate.status.vehicleBattery) ||
-      !validPercent(candidate.status.homeBattery) || candidate.agendaCount > MAX_AGENDA_ROWS ||
-      candidate.marketCount > MAX_MARKETS || candidate.chatCount > MAX_CHATS) return Status::InvalidArgument;
+      !validPercent(candidate.status.homeBattery) || !validMinute(candidate.rainStartMinute) ||
+      candidate.agendaCount > MAX_AGENDA_ROWS || candidate.marketCount > MAX_MARKETS ||
+      candidate.chatCount > MAX_CHATS) return Status::InvalidArgument;
 
   status = cursor.readText(candidate.traffic.destination, candidate.traffic.destinationLength, true);
   if (status != Status::Ok) return status;

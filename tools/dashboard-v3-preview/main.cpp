@@ -52,10 +52,14 @@ DashboardV3Package mockupPackage() {
   package.weather.sunsetTodayMinute = 1245;   // 20:45
   package.weather.sunriseTomorrowMinute = 397;
 
-  // Dry for the first half of the window, then a burst of rain.
-  const uint8_t buckets[dashboard::v3::RAIN_BUCKET_COUNT] = {0, 0, 0, 0, 0, 2, 4, 9, 12, 7, 5, 3,
-                                                             2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  // A real Buienradar nowcast, fetched at 15:20 on 2026-08-28: dry for just
+  // over an hour, then light rain building to a downpour at the end. Recorded
+  // values rather than invented ones, because the invented ones used to run to
+  // 12 on a scale where 3 is already the heaviest band a shower reaches.
+  const uint8_t buckets[dashboard::v3::RAIN_BUCKET_COUNT] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                                             0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 3, 2};
   std::copy(std::begin(buckets), std::end(buckets), package.rain.begin());
+  package.rainStartMinute = 15 * 60 + 20;
   package.heatingKnown = true;
   package.heatingAllowed = true;
 
