@@ -137,6 +137,34 @@ def load_translations(
     for yf in yaml_files:
         parsed[yf.name] = parse_yaml_file(str(yf))
 
+    # A build can narrow which languages are compiled in. All 28 together are
+    # ~318 KB of string data on a device whose app partition is 96% full, and a
+    # build that needs room for the BLE stack cannot afford the ones nobody
+    # reads. Unset means "all languages", so the default build is untouched.
+    #
+    # English is always kept whatever is asked for: it is the reference the
+    # other files inherit missing keys from, and its absence is a hard error
+    # below. Note that some languages are referenced by name from C++
+    # (KeyboardEntryActivity picks a layout for FR/DE/ES), so dropping those
+    # breaks the build rather than shrinking it.
+    only = os.environ.get("CROSSINK_I18N_LANGUAGES", "").strip()
+    if only:
+        wanted = {code.strip().upper() for code in only.split(",") if code.strip()} | {"EN"}
+        kept = {
+            name: data
+            for name, data in parsed.items()
+            if data.get("_language_code", "").upper() in wanted
+        }
+        unknown = wanted - {data.get("_language_code", "").upper() for data in kept.values()}
+        if unknown:
+            raise ValueError(
+                f"CROSSINK_I18N_LANGUAGES names languages with no translation file: "
+                f"{', '.join(sorted(unknown))}"
+            )
+        if verbose:
+            print(f"  Language filter: keeping {len(kept)} of {len(parsed)} languages")
+        parsed = kept
+
     # Identify the English file (must exist)
     english_file = None
     for name, data in parsed.items():
@@ -558,9 +586,16 @@ def generate_keys_header(
         "EN", "ES", "FR", "DE", "CS", "PT", "RU", "SV", "RO", "CA", "UK",
         "BE", "IT", "PL", "FI", "DA", "NL", "TR", "KK", "HU", "LT", "SI",
     ]
+    # A build that compiles in only some languages has no enum value for the
+    # rest. The table must keep its length and order regardless: it is indexed
+    # by the byte found in language.bin, so dropping entries would shift every
+    # later position and silently resolve a stored setting to the wrong
+    # language. Absent ones therefore map to English, which is always present.
+    available = set(languages)
+    v1_mapped = [code if code in available else "EN" for code in v1_codes]
     lines.append("// V1 language.bin migration table (frozen enum order from 2f969a9)")
     lines.append("constexpr Language V1_LANGUAGES[] = {")
-    lines.append("    " + ", ".join(f"Language::{c}" for c in v1_codes) + ",")
+    lines.append("    " + ", ".join(f"Language::{c}" for c in v1_mapped) + ",")
     lines.append("};")
     lines.append(
         f"constexpr uint8_t V1_LANGUAGE_COUNT = {len(v1_codes)};"
@@ -999,6 +1034,15 @@ if __name__ == "__main__":
 else:
     try:
         Import("env")
+        # A per-env `custom_i18n_languages = NL,EN` narrows the compiled-in set.
+        # Read from the environment definition rather than expecting an exported
+        # shell variable, so the choice lives next to the build that needs it and
+        # a plain `pio run -e <env>` behaves the same as CI would.
+        selected = env.GetProjectOption("custom_i18n_languages", "")
+        if selected:
+            os.environ["CROSSINK_I18N_LANGUAGES"] = ",".join(
+                str(selected).replace("\n", ",").split(",")
+            )
         main(strip_unused=True)
         keys_path = Path("lib/I18n/I18nKeys.h")
         layout_hash = hashlib.sha256(keys_path.read_bytes()).hexdigest()[:16]

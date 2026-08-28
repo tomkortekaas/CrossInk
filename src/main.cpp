@@ -111,6 +111,9 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "spikes/ble_handoff/AgendaWakePolicy.h"
 #include "spikes/ble_handoff/AgendaWakeRetention.h"
 #include "spikes/ble_handoff/BleHandoffNvs.h"
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+#include <BLEDevice.h>
+#endif
 #include "spikes/ble_handoff/BleHandoffReaderProbe.h"
 #include "spikes/ble_handoff/BleHandoffTrace.h"
 #include "spikes/ble_handoff/DashboardBootSwitch.h"
@@ -896,9 +899,27 @@ void setupDisplayAndFonts(const bool seamless = false, const bool loadReaderReso
   }
 }
 
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+// TEMPORARY probe for the single-partition work: forces the linker to pull the
+// BLE stack in so its real flash cost can be measured before any logic moves.
+// `volatile` is what keeps it: without it the compiler proves the branch dead
+// and drops the stack again, and the build reports a saving that is not real.
+// Never runs — the flag is never written.
+volatile bool crossinkBleProbeEnabled = false;
+static void crossinkBleProbe() {
+  if (crossinkBleProbeEnabled) {
+    BLEDevice::init("x3-probe");
+    BLEDevice::deinit(true);
+  }
+}
+#endif
+
 void setup() {
 #ifdef SIMULATOR
   SimulatorLifecycle::restoreSilentRebootToken(silentRebootMagic, silentRebootTarget, silentRebootPayload);
+#endif
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+  crossinkBleProbe();
 #endif
   BoardConfig::holdPowerRails();
 
