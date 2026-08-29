@@ -57,15 +57,27 @@ void notify(uint8_t code, uint32_t packageId, uint16_t received, uint8_t detail 
   statusCharacteristic->notify();
 }
 
+// Written from the NimBLE host task and read from the reader task, hence
+// volatile: `teardownReceiver` waits on them to avoid pulling the stack out
+// from under an event that is still in flight.
+volatile bool clientConnected = false;
+volatile bool tearingDown = false;
+
 class ServerCallbacks final : public BLEServerCallbacks {
  public:
   void onConnect(BLEServer*) override {
+    clientConnected = true;
     Serial.println("BLE-RX connected");
     notify(0x01, 0, 0);
   }
   void onDisconnect(BLEServer*) override {
+    clientConnected = false;
     Serial.println("BLE-RX disconnected");
-    BLEDevice::startAdvertising();
+    // Re-advertising is what keeps the window usable after a client drops
+    // mid-transfer, but during teardown it rebuilds exactly what is being
+    // dismantled — the partition receiver never had to care, because it
+    // restarted instead of shutting the stack down.
+    if (!tearingDown) BLEDevice::startAdvertising();
   }
 };
 
@@ -189,8 +201,29 @@ void teardownReceiver() {
   static bool tornDown = false;
   if (tornDown) return;
   tornDown = true;
+  tearingDown = true;
+
   BLEAdvertising* advertising = BLEDevice::getAdvertising();
   if (advertising != nullptr) advertising->stop();
+
+  // Let the link close before the stack goes away. The accepted notification
+  // this teardown follows is precisely what makes the phone disconnect, so the
+  // disconnect event is in flight at the moment we would otherwise call
+  // deinit. It then reaches BLEServer::handleGATTServerEvent after deinit has
+  // already freed the objects it works on, and the heap poison check fails —
+  // observed on hardware 2026-08-29 as `multi_heap_free (head != NULL)`, with
+  // ble_hs_stop_done and ble_hs_hci_evt_disconn_complete both on the stack.
+  //
+  // Bounded, because a phone that vanishes mid-window must not hold the boot
+  // hostage: the window itself is 20 seconds and this is a tail, not a wait.
+  constexpr uint32_t DISCONNECT_GRACE_MS = 600;
+  const uint32_t waitUntil = millis() + DISCONNECT_GRACE_MS;
+  while (clientConnected && millis() < waitUntil) delay(10);
+
+  // Even with the link down the host task may still be draining events. This
+  // is the difference between "no connection" and "nothing in flight".
+  delay(150);
+
   BLEDevice::deinit(true);
 }
 
