@@ -985,6 +985,43 @@ TEST(DashboardV3Renderer, UnknownMarketChangeRendersAsciiHyphen) {
   EXPECT_GE(change->bounds.y, 465) << "the market change dash sits below the steps row";
 }
 
+// The mock-up marks direction with a solid triangle rather than a sign, so the
+// percentage itself carries no "+" or "-".
+TEST(DashboardV3Renderer, MarketChangeUsesATriangleInsteadOfASignedNumber) {
+  auto package = maximumContentPackage();
+  package.markets[0].changeBasisPoints = 80;    // rose 0,80%
+  package.markets[1].changeBasisPoints = -120;  // fell 1,20%
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  const Operation* gain = findTextOperation(canvas, "0,80%");
+  const Operation* loss = findTextOperation(canvas, "1,20%");
+  ASSERT_NE(gain, nullptr) << "a rising market prints its change unsigned";
+  ASSERT_NE(loss, nullptr) << "a falling market prints its change unsigned";
+  EXPECT_EQ(findTextOperation(canvas, "+0,80%"), nullptr) << "the triangle already says it rose";
+  EXPECT_EQ(findTextOperation(canvas, "-1,20%"), nullptr) << "the triangle already says it fell";
+
+  // A triangle is drawn as one filled row per scanline, so its apex is simply
+  // its narrowest row: at the top when rising, at the bottom when falling.
+  const auto apexIsAtTop = [&canvas](const Operation& valueRow) {
+    const Operation* narrowest = nullptr;
+    const Operation* widest = nullptr;
+    for (const auto& operation : canvas.operations) {
+      if (operation.kind != Operation::Kind::Fill || operation.bounds.height != 1) continue;
+      if (operation.bounds.x >= valueRow.bounds.x) continue;  // the mark sits left of the number
+      if (operation.bounds.y < valueRow.bounds.y - 4) continue;
+      if (operation.bounds.y > valueRow.bounds.y + valueRow.bounds.height + 4) continue;
+      if (narrowest == nullptr || operation.bounds.width < narrowest->bounds.width) narrowest = &operation;
+      if (widest == nullptr || operation.bounds.width > widest->bounds.width) widest = &operation;
+    }
+    EXPECT_NE(narrowest, nullptr) << "no triangle rows found beside the market value";
+    return narrowest != nullptr && widest != nullptr && narrowest->bounds.y < widest->bounds.y;
+  };
+
+  EXPECT_TRUE(apexIsAtTop(*gain)) << "a rising market points up";
+  EXPECT_FALSE(apexIsAtTop(*loss)) << "a falling market points down";
+}
+
 // --- Agenda time geometry --------------------------------------------------
 //
 // The agenda time sits on the Micro rung, where the widest clock ("00:00")

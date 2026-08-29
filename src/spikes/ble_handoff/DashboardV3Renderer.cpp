@@ -87,6 +87,19 @@ void formatMinute(const uint16_t minute, char (&out)[8]) {
                 static_cast<unsigned>(minute % 60));
 }
 
+/// A solid triangle filling `bounds`, drawn as one filled row per scanline.
+/// The market rows need an up/down mark and the Lexend faces carry no U+25B2 /
+/// U+25BC, which would land on the panel as a replacement box.
+void triangle(DashboardV3Canvas& canvas, const Rect bounds, const bool pointingUp) {
+  if (bounds.width <= 0 || bounds.height <= 0) return;
+  for (int row = 0; row < bounds.height; ++row) {
+    // Row 0 is the apex for an up triangle and the base for a down one.
+    const int grown = pointingUp ? row + 1 : bounds.height - row;
+    const int rowWidth = std::max(1, grown * bounds.width / bounds.height);
+    canvas.fill({bounds.x + (bounds.width - rowWidth) / 2, bounds.y + row, rowWidth, 1}, true);
+  }
+}
+
 struct CivilDate {
   int year;
   int month;
@@ -654,15 +667,22 @@ void renderStatusColumn(DashboardV3Canvas& canvas, const Rect rect, const Dashbo
       const MarketRow& row = package.markets[index];
       char market[MAX_MARKET_LABEL_BYTES + 1];
       copyField(row.label, row.labelLength, market);
-      char change[16] = "-";
-      if (row.changeBasisPoints != INT16_MIN) {
-        const int value = row.changeBasisPoints;
-        std::snprintf(change, sizeof(change), "%c%d,%02d%%", value >= 0 ? '+' : '-', std::abs(value) / 100,
-                      std::abs(value) % 100);
-      }
       label(canvas, textBox(left, y, width - 76, FontRole::Small), market, FontRole::Small);
-      label(canvas, textBox(left + width - 76, y, 76, FontRole::Small), change, FontRole::Small, true, true,
-            TextAlign::Right);
+      if (row.changeBasisPoints == INT16_MIN) {
+        label(canvas, textBox(left + width - 76, y, 76, FontRole::Small), "-", FontRole::Small, true, true,
+              TextAlign::Right);
+      } else {
+        // The triangle carries the direction, so the number itself is unsigned:
+        // a "+" next to an up mark would say the same thing twice.
+        const int value = row.changeBasisPoints;
+        char change[16];
+        std::snprintf(change, sizeof(change), "%d,%02d%%", std::abs(value) / 100, std::abs(value) % 100);
+        label(canvas, textBox(left + width - 62, y, 62, FontRole::Small), change, FontRole::Small, true, true,
+              TextAlign::Right);
+        constexpr int markSize = 9;
+        const int markY = y + (ascenderFor(FontRole::Small) - markSize) / 2;
+        triangle(canvas, {left + width - 76, markY, markSize, markSize}, value >= 0);
+      }
       y += ascenderFor(FontRole::Small) + 5;
     }
     y += 10;
