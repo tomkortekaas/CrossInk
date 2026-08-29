@@ -31,10 +31,11 @@ void teardownReceiver();
 // without BLE. That deficit is what made a one-page chapter fail to lay out at
 // 42,032 bytes free, 3 KB under the 44 KB EPUB_TEXT_LAYOUT_MIN_FREE gate.
 //
-// Safe on both paths: after teardownReceiver() the controller is deinitialised,
-// and on a reader boot it was never initialised. Irreversible until the next
-// reboot -- BLE cannot come back up afterwards -- which is why this belongs
-// after the agenda window has closed and nowhere earlier.
+// Only for boots where the window never ran. After a window teardownReceiver()
+// has already called BLEDevice::deinit(true), which releases the controller
+// memory itself; calling this on top of that returned status=-1 and delta=0 on
+// hardware -- harmless, but a recurring fake error in the log of every agenda
+// wake. Irreversible until the next reboot: BLE cannot come back up afterwards.
 void releaseBluetoothMemory(const char* reason);
 
 }  // namespace dashboard
