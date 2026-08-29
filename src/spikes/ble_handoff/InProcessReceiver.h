@@ -22,4 +22,19 @@ void notifyReceiverStatus(uint8_t code);
 // exactly why the receiver got its own partition in the first place.
 void teardownReceiver();
 
+// Hands the BLE stack's RAM back to the heap for the rest of this boot.
+//
+// Tearing the stack down is not enough. Linking BLE in at all costs the reader
+// 27.4 KB of heap, whether or not the radio was ever switched on: measured on
+// hardware 2026-08-29, a boot with `Wake route: Other` (no BLEDevice::init at
+// all) still reported a total heap of 220,448 against 247,888 for a build
+// without BLE. That deficit is what made a one-page chapter fail to lay out at
+// 42,032 bytes free, 3 KB under the 44 KB EPUB_TEXT_LAYOUT_MIN_FREE gate.
+//
+// Safe on both paths: after teardownReceiver() the controller is deinitialised,
+// and on a reader boot it was never initialised. Irreversible until the next
+// reboot -- BLE cannot come back up afterwards -- which is why this belongs
+// after the agenda window has closed and nowhere earlier.
+void releaseBluetoothMemory(const char* reason);
+
 }  // namespace dashboard

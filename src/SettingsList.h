@@ -367,12 +367,18 @@ inline SettingInfo buildSleepScreenSetting() {
 // Each entry has a key (for JSON API) and category (for grouping).
 // ACTION-type entries and entries without a key are device-only.
 //
-// The static list is constructed exactly once (master's optimization, #1086 +
-// #1636) so the per-entry SettingInfo cost is paid once. Read-only consumers
-// can use it directly; mutable device UI lists use getSettingsList(), which
-// returns an owned copy and can add SD-card font and dictionary options.
-inline const std::vector<SettingInfo>& getBaseSettingsList() {
-  static const std::vector<SettingInfo> baseList = [] {
+// Built per call rather than kept in a function-local static (master's #1086 +
+// #1636 cached it). Caching costs 22,352 bytes that stay resident for the whole
+// boot: measured on hardware 2026-08-29, where the first caller is fromJson()
+// during startup, so the table still held that memory while a book was open.
+// This build misses an EPUB chapter layout by a few hundred bytes, and the
+// table only describes the settings screens -- nothing the reader needs. All
+// four callers use the result locally (range-for, a copy, or a scoped const
+// ref), so none of them depend on the entries outliving the call. The rebuild
+// is ~72 push_backs on paths a user triggers by hand: loading or saving
+// settings, opening the settings screen, serving the web settings page.
+inline std::vector<SettingInfo> getBaseSettingsList() {
+  const auto build = [] {
     std::vector<SettingInfo> v;
     v.reserve(72);
     auto add = [&v](SettingInfo setting) { v.push_back(std::move(setting)); };
@@ -866,9 +872,9 @@ inline const std::vector<SettingInfo>& getBaseSettingsList() {
       }
     }
     return v;
-  }();
+  };
 
-  return baseList;
+  return build();
 }
 
 inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* registry = nullptr,

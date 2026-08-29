@@ -6,6 +6,7 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEService.h>
+#include <esp_bt.h>
 #include <freertos/FreeRTOS.h>
 
 #include <array>
@@ -225,6 +226,24 @@ void teardownReceiver() {
   delay(150);
 
   BLEDevice::deinit(true);
+}
+
+void releaseBluetoothMemory(const char* reason) {
+  static bool released = false;
+  if (released) return;
+  released = true;
+
+  const uint32_t before = ESP.getHeapSize();
+  // ESP_BT_MODE_BLE rather than BTDM: this is a BLE-only controller, and the
+  // header names exactly this call as the way to hand the stack's BSS and data
+  // back when Bluetooth is not needed again this boot. BLEDevice::deinit(true)
+  // already releases the *controller* memory, but only on the path that ran the
+  // window, and it never touches the host BSS.
+  const esp_err_t status = esp_bt_mem_release(ESP_BT_MODE_BLE);
+  const uint32_t after = ESP.getHeapSize();
+  Serial.printf("BLE-MEM release (%s) status=%d heapSize=%u->%u delta=%d\n", reason, static_cast<int>(status),
+                static_cast<unsigned>(before), static_cast<unsigned>(after),
+                static_cast<int>(after) - static_cast<int>(before));
 }
 
 }  // namespace dashboard

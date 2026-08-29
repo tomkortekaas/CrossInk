@@ -1087,6 +1087,15 @@ void setup() {
   }
 #endif
 
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+  // Past this point nothing opens the radio again this boot, so the BLE stack's
+  // RAM is dead weight the reader cannot afford. Unconditional: the deficit is
+  // there even when the window never ran, because it comes from linking BLE in
+  // rather than from switching it on.
+  dashboard::releaseBluetoothMemory(agendaRoute == dashboard::AgendaBootRoute::InProcessReceiver ? "after window"
+                                                                                                : "window not run");
+#endif
+
 #endif
 
   // SD Card Initialization
