@@ -826,10 +826,51 @@ void enterDeepSleepInternal(const bool fromTimeout, const bool preserveLastReade
   uint8_t agendaWakeMinute = 0;
   // SETTINGS is loaded on this path, and the mirror above was just written from it.
   if (agendaSleep) resolveAgendaWakeLocalTime(agendaWakeHour, agendaWakeMinute, SETTINGS.clockUtcOffsetQ);
-  const dashboard::WakeSettings wakeSettings = resolveWakeSettings();
-  timerWakeUs = dashboard::sleepTimerIntervalUs(agendaSleep, agendaWakeHour, agendaWakeMinute,
-                                                wakeSettings.intervalMinutes, wakeSettings.windowStartHour,
-                                                wakeSettings.windowEndHour);
+
+  // Scoped: PersistedPackage is ~1050 bytes and CLAUDE.md caps unjustified
+  // stack locals at 256. Reading it here rather than calling resolveWakeSettings()
+  // keeps it to one copy, and the block ends before the sleep call so the frame
+  // is back down by then.
+  dashboard::WakeSettings wakeSettings{};
+  bool refreshAtStandby = false;
+  {
+    dashboard::PersistedPackage persisted;
+    const bool packageRead = dashboard::readLastKnownGood(persisted) == dashboard::PersistStatus::Ok;
+    if (packageRead) {
+      wakeSettings = dashboard::clampWakeSettings(persisted.header.refreshIntervalMinutes,
+                                                  persisted.header.wakeWindowStartHour,
+                                                  persisted.header.wakeWindowEndHour);
+    }
+#ifdef CROSSINK_STANDBY_REFRESH
+    uint16_t year = 0;
+    uint8_t month = 0;
+    uint8_t day = 0;
+    uint8_t utcHour = 0;
+    uint8_t utcMinute = 0;
+    // getDateTime returns the raw RTC reading, which this device keeps in UTC -
+    // the same basis as the package's generatedAt, so no offset is involved.
+    const bool clockAvailable =
+        halClock.isAvailable() && halClock.getDateTime(year, month, day, utcHour, utcMinute);
+    const uint64_t nowEpochSeconds =
+        clockAvailable ? dashboard::utcEpochSecondsFromCivil(year, month, day, utcHour, utcMinute) : 0;
+    refreshAtStandby =
+        dashboard::shouldRefreshAtStandby(agendaSleep, clockAvailable, nowEpochSeconds,
+                                          packageRead ? persisted.header.generatedAt : 0,
+                                          wakeSettings.intervalMinutes);
+#endif
+  }
+
+  if (refreshAtStandby) {
+    LOG_INF("BLEPAY", "Stale card at standby; asking for one window before the grid resumes");
+    dashboard::appendBootTrace(static_cast<uint8_t>(HalGPIO::WakeupReason::Other),
+                               dashboard::ReceiverResult::AwaitingWindow,
+                               dashboard::BootTraceStage::StandbyRefreshRequested, "standby", true);
+    timerWakeUs = dashboard::STANDBY_REFRESH_DELAY_US;
+  } else {
+    timerWakeUs = dashboard::sleepTimerIntervalUs(agendaSleep, agendaWakeHour, agendaWakeMinute,
+                                                  wakeSettings.intervalMinutes, wakeSettings.windowStartHour,
+                                                  wakeSettings.windowEndHour);
+  }
   dashboard::retainReceiverResult(agendaSleep ? dashboard::ReceiverResult::AwaitingWindow
                                               : dashboard::ReceiverResult::None);
 #endif
