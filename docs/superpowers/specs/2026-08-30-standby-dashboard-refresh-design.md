@@ -65,11 +65,12 @@ screen until the inactivity timeout puts it back to sleep.
 Acceptance was 81%, 70% and 55% on 24, 25 and 26 August, so this would be one
 wake in four or five.
 
-**Not confirmed on hardware.** This is read from the code; the trace file on the
-device can settle it, and the hardware pass below does. If it holds, the fix
-belongs in this change regardless of the rest: without it, adding a window at
-standby makes the failure case worse — every unanswered attempt would end with
-the reader on the home screen instead of the dashboard on the panel.
+**Read from the code when this was written, and confirmed on the device the same
+day** (see the hardware section below): with the phone app force-quit, the reader
+no longer reaches its home screen. The fix belongs in this change regardless of
+the rest, because without it adding a window at standby makes the failure case
+worse — every unanswered attempt would end with the reader on the home screen
+instead of the dashboard on the panel.
 
 ## Architecture
 
@@ -238,6 +239,30 @@ rebuild produced the correct value. Rebuild before treating the version as
 evidence, and note that it says nothing about which `-D` flags were set — for that,
 `pio run -e <env> -t idedata`.
 
+## Confirmed on hardware, 2026-08-30
+
+Flashed to `app1` and verified on the device, on battery:
+
+- A session that ends on a stale card returns a fresh one, with "Bijgewerkt" at
+  the moment of the press.
+- With the phone app force-quit, the panel keeps the old card and the reader is
+  **not** left on its home screen — so the second finding above was real, and the
+  handler added here is what fixes it.
+- Pressing power again a minute later does nothing, which is the freshness rule
+  declining and, with it, the guarantee that one put-down buys one window.
+- The ordinary quarter-hour cycle still runs with the app open.
+
+### Known and accepted: the refresh ignores the night window
+
+`shouldRefreshAtStandby` takes the interval but not `windowStartHour` /
+`windowEndHour`, so a session that ends at 23:30 opens a window outside the
+07:00-22:00 band. It is one window, not a cycle — the boot that follows sleeps
+through to the next `windowStartHour` either way.
+
+Left as it is, deliberately: putting the device down is the moment its owner is
+about to look at it, whatever the hour. Recorded because unexplained night-time
+radio activity is otherwise the kind of thing that costs an evening to trace back.
+
 ## Non-goals
 
 Background BLE reliability. A window at standby still times out when the phone's
@@ -245,38 +270,66 @@ central is suspended; this feature adds a moment, it does not fix the phone.
 
 No change to the iOS app.
 
-## Deliberately separate: keeping the radio alive while reading
+## Decided against: keeping the radio alive while reading
 
-Measured on hardware 2026-08-29: linking BLE into the reader costs 27,360 bytes
-of heap whether or not the radio is switched on, and only 2,688 of those come
-back from `esp_bt_mem_release`. Keeping the radio usable across a whole boot
-therefore costs 2,688 bytes, not 27.4 KB — a `deinit(false)` and the removal of
-two one-shot guards in `InProcessReceiver.cpp`.
+**This was the question the work started from, and the answer is no.** Recorded in
+full so it does not get re-argued from scratch.
 
-That opens a better shape than more windows: advertise continuously while the
-user reads, and let a package that arrives be persisted without being rendered.
-The phone then delivers whenever iOS lets it run, instead of having to strike a
-20-second window.
+The dashboard is not on screen while a book is open, so a mid-session update
+shows the reader nothing. The freshness the feature above delivers arrives about
+twenty-five seconds after the device is set down, which is while its owner is
+walking away. The only genuine gain is narrower than it first appears: when a
+standby window goes unanswered, an hour of advertising would probably have
+collected a delivery earlier, and the standby window would have found a fresh
+card and not fired at all.
 
-It is not part of this spec because one measurement decides it. `setPowerSaving`
-already force-disables frequency scaling whenever WiFi is up
-(`lib/hal/HalPowerManager.cpp:55`), and a reading session normally spends most of
-its time at 10 MHz (`lib/hal/HalPowerManager.h:35`, no PSRAM on this C3). If a
-live BLE stack pins the CPU at full frequency the same way, the cost is not the
-advertising — which is a fraction of a milliamp — but the clock, for the whole
-session.
+That is a partial improvement to a problem already solved, and the cost is not
+small: the deciding measurement cannot be taken (below), the non-blocking
+receiver is new machinery, a heap check has to guard `BLEDevice::init` mid-
+chapter, and the carefully-built teardown has to change semantics.
 
-The measurement, in order, each step able to make the next unnecessary:
+What remains open is one gap — the standby window that times out. Whether that
+needs anything is a question the trace can answer and speculation cannot, which
+is what the `StandbyRefreshRequested` stage is for: compare its acceptance rate
+against that of ordinary grid ticks over several days. There is reason to expect
+it to do well, because the device has just been in its owner's hands, which is
+also when the phone is most likely to be awake. If it does not, one bounded retry
+a few minutes later is the cheap answer, reusing this same mechanism.
 
-1. Heap: `getFreeHeap`/`getMaxAllocHeap` with a book open, before and after
-   `BLEDevice::init`, and whether a chapter still lays out against
-   `MemoryBudget::EPUB_TEXT_LAYOUT_MIN_FREE`.
-2. Current draw across a reading session with and without a live radio, and
-   whether `setPowerSaving(true)` still reaches 10 MHz.
-3. If it does not: `CONFIG_PM_ENABLE` with tickless idle, plus the untouched
-   NimBLE trim list — `env:dashboard-x3` sets only `BT_ENABLED`,
-   `BT_NIMBLE_ENABLED` and `BT_CONTROLLER_ENABLED`, leaving central and observer
-   roles, three connections, the security manager and the scan duplicate cache
-   all at their defaults on a peripheral-only device. Re-measure RAM, flash and
-   current. Flash recovered here can buy back some of the 23 languages the radio
-   cost.
+### The measurement, if this is ever revisited
+
+Preserved because the reasoning cost more than the writing.
+
+Linking BLE into the reader costs 27,360 bytes of heap whether or not the radio
+is switched on, and only 2,688 of those come back from `esp_bt_mem_release`
+(measured 2026-08-29). Keeping the radio usable across a whole boot therefore
+costs 2,688 bytes, not 27.4 KB — a `deinit(false)` and the removal of two
+one-shot guards in `InProcessReceiver.cpp`.
+
+The deciding question is not milliamps but whether the CPU still drops. A reading
+session spends most of its time at 10 MHz (`lib/hal/HalPowerManager.h:35`, no
+PSRAM on this C3), and that is why an evening of reading is affordable at all.
+`setPowerSaving` already force-disables frequency scaling whenever WiFi is up
+(`lib/hal/HalPowerManager.cpp:55`); if a live BLE stack does the same, the cost is
+the clock for the whole session, not the advertising — which is a fraction of a
+milliamp.
+
+**That question needs no meter.** `getCpuFrequencyMhz()` after
+`setPowerSaving(true)` answers it in one log line: 10 means DFS survives a live
+radio, 160 means it does not.
+
+**Nor does the charge cost.** The battery gauge is a coulomb counter and keeps
+integrating through deep sleep, and every trace line already carries `mah=`
+(`BleHandoffTrace.cpp`). Since this change, a session that ends at standby writes
+a line too — so the difference between the `mah=` at wake and the `mah=` on the
+standby line is what that session cost, sleep included. Read an hour with the
+current build, an hour with a probe build that keeps the radio alive, and compare.
+Whole-mAh resolution against a cost in the tens of mAh.
+
+If it turns out the clock is pinned, `CONFIG_PM_ENABLE` with tickless idle plus
+the untouched NimBLE trim list is the next thing to try — `env:dashboard-x3` sets
+only `BT_ENABLED`, `BT_NIMBLE_ENABLED` and `BT_CONTROLLER_ENABLED`, leaving
+central and observer roles, three connections, the security manager and the scan
+duplicate cache all at their defaults on a peripheral-only device. Flash recovered
+there could buy back some of the 23 languages the radio cost.
+

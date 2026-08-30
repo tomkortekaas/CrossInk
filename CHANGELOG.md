@@ -2,6 +2,7 @@
 
 ### Added
 
+- Putting the device down now refreshes the dashboard. The quarter-hour update cycle only runs while the device sleeps, so an hour of reading was an hour without updates and the card left on the panel was whichever one happened to arrive before you picked the device up. A session that ends on a card older than the refresh interval now opens one update window before going to sleep, so the panel you glance at was composed at the moment you set it down — away from home as much as at it, since the phone remains the source. A short look costs nothing: a card that is still fresh is left alone. An attempt the phone does not answer keeps the old card and waits for the normal cycle rather than trying again.
 - The V3 dashboard now shows the values it previously left blank: whether the wood burner may be lit, the car and home battery levels, and up to three market movements, each read from a Home Assistant entity you pick under Instellingen → Gegevensbronnen → Dashboard V3. A source that cannot be reached keeps its last known reading rather than falling back to a dash.
 - The V3 dashboard carries up to eight appointments and seven WhatsApp conversations, matching the design it was drawn from; it previously stopped at five and three.
 - The rain band shows the next two hours as a single strip whose blocks darken with the expected intensity, replacing the bar chart. It reads in one glance and gives the space it saves back to the agenda.
@@ -15,6 +16,7 @@
 
 ### Fixed
 
+- A dashboard update the phone does not answer no longer wakes the whole reader. When nothing arrived in the wake window the device carried on booting and was left sitting on its home screen until the inactivity timer put it back to sleep — on roughly one wake in four or five, at the rates measured in August, and on a panel whose only purpose is to show the dashboard. It now goes straight back to sleep with the dashboard still on screen.
 - A dashboard stored before a firmware update no longer reads as broken. The panel called it unreadable and advised updating the firmware — the very thing that had just happened — where the package was merely older than the build. It now says it is waiting for a new dashboard, which is what it is doing: the next update from the phone clears it.
 - A heavy shower now reads as solid black on the V3 rain strip. Intensity was carried on a scale whose darkest band only began around 44 mm/h — heavier than any shower the Netherlands gets — so drizzle and a downpour were drawn in the same half tone and the strip was in effect a wet/dry bar.
 - The V3 rain strip says when it will rain instead of in how many minutes, and the clock under it comes from the forecast rather than from the panel. The device reads a package that is often a quarter of an hour old, which made every countdown wrong by exactly that much; a time of day stays true however long the package sits on the screen.
