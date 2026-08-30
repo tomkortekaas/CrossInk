@@ -94,6 +94,8 @@ const char* stageName(const BootTraceStage stage) {
       return "timedout";
     case BootTraceStage::PowerButtonRejected:
       return "rejected";
+    case BootTraceStage::StandbyRefreshRequested:
+      return "standby";
     default:
       return "full";
   }

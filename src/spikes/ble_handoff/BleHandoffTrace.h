@@ -12,10 +12,11 @@ namespace dashboard {
 // was rejected before it did anything is indistinguishable from one that ran the
 // whole cycle - which is exactly the distinction the battery question turns on.
 enum class BootTraceStage : uint8_t {
-  Full,                 // reached the normal SD mount and carried on booting
-  ReceiverHandoff,      // timer wake, about to restart into the receiver partition
-  ReceiverTimedOut,     // came back from the receiver empty-handed
-  PowerButtonRejected,  // wake failed its hold check; sleeps again WITHOUT a timer
+  Full,                     // reached the normal SD mount and carried on booting
+  ReceiverHandoff,          // timer wake, about to restart into the receiver partition
+  ReceiverTimedOut,         // came back from the receiver empty-handed
+  PowerButtonRejected,      // wake failed its hold check; sleeps again WITHOUT a timer
+  StandbyRefreshRequested,  // going to sleep on a stale card; asking for one window first
 };
 
 // Appends one line per reader boot to /crossink-ble-trace.txt on the SD card.
