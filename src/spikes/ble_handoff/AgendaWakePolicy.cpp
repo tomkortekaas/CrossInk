@@ -96,6 +96,11 @@ bool shouldRefreshAtStandby(const bool agendaSleep, const bool clockAvailable, c
   return (nowEpochSeconds - packageGeneratedAt) >= static_cast<uint64_t>(intervalMinutes) * 60ULL;
 }
 
+InProcessWindowAction actionAfterInProcessWindow(const ReceiverResult result) {
+  return result == ReceiverResult::Accepted ? InProcessWindowAction::ContinueBoot
+                                            : InProcessWindowAction::SleepToNextTick;
+}
+
 uint16_t localMinuteOfDay(const uint8_t utcHour, const uint8_t utcMinute, const uint8_t offsetQ) {
   const int biased = offsetQ <= OFFSET_Q_MAX ? static_cast<int>(offsetQ) : OFFSET_Q_UTC;
   const int shifted =

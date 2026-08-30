@@ -7,6 +7,7 @@ namespace dashboard {
 enum class WakeSource : uint8_t { Other, PowerButton, Timer };
 enum class AgendaBootRoute : uint8_t { NormalReader, Receiver, InProcessReceiver };
 enum class ReceiverResult : uint8_t { None, AwaitingWindow, Accepted, TimedOut };
+enum class InProcessWindowAction : uint8_t { ContinueBoot, SleepToNextTick };
 
 #ifndef CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES
 #define CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES 15
@@ -90,6 +91,16 @@ constexpr uint64_t STANDBY_REFRESH_DELAY_US = 2ULL * 1000ULL * 1000ULL;
 // old - so one put-down buys exactly one window, with no flag to keep in step.
 bool shouldRefreshAtStandby(bool agendaSleep, bool clockAvailable, uint64_t nowEpochSeconds,
                             uint64_t packageGeneratedAt, uint32_t intervalMinutes);
+
+// What the reader does once an in-process agenda window has closed.
+//
+// Only an accepted package earns the rest of the boot, because only then is
+// there a new card to render. Every other outcome means nothing arrived, and
+// booting on would land the reader's home screen on a panel whose whole purpose
+// is to show the dashboard - and hold the device awake until the inactivity
+// timeout. The partition route has always done this (main.cpp, the
+// returnedFromReceiver branch); the in-process route did not.
+InProcessWindowAction actionAfterInProcessWindow(ReceiverResult result);
 
 AgendaBootRoute chooseAgendaBootRoute(bool agendaCycleArmed, WakeSource wakeSource, bool inProcessAvailable = false);
 uint32_t encodeReceiverResultWord(ReceiverResult result);

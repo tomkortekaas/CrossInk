@@ -266,3 +266,22 @@ TEST(ShouldRefreshAtStandby, RespectsAPhoneSuppliedInterval) {
   EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 30 * 60, 60));
   EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 61 * 60, 60));
 }
+
+TEST(ActionAfterInProcessWindow, AnAcceptedPackageEarnsAFullBoot) {
+  EXPECT_EQ(dashboard::actionAfterInProcessWindow(dashboard::ReceiverResult::Accepted),
+            dashboard::InProcessWindowAction::ContinueBoot);
+}
+
+TEST(ActionAfterInProcessWindow, ATimedOutWindowSleepsToTheNextTick) {
+  EXPECT_EQ(dashboard::actionAfterInProcessWindow(dashboard::ReceiverResult::TimedOut),
+            dashboard::InProcessWindowAction::SleepToNextTick);
+}
+
+TEST(ActionAfterInProcessWindow, AVerdictlessWindowSleepsToTheNextTick) {
+  // The receiver produced no verdict at all. From the user's side nothing
+  // arrived, which is the same outcome as a timeout.
+  EXPECT_EQ(dashboard::actionAfterInProcessWindow(dashboard::ReceiverResult::None),
+            dashboard::InProcessWindowAction::SleepToNextTick);
+  EXPECT_EQ(dashboard::actionAfterInProcessWindow(dashboard::ReceiverResult::AwaitingWindow),
+            dashboard::InProcessWindowAction::SleepToNextTick);
+}
