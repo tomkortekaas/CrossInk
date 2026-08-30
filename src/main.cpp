@@ -1084,6 +1084,28 @@ void setup() {
     }
     dashboard::teardownReceiver();
     dashboard::retainReceiverResult(result);
+
+    // Nothing arrived, so there is no new card to render and no reason to bring
+    // the reader up. Booting on would leave the home screen on the panel and
+    // hold the device awake until the inactivity timeout - once every four or
+    // five wakes, at the acceptance rates measured in late August.
+    if (dashboard::actionAfterInProcessWindow(result) == dashboard::InProcessWindowAction::SleepToNextTick) {
+      LOG_INF("BLEPAY", "In-process window closed empty; returning directly to Agenda sleep");
+      dashboard::appendEarlyBootTrace(static_cast<uint8_t>(wakeupReason), result,
+                                      dashboard::BootTraceStage::ReceiverTimedOut, resetReasonName(rawResetReason));
+      // Re-armed before sleeping, exactly as the partition route does: without
+      // this the next timer wake finds no armed cycle and skips its window.
+      dashboard::retainReceiverResult(dashboard::ReceiverResult::AwaitingWindow);
+      uint8_t agendaWakeHour = 12;
+      uint8_t agendaWakeMinute = 0;
+      // Pre-SD: SETTINGS is not loaded here, so the offset comes from its NVS mirror.
+      resolveAgendaWakeLocalTime(agendaWakeHour, agendaWakeMinute, readClockUtcOffsetQFromNvs());
+      const dashboard::WakeSettings wakeSettings = resolveWakeSettings();
+      powerManager.startDeepSleep(gpio, dashboard::sleepTimerIntervalUs(true, agendaWakeHour, agendaWakeMinute,
+                                                                        wakeSettings.intervalMinutes,
+                                                                        wakeSettings.windowStartHour,
+                                                                        wakeSettings.windowEndHour));
+    }
   }
 #endif
 
