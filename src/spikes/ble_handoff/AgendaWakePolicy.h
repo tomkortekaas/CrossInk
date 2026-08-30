@@ -69,6 +69,28 @@ uint16_t localMinuteOfDay(uint8_t utcHour, uint8_t utcMinute, uint8_t offsetQ);
 // both mean "no usable time", and the one caller treats 0 as unknown.
 uint64_t utcEpochSecondsFromCivil(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute);
 
+// Microseconds of deep sleep before the window a standby refresh asks for. Long
+// enough that the sleep card has been painted and the panel has settled, short
+// enough that the fresh card lands while the user is still putting the device
+// down.
+constexpr uint64_t STANDBY_REFRESH_DELAY_US = 2ULL * 1000ULL * 1000ULL;
+
+// Whether the sleep now being entered should be cut short to one immediate
+// agenda window instead of running to the next tick of the grid.
+//
+// Every uncertainty resolves to false. A wrong `true` wakes the device every two
+// seconds and empties the battery overnight; a wrong `false` leaves a card
+// exactly as stale as it is today. The two mistakes are not comparable, so the
+// rule declines whenever it cannot establish the age: no clock, no package, or
+// a clock reading earlier than the package it holds.
+//
+// Declining once the package is fresh is also what ends the cycle. The boot that
+// renders an accepted package sleeps through this same rule (main.cpp calls
+// enterDeepSleepInternal after rendering), and by then the package is seconds
+// old - so one put-down buys exactly one window, with no flag to keep in step.
+bool shouldRefreshAtStandby(bool agendaSleep, bool clockAvailable, uint64_t nowEpochSeconds,
+                            uint64_t packageGeneratedAt, uint32_t intervalMinutes);
+
 AgendaBootRoute chooseAgendaBootRoute(bool agendaCycleArmed, WakeSource wakeSource, bool inProcessAvailable = false);
 uint32_t encodeReceiverResultWord(ReceiverResult result);
 ReceiverResult decodeReceiverResultWord(uint32_t word);

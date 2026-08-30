@@ -214,3 +214,55 @@ TEST(UtcEpochSecondsFromCivil, RejectsOutOfRangeFieldsWithZero) {
   EXPECT_EQ(dashboard::utcEpochSecondsFromCivil(2026, 8, 30, 12, 60), 0ULL);
   EXPECT_EQ(dashboard::utcEpochSecondsFromCivil(1969, 8, 30, 12, 0), 0ULL);
 }
+
+namespace {
+// 2026-08-30T12:00:00Z, the instant used as "now" throughout these tests.
+constexpr uint64_t NOW = 1788091200ULL;
+}  // namespace
+
+TEST(ShouldRefreshAtStandby, RefreshesWhenTheCardIsOlderThanTheInterval) {
+  EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 3600, 15));
+}
+
+TEST(ShouldRefreshAtStandby, RefreshesExactlyAtTheInterval) {
+  EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 15 * 60, 15));
+}
+
+TEST(ShouldRefreshAtStandby, LeavesAFreshCardAlone) {
+  // A glance: picked up and put down again well inside the interval.
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 14 * 60, 15));
+}
+
+TEST(ShouldRefreshAtStandby, DoesNotRefreshAfterAJustAcceptedPackage) {
+  // This is what stops the loop: the boot that renders an accepted package
+  // sleeps through this same rule, seconds after the package was generated.
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 5, 15));
+}
+
+TEST(ShouldRefreshAtStandby, NeverRefreshesOnANonAgendaSleep) {
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(false, true, NOW, NOW - 3600, 15));
+}
+
+TEST(ShouldRefreshAtStandby, NeverRefreshesWithoutAClock) {
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, false, NOW, NOW - 3600, 15));
+}
+
+TEST(ShouldRefreshAtStandby, NeverRefreshesWithoutAPackage) {
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, 0, 15));
+}
+
+TEST(ShouldRefreshAtStandby, NeverRefreshesWhenTheClockIsBehindThePackage) {
+  // An unset RTC reads 2000-01-01, which is before any package it holds.
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, 946684800ULL, NOW, 15));
+}
+
+TEST(ShouldRefreshAtStandby, NeverRefreshesOnAZeroInterval) {
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 3600, 0));
+}
+
+TEST(ShouldRefreshAtStandby, RespectsAPhoneSuppliedInterval) {
+  // clampWakeSettings allows 1-60 minutes; a 60-minute interval means a
+  // 30-minute-old card is still fresh.
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 30 * 60, 60));
+  EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 61 * 60, 60));
+}

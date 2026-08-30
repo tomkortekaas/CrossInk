@@ -88,6 +88,14 @@ uint64_t utcEpochSecondsFromCivil(const uint16_t year, const uint8_t month, cons
          static_cast<uint64_t>(minute) * 60ULL;
 }
 
+bool shouldRefreshAtStandby(const bool agendaSleep, const bool clockAvailable, const uint64_t nowEpochSeconds,
+                            const uint64_t packageGeneratedAt, const uint32_t intervalMinutes) {
+  if (!agendaSleep || !clockAvailable) return false;
+  if (packageGeneratedAt == 0 || intervalMinutes == 0) return false;
+  if (nowEpochSeconds < packageGeneratedAt) return false;
+  return (nowEpochSeconds - packageGeneratedAt) >= static_cast<uint64_t>(intervalMinutes) * 60ULL;
+}
+
 uint16_t localMinuteOfDay(const uint8_t utcHour, const uint8_t utcMinute, const uint8_t offsetQ) {
   const int biased = offsetQ <= OFFSET_Q_MAX ? static_cast<int>(offsetQ) : OFFSET_Q_UTC;
   const int shifted =
