@@ -183,3 +183,34 @@ TEST(ClampWakeSettings, FallsBackToDefaultWindowWhenAnHourIsOutOfRange) {
   EXPECT_EQ(settings.windowStartHour, dashboard::AGENDA_WAKE_WINDOW_START_HOUR);
   EXPECT_EQ(settings.windowEndHour, dashboard::AGENDA_WAKE_WINDOW_END_HOUR);
 }
+
+TEST(UtcEpochSecondsFromCivil, ConvertsAKnownInstant) {
+  // 2026-08-30T12:00:00Z. Day 20695 since the epoch: 20695 * 86400 + 43200.
+  EXPECT_EQ(dashboard::utcEpochSecondsFromCivil(2026, 8, 30, 12, 0), 1788091200ULL);
+}
+
+TEST(UtcEpochSecondsFromCivil, ConvertsTheEpochItself) {
+  EXPECT_EQ(dashboard::utcEpochSecondsFromCivil(1970, 1, 1, 0, 0), 0ULL);
+}
+
+TEST(UtcEpochSecondsFromCivil, HandlesALeapDay) {
+  // 2024-02-29T00:00:00Z = 1709164800.
+  EXPECT_EQ(dashboard::utcEpochSecondsFromCivil(2024, 2, 29, 0, 0), 1709164800ULL);
+}
+
+TEST(UtcEpochSecondsFromCivil, ReadsTheUnsetRtcDateAsAVeryOldTime) {
+  // An RTC that was never set reads 2000-01-01 on this hardware. That is a
+  // valid date, so it converts; the staleness rule is what rejects it, by
+  // finding a package generated after it.
+  EXPECT_EQ(dashboard::utcEpochSecondsFromCivil(2000, 1, 1, 0, 0), 946684800ULL);
+}
+
+TEST(UtcEpochSecondsFromCivil, RejectsOutOfRangeFieldsWithZero) {
+  EXPECT_EQ(dashboard::utcEpochSecondsFromCivil(2026, 0, 30, 12, 0), 0ULL);
+  EXPECT_EQ(dashboard::utcEpochSecondsFromCivil(2026, 13, 30, 12, 0), 0ULL);
+  EXPECT_EQ(dashboard::utcEpochSecondsFromCivil(2026, 8, 0, 12, 0), 0ULL);
+  EXPECT_EQ(dashboard::utcEpochSecondsFromCivil(2026, 8, 32, 12, 0), 0ULL);
+  EXPECT_EQ(dashboard::utcEpochSecondsFromCivil(2026, 8, 30, 24, 0), 0ULL);
+  EXPECT_EQ(dashboard::utcEpochSecondsFromCivil(2026, 8, 30, 12, 60), 0ULL);
+  EXPECT_EQ(dashboard::utcEpochSecondsFromCivil(1969, 8, 30, 12, 0), 0ULL);
+}

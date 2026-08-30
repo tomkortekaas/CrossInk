@@ -60,6 +60,15 @@ WakeSettings clampWakeSettings(uint8_t rawIntervalMinutes, uint8_t rawWindowStar
 // checked on the host. Out-of-range offsets fall back to UTC.
 uint16_t localMinuteOfDay(uint8_t utcHour, uint8_t utcMinute, uint8_t offsetQ);
 
+// The RTC's UTC reading as Unix epoch seconds, so it can be compared against a
+// package's `generatedAt`. The RTC exposes no seconds field, so the result
+// lands on the minute - far finer than the staleness rule needs.
+//
+// Returns 0 for any field out of range, and for years before 1970. A caller
+// cannot tell that apart from midnight on 1970-01-01, which is deliberate:
+// both mean "no usable time", and the one caller treats 0 as unknown.
+uint64_t utcEpochSecondsFromCivil(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute);
+
 AgendaBootRoute chooseAgendaBootRoute(bool agendaCycleArmed, WakeSource wakeSource, bool inProcessAvailable = false);
 uint32_t encodeReceiverResultWord(ReceiverResult result);
 ReceiverResult decodeReceiverResultWord(uint32_t word);

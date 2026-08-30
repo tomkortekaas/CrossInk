@@ -17,6 +17,19 @@ bool isPersistableResult(const ReceiverResult result) {
          result == ReceiverResult::TimedOut;
 }
 
+// Howard Hinnant's days_from_civil against the Unix epoch: the inverse of the
+// civil_from_days in DashboardV3Renderer.cpp. Pure integer arithmetic, no
+// <ctime> and no timezone database, so it runs identically on the host and on
+// the C3. Valid for any proleptic Gregorian date; the caller range-checks.
+int64_t daysFromCivil(int64_t y, const unsigned m, const unsigned d) {
+  y -= m <= 2;
+  const int64_t era = (y >= 0 ? y : y - 399) / 400;
+  const unsigned yoe = static_cast<unsigned>(y - era * 400);
+  const unsigned doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + static_cast<int64_t>(doe) - 719468;
+}
+
 }  // namespace
 
 uint64_t sleepTimerIntervalUs(const bool agendaSleep, const uint8_t currentHour, const uint8_t currentMinute,
@@ -64,6 +77,15 @@ WakeSettings clampWakeSettings(const uint8_t rawIntervalMinutes, const uint8_t r
     settings.windowEndHour = rawWindowEndHour;
   }
   return settings;
+}
+
+uint64_t utcEpochSecondsFromCivil(const uint16_t year, const uint8_t month, const uint8_t day, const uint8_t hour,
+                                  const uint8_t minute) {
+  if (year < 1970 || month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) return 0;
+  const int64_t days = daysFromCivil(static_cast<int64_t>(year), month, day);
+  if (days < 0) return 0;
+  return static_cast<uint64_t>(days) * 86400ULL + static_cast<uint64_t>(hour) * 3600ULL +
+         static_cast<uint64_t>(minute) * 60ULL;
 }
 
 uint16_t localMinuteOfDay(const uint8_t utcHour, const uint8_t utcMinute, const uint8_t offsetQ) {
