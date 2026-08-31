@@ -1,5 +1,7 @@
 #if defined(CROSSINK_BLE_HANDOFF_RECEIVER) || defined(CROSSINK_IN_PROCESS_RECEIVER)
 
+#include "InProcessReceiver.h"
+
 #include <Arduino.h>
 #include <BLEAdvertising.h>
 #include <BLECharacteristic.h>
@@ -15,7 +17,6 @@
 #include "BleHandoffNvs.h"
 #include "DashboardSlotSelection.h"
 #include "DashboardTransfer.h"
-#include "InProcessReceiver.h"
 #include "ReceiverWindow.h"
 
 namespace {
@@ -63,6 +64,11 @@ void notify(uint8_t code, uint32_t packageId, uint16_t received, uint8_t detail 
 // from under an event that is still in flight.
 volatile bool clientConnected = false;
 volatile bool tearingDown = false;
+
+// Kept so teardown can close the link itself. BLEDevice has no accessor for the
+// server it owns, and by the time teardown needs it the window is long out of
+// scope.
+BLEServer* activeServer = nullptr;
 
 class ServerCallbacks final : public BLEServerCallbacks {
  public:
@@ -116,6 +122,7 @@ ReceiverResult runReceiverWindow(const uint32_t windowMs) {
   if (!BLEDevice::init(DEVICE_NAME)) return ReceiverResult::TimedOut;
   BLEServer* server = BLEDevice::createServer();
   if (server == nullptr) return ReceiverResult::TimedOut;
+  activeServer = server;
   server->setCallbacks(&serverCallbacks);
   BLEService* service = server->createService(SERVICE_UUID);
   BLECharacteristic* writable = service->createCharacteristic(WRITE_UUID, BLECharacteristic::PROPERTY_WRITE);
@@ -207,25 +214,55 @@ void teardownReceiver() {
   BLEAdvertising* advertising = BLEDevice::getAdvertising();
   if (advertising != nullptr) advertising->stop();
 
-  // Let the link close before the stack goes away. The accepted notification
-  // this teardown follows is precisely what makes the phone disconnect, so the
-  // disconnect event is in flight at the moment we would otherwise call
-  // deinit. It then reaches BLEServer::handleGATTServerEvent after deinit has
-  // already freed the objects it works on, and the heap poison check fails —
-  // observed on hardware 2026-08-29 as `multi_heap_free (head != NULL)`, with
-  // ble_hs_stop_done and ble_hs_hci_evt_disconn_complete both on the stack.
+  // The link has to be down before deinit, and this side has to be the one that
+  // closes it. BLEDevice::deinit() deletes the BLEServer and only then calls
+  // nimble_port_stop(), so a link that is still up gets terminated by the stop
+  // and its disconnect event is handed to the deleted server -- removePeerDevice
+  // erases from a freed std::map and the heap poison check aborts. Confirmed on
+  // hardware 2026-08-31 by forcing it: deinit with a live link fails every time.
   //
-  // Bounded, because a phone that vanishes mid-window must not hold the boot
-  // hostage: the window itself is 20 seconds and this is a tail, not a wait.
-  constexpr uint32_t DISCONNECT_GRACE_MS = 600;
-  const uint32_t waitUntil = millis() + DISCONNECT_GRACE_MS;
+  // Waiting for the phone to disconnect on its own is what this used to do, and
+  // it is not ours to schedule: a backgrounded iOS app can take seconds, which
+  // is how the panic of that morning happened. Terminating from here is a local
+  // HCI command that the controller confirms in milliseconds.
+  const bool closedFromHere = activeServer != nullptr && clientConnected;
+  if (closedFromHere) {
+    const int status = activeServer->disconnect(activeServer->getConnId());
+    if (status != 0) Serial.printf("BLE-RX teardown: disconnect returned %d\n", status);
+  }
+
+  // Bounded anyway: a phone that vanishes mid-window must not hold the boot
+  // hostage, and a link the controller cannot terminate is a case we handle
+  // below rather than wait out.
+  constexpr uint32_t DISCONNECT_CONFIRM_MS = 1000;
+  const uint32_t waitStart = millis();
+  const uint32_t waitUntil = waitStart + DISCONNECT_CONFIRM_MS;
   while (clientConnected && millis() < waitUntil) delay(10);
+  const uint32_t confirmMs = millis() - waitStart;
 
   // Even with the link down the host task may still be draining events. This
   // is the difference between "no connection" and "nothing in flight".
   delay(150);
 
+  // Unconditional, because "no crash" on its own cannot be told apart from "the
+  // phone happened to disconnect first this time" -- and that ambiguity is
+  // exactly what let the panic sit unexplained. closedFromHere=0 over many
+  // windows would mean this teardown is not doing the work its comment claims.
+  Serial.printf("BLE-RX teardown: closedFromHere=%d confirmMs=%lu stillUp=%d\n", closedFromHere ? 1 : 0,
+                static_cast<unsigned long>(confirmMs), clientConnected ? 1 : 0);
+
+  if (clientConnected) {
+    // Deinit here would be the use-after-free above, deliberately entered. The
+    // stack stays up instead, which costs the reader the ~27 KB it would have
+    // got back for the rest of this boot -- the next deep sleep clears it
+    // either way. A short heap degrades a chapter layout; a panic loses the
+    // whole card and leaves a crash screen on the panel.
+    Serial.println("BLE-RX teardown: link still up, skipping deinit");
+    return;
+  }
+
   BLEDevice::deinit(true);
+  activeServer = nullptr;
 }
 
 void releaseBluetoothMemory(const char* reason) {
