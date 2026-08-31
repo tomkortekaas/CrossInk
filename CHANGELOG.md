@@ -2,6 +2,8 @@
 
 ### Added
 
+- On X3, hold and release the physical left side button while reading to reopen the previous available book. Repeating switches back. This only uses a free hold: Side Buttons → Long Press must be Off and side buttons must be enabled. Existing long-press actions, right-button timing and front-button shortcuts are preserved; a short left press turns the page on release.
+
 - Putting the device down now refreshes the dashboard. The quarter-hour update cycle only runs while the device sleeps, so an hour of reading was an hour without updates and the card left on the panel was whichever one happened to arrive before you picked the device up. A session that ends on a card older than the refresh interval now opens one update window before going to sleep, so the panel you glance at was composed at the moment you set it down — away from home as much as at it, since the phone remains the source. A short look costs nothing: a card that is still fresh is left alone. An attempt the phone does not answer keeps the old card and waits for the normal cycle rather than trying again.
 - The V3 dashboard now shows the values it previously left blank: whether the wood burner may be lit, the car and home battery levels, and up to three market movements, each read from a Home Assistant entity you pick under Instellingen → Gegevensbronnen → Dashboard V3. A source that cannot be reached keeps its last known reading rather than falling back to a dash.
 - The V3 dashboard carries up to eight appointments and seven WhatsApp conversations, matching the design it was drawn from; it previously stopped at five and three.

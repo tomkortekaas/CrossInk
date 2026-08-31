@@ -77,6 +77,7 @@ class ActivityManager {
 
   bool handleGlobalHomeGesture();
   bool handleReaderPowerButtonSettingsOverride();
+  bool handlePreviousBookShortcut();
 
  public:
   explicit ActivityManager(GfxRenderer& renderer, MappedInputManager& mappedInput)

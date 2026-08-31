@@ -597,7 +597,40 @@ bool MappedInputManager::wasReaderMenuHold() const {
 bool MappedInputManager::wasLightPanelGesture() const { return hasHomeKeyHardware() && wasTopEdgeDownSwipe(); }
 #endif
 
+bool MappedInputManager::updatePreviousBookShortcut(const bool inReader) {
+  previousBookShortcutActive = inReader && gpio.deviceIsX3() &&
+                               SETTINGS.sideButtonLongPress == CrossPointSettings::SIDE_LONG_OFF &&
+                               SETTINGS.sideButtonLayout != CrossPointSettings::SIDE_BUTTONS_DISABLED;
+  if (!previousBookShortcutActive) {
+    previousBookGesture = {};
+    previousBookShortRelease = false;
+    return false;
+  }
+  // BaseTheme::drawSideButtonHints maps physical BTN_UP to the X3's left edge.
+  // Bypass orientation remapping here: the user chose the physical left button.
+  bool otherButton = false;
+  for (const uint8_t button : {HalGPIO::BTN_BACK, HalGPIO::BTN_CONFIRM, HalGPIO::BTN_LEFT, HalGPIO::BTN_RIGHT,
+                               HalGPIO::BTN_DOWN, HalGPIO::BTN_POWER}) {
+    otherButton = otherButton || gpio.isPressed(button) || gpio.wasReleased(button);
+  }
+  const auto result = previousBookGesture.update(previousBookShortcutActive, gpio.wasPressed(HalGPIO::BTN_UP),
+                                                 gpio.isPressed(HalGPIO::BTN_UP), gpio.wasReleased(HalGPIO::BTN_UP),
+                                                 otherButton, millis());
+  previousBookShortRelease = result == PreviousBookGesture::Result::PageTurn;
+  return result == PreviousBookGesture::Result::SwitchBook;
+}
+
 bool MappedInputManager::wasPressed(const Button button) const {
+  if (previousBookShortcutActive && (button == Button::PageBack || button == Button::PageForward)) {
+    const auto side = mapSideLayoutForReaderOrientation(
+        kSideLayouts[static_cast<CrossPointSettings::SIDE_BUTTON_LAYOUT>(SETTINGS.sideButtonLayout)], readerMode);
+    const auto primary = button == Button::PageBack ? side.pageBackPrimary : side.pageForwardPrimary;
+    const auto secondary = button == Button::PageBack ? side.pageBackSecondary : side.pageForwardSecondary;
+    // Only the physical left button waits for release. Right retains press timing.
+    return ((primary == HalGPIO::BTN_UP || secondary == HalGPIO::BTN_UP) && previousBookShortRelease) ||
+           ((primary == HalGPIO::BTN_DOWN || secondary == HalGPIO::BTN_DOWN) && gpio.wasPressed(HalGPIO::BTN_DOWN));
+  }
+
 #ifdef SIMULATOR
   if (simulatorPressed[buttonIndex(button)]) {
     return true;

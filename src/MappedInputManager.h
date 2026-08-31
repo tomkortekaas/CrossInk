@@ -4,6 +4,8 @@
 
 #include <array>
 
+#include "util/PreviousBookShortcut.h"
+
 class GfxRenderer;
 
 class MappedInputManager {
@@ -23,7 +25,14 @@ class MappedInputManager {
 
   // Enable/disable reader-specific front button mapping.
   // Call with true in reader activity onEnter(), false in onExit().
-  void setReaderMode(bool enabled) { readerMode = enabled; }
+  void setReaderMode(bool enabled) {
+    readerMode = enabled;
+    if (!enabled) {
+      previousBookGesture = {};
+      previousBookShortcutActive = false;
+      previousBookShortRelease = false;
+    }
+  }
   void setPowerAsConfirmInReaderMode(bool enabled) { powerAsConfirmInReaderMode = enabled; }
 #if CROSSINK_APP_CAP_TOUCH
   void setReaderTouchscreenOverride(bool enabled) { readerTouchscreenOverride = enabled; }
@@ -36,6 +45,8 @@ class MappedInputManager {
   void suppressNextConfirmRelease() { suppressConfirmRelease = true; }
   void suppressNextPowerRelease() { suppressPowerRelease = true; }
   void suppressNextPowerConfirmRelease() { suppressPowerConfirmRelease = true; }
+  // Called once per activity loop; only reserves an otherwise unused X3 side hold.
+  bool updatePreviousBookShortcut(bool inReader);
   bool wasPressed(Button button) const;
   bool wasReleased(Button button) const;
   bool isPressed(Button button) const;
@@ -157,6 +168,10 @@ class MappedInputManager {
 #endif
 
  private:
+  PreviousBookGesture previousBookGesture;
+  bool previousBookShortcutActive = false;
+  bool previousBookShortRelease = false;
+
   HalGPIO& gpio;
   const GfxRenderer& renderer;
   bool readerMode = false;

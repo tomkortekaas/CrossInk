@@ -105,3 +105,8 @@ Add a second include interval instead: `--font-include-intervals 0:176,176`.
 
 `fontconvert.py` needs `freetype-py` and `fontTools`, which are not in the
 system Python.
+
+## Personal X3 deployment
+
+- Build `dashboard-x3` for Tom's device, not `default`: the installed firmware uses the in-process BLE receiver plus standby dashboard refresh. Confirmed from the full flash backup on 2026-08-31. `default` can compile successfully while omitting these features.
+- Inspect actual OTA metadata before a direct serial app write; that backup booted app1 at `0x650000`, not app0 at `0x10000`. Preserve bootloader/partition table/NVS/OTA metadata/filesystem and retain a full backup. Opening USB serial can reboot this X3, so do not use serial polling to inspect interactive settings.

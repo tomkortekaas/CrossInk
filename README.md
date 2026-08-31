@@ -160,9 +160,13 @@ services.udev.packages = with pkgs; [ platformio-core.udev ];
 
 After rebuilding the system configuration, reconnect the device or reload udev rules.
 
+### Personal X3 dashboard build
+
+On `feat/dashboard-v3-firmware`, this device uses **`pio run -e dashboard-x3`**, not `default`. The standard build omits the in-process BLE receiver and standby dashboard refresh. Preserve the SDK battery patch and inspect the installed OTA slot before flashing. See the [installed firmware record](docs/deployments/2026-08-31-x3-book-switch.md), [SDK patch](docs/deployments/x3-battery-latch.patch) and [book-switch test checklist](docs/testing/x3-previous-book-shortcut.md). Full device backups must never be published.
+
 ### Build / flash / monitor
 
-Connect your Xteink X4 or X3 via USB-C and run:
+For a standard Xteink X4/X3 build (not the personal dashboard variant above), connect via USB-C and run:
 
 ```sh
 pio run -e default --target upload

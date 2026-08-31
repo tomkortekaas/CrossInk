@@ -2,6 +2,7 @@
 
 #include <CrossInkHalFrontlight.h>
 #include <FontCacheManager.h>
+#include <FsHelpers.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -12,6 +13,7 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "OpdsServerStore.h"
+#include "RecentBooksStore.h"
 #include "SilentRestart.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
@@ -107,11 +109,12 @@ void ActivityManager::loop() {
       return;
     }
     // Note: do not hold a lock here, the loop() method must be responsible for acquire one if needed
-    if (!handleReaderPowerButtonSettingsOverride() && !handleGlobalHomeGesture()) {
+    if (!handlePreviousBookShortcut() && !handleReaderPowerButtonSettingsOverride() && !handleGlobalHomeGesture()) {
       currentActivity->loop();
     }
   } else {
     mappedInput.setPowerAsConfirmInReaderMode(false);
+    mappedInput.updatePreviousBookShortcut(false);
   }
 
   while (pendingAction != PendingAction::None) {
@@ -219,6 +222,30 @@ bool ActivityManager::handleGlobalHomeGesture() {
   }
 
   goHome();
+  return true;
+}
+
+bool ActivityManager::handlePreviousBookShortcut() {
+  if (!mappedInput.updatePreviousBookShortcut(currentActivity && currentActivity->allowPreviousBookShortcut() &&
+                                              pendingAction == PendingAction::None)) {
+    return false;
+  }
+  const auto currentPath = currentActivity->getCurrentBookPath();
+  if (currentPath.empty()) return true;
+  auto target = previousBookPath(RECENT_BOOKS.getBooks(), currentPath, [](const std::string& path) {
+    return (FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) || FsHelpers::hasTxtExtension(path) ||
+            FsHelpers::hasMarkdownExtension(path)) && Storage.exists(path.c_str());
+  });
+  if (target.empty()) return true;  // Consume the hold even if there is no other book.
+  OPDS_STORE.release();
+  auto reader = makeUniqueNoThrow<ReaderActivity>(renderer, mappedInput, std::move(target));
+  if (!reader) {
+    LOG_ERR("ACT", "Cannot allocate previous-book reader");
+    return true;
+  }
+  // replaceActivity runs the old reader's onExit (saving progress and freeing its
+  // resources) before ReaderActivity::onEnter opens the selected document.
+  replaceActivity(std::move(reader));
   return true;
 }
 

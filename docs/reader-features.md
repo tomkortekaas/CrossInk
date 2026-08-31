@@ -9,6 +9,10 @@ This page covers a subset of CrossInk reader features that go beyond basic page 
 
 The sections here focus on larger CrossInk-specific reader features. Small fixes, implementation details, and features that only arrived from upstream CrossPoint are intentionally left out.
 
+## Switch to the Previous Book (X3)
+
+Hold and release the physical left side button to alternate between recent books without opening the library. This uses only an otherwise unused side-button hold; see [controls and prerequisites](controls.md#x3-previous-book-shortcut).
+
 ## In-book Reader Options
 
 Reader settings are available directly from the in-book menu without leaving the book.

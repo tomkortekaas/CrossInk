@@ -1,0 +1,20 @@
+{
+  "date": "2026-08-31",
+  "device": "Xteink X3",
+  "environment": "dashboard-x3",
+  "firmware_filename": "x3-boekwissel-2026-08-31.bin",
+  "firmware_bytes": 6269056,
+  "firmware_sha256": "83da656a5bc341207d3e206f72648b28c519b681c05ed2a08a59fa83053ea5f2",
+  "source_base_commit": "affd57ac",
+  "source_state": "Built with the book-switch source changes before their commit; embedded version retains the base commit and dirty suffix. Subsequent publication edits are documentation only.",
+  "sdk_commit": "1ff020263cd2202ea79ce3eb811f5ac8489b8cde",
+  "sdk_patch": "x3-battery-latch.patch",
+  "sdk_patch_sha256": "c2d3ec8f271b627398ae492097a6b0d8bc43bd261712c7bfa5a21dd7dfdae33b",
+  "installed_partition": "app1",
+  "installed_offset": "0x650000",
+  "partition_size_bytes": 6553600,
+  "flash_hash_verified": true,
+  "reset_requested_after_flash": true,
+  "hardware_functional_test": "not yet confirmed",
+  "backup": "Full 16 MiB pre-flash backup retained locally; not published because it may contain private settings."
+}

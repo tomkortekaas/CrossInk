@@ -1,0 +1,4 @@
+add_executable(PreviousBookShortcutTest PreviousBookShortcutTest.cpp)
+target_include_directories(PreviousBookShortcutTest PRIVATE ${REPO_ROOT}/src)
+target_compile_options(PreviousBookShortcutTest PRIVATE -UNDEBUG)
+add_test(NAME PreviousBookShortcutTest COMMAND PreviousBookShortcutTest)

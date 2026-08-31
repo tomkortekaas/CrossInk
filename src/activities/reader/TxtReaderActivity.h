@@ -70,6 +70,7 @@ class TxtReaderActivity final : public Activity {
     return true;
   }
   bool isReaderActivity() const override { return true; }
+  bool allowPreviousBookShortcut() const override { return true; }
   bool canSnapshotForSleepOverlay() const override { return true; }
   bool handlesReaderPowerSettingsOverride() const override { return true; }
   std::string getCurrentBookPath() const override { return txt ? txt->getPath() : std::string{}; }

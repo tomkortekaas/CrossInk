@@ -51,3 +51,5 @@ add_subdirectory(clip_word_store)
 add_subdirectory(dict_layout)
 add_subdirectory(reader_progress_save_debouncer)
 add_subdirectory(ble_handoff_record)
+
+add_subdirectory(previous_book_shortcut)
