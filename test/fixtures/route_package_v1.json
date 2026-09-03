@@ -1,0 +1,37 @@
+{
+  "fixture": "route_package_v1.bin",
+  "sha256": "8b2e161b158a4b36560a2b8856b6cbf5c1f23e59a0dc538e822163d72b873e28",
+  "lengthBytes": 90,
+  "format": {
+    "magic": "X3RT",
+    "version": 1,
+    "flags": 0,
+    "headerSize": 38,
+    "byteOrder": "little-endian",
+    "coordinateEncoding": "absolute E7 segment anchors; signed E5 deltas within segments",
+    "crc32": "0x4CB0201C"
+  },
+  "route": {
+    "id": 66051,
+    "name": "Walk",
+    "totalDistanceMeters": 1250,
+    "estimatedMinutes": 20,
+    "segmentStartIndices": [0, 3],
+    "points": [
+      { "latitudeE7": 523676000, "longitudeE7": 49041000 },
+      { "latitudeE7": 523688000, "longitudeE7": 49049000 },
+      { "latitudeE7": 523695000, "longitudeE7": 49052000 },
+      { "latitudeE7": 356762000, "longitudeE7": 1396503000 },
+      { "latitudeE7": 356767000, "longitudeE7": 1396499000 }
+    ],
+    "maneuvers": [
+      {
+        "pointIndex": 2,
+        "type": 4,
+        "typeName": "slightRight",
+        "distanceFromStartMeters": 850,
+        "name": "Achtergracht"
+      }
+    ]
+  }
+}
