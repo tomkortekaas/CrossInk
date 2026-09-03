@@ -201,6 +201,8 @@ The renderer reads only the visible map cells from SD and retains the current an
 
 The same streaming rule applies to route transfer and decoding. Incoming BLE chunks are written directly to a temporary SD file through a 512–1024 byte buffer while CRC is accumulated. The X3 never retains both a complete encoded package and a complete decoded route in RAM. Overview geometry is separately simplified to a small bounded representation; detailed geometry and maneuver records are read by offset when needed.
 
+Route geometry preserves GPX discontinuities on the wire. The first segment starts at the absolute E7 origin stored in the package header; every later segment has its own absolute E7 start coordinate. Points within a segment use compact signed E5 deltas, with longitude deltas wrapped across the antimeridian. This prevents distant GPX segments from overflowing a delta while adding only eight bytes per additional segment.
+
 On the X3 hardware, the SD enable and battery latch share a GPIO. The navigator therefore must not attempt to power-cycle or disable the SD rail independently. It closes inactive files, leaves the bus idle between reads, and minimizes reads through caching. Actual idle current with BLE and SD available is an early hardware acceptance measurement.
 
 Partial refresh is preferred for marker, maneuver, and distance changes. A full or high-quality refresh occurs after a configurable number of partial updates, on a major viewport change, or when switching screens.

@@ -180,7 +180,8 @@ git commit -m "feat: simplify walking routes without moving geometry"
   - bytes `34...35`: segment count
   - byte `36`: route-name UTF-8 byte count
   - byte `37`: reserved zero
-  - payload: route name, `segmentCount` start indices as `UInt16`, `(pointCount - 1)` pairs of signed `Int16` E5 deltas, then maneuvers
+  - payload: route name, `segmentCount` start indices as `UInt16`, then geometry per segment and maneuvers
+  - geometry: segment 0 starts at the header origin; every later segment starts with an absolute signed `Int32` latitude E7 and longitude E7; remaining points in each segment are signed `Int16` E5 latitude/longitude deltas
   - maneuver: point index `UInt16`, type `UInt8`, name length `UInt8`, distance from start `UInt32`, name UTF-8
   - final 4 bytes: CRC32 over every preceding byte
 
@@ -193,7 +194,7 @@ func testEncodesApprovedGoldenVector() throws {
     XCTAssertEqual(encoded.prefix(4), Data("X3RT".utf8))
 }
 
-func testRejectsAnUnrepresentableCoordinateDelta() {
+func testRejectsAnUnrepresentableCoordinateDeltaWithinASegment() {
     XCTAssertThrowsError(try RoutePackageV1().encode(Self.routeWithHugePointGap)) {
         XCTAssertEqual($0 as? RoutePackageError, .coordinateDeltaOutOfRange)
     }
@@ -210,7 +211,7 @@ Expected: FAIL because the encoder does not exist.
 
 - [ ] **Step 3: Implement the encoder using existing `CRC32` and little-endian helpers**
 
-Quantize each coordinate to E5 only for delta storage; reconstructing from the origin must stay within approximately 1.2 m per point. Do not encode `sourcePoints`; encode only `displayPoints`. Truncate nothing silently: return a typed error.
+Quantize each coordinate to E5 only for delta storage; reconstructing from each segment's absolute start must stay within approximately 1.2 m per point. Wrap longitude deltas across the antimeridian to the shortest signed difference. A discontinuity between GPX segments is always representable because every segment after the first restarts with an absolute E7 coordinate. Do not encode `sourcePoints`; encode only `displayPoints`. Truncate nothing silently: return a typed error.
 
 - [ ] **Step 4: Generate and check in one golden vector plus readable manifest**
 
