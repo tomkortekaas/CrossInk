@@ -57,6 +57,7 @@ Both GPX import and later city-route planning produce the same logical `WalkingR
 - route name, start, end, total distance, and estimated duration;
 - original GPX geometry when the source is GPX;
 - turn-preserving simplified geometry for the X3;
+- independent segment-boundary indices for original and simplified geometry, so disconnected GPX segments are never joined visually or in distance calculations;
 - ordered maneuvers with type, route offset, distance, and optional name;
 - elevation summary when available;
 - waypoints and useful route points;

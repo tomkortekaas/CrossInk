@@ -46,7 +46,7 @@
 
 **Interfaces:**
 - Produces: `GeoPoint(latitudeE7: Int32, longitudeE7: Int32, elevationDecimeters: Int16?)`
-- Produces: `WalkingRoute(id: UInt32, name: String, sourcePoints: [GeoPoint], displayPoints: [GeoPoint], segmentStartIndices: [Int], maneuvers: [WalkingManeuver], totalDistanceMeters: UInt32, estimatedMinutes: UInt16)`
+- Produces: `WalkingRoute(id: UInt32, name: String, sourcePoints: [GeoPoint], displayPoints: [GeoPoint], sourceSegmentStartIndices: [Int], displaySegmentStartIndices: [Int], maneuvers: [WalkingManeuver], totalDistanceMeters: UInt32, estimatedMinutes: UInt16)`
 - Produces: `WalkingManeuverKind: UInt8` with `straight=0`, `left=1`, `right=2`, `slightLeft=3`, `slightRight=4`, `uTurn=5`, `arrive=6`; and `WalkingManeuver(pointIndex: UInt16, kind: WalkingManeuverKind, distanceFromStartMeters: UInt32, name: String)`
 - Produces: `GPXRouteParser.parse(data: Data, routeId: UInt32) throws -> WalkingRoute`
 
@@ -59,7 +59,8 @@ func testParsesTrackSegmentsWithoutJoiningTheirBoundaryDistance() throws {
     XCTAssertEqual(route.name, "Duinwandeling")
     XCTAssertEqual(route.sourcePoints.count, 4)
     XCTAssertEqual(route.displayPoints, route.sourcePoints)
-    XCTAssertEqual(route.segmentStartIndices, [0, 2])
+    XCTAssertEqual(route.sourceSegmentStartIndices, [0, 2])
+    XCTAssertEqual(route.displaySegmentStartIndices, [0, 2])
     XCTAssertLessThan(route.totalDistanceMeters, 500)
 }
 
@@ -100,10 +101,14 @@ git commit -m "feat: parse GPX walks into WalkingRoute"
 **Files:**
 - Create: `Sources/DashboardCore/Navigation/RouteSimplifier.swift`
 - Create: `Tests/DashboardCoreTests/Navigation/RouteSimplifierTests.swift`
+- Modify: `Sources/DashboardCore/Navigation/WalkingRoute.swift`
+- Modify: `Sources/DashboardCore/Navigation/GPXRouteParser.swift`
+- Modify: `Tests/DashboardCoreTests/Navigation/GPXRouteParserTests.swift`
 
 **Interfaces:**
-- Consumes: `GeoPoint`, `WalkingRoute.segmentStartIndices`
-- Produces: `RouteSimplifier.simplify(points: [GeoPoint], segmentStartIndices: [Int], toleranceMeters: Double, protectedIndices: Set<Int>) -> [GeoPoint]`
+- Consumes: `GeoPoint`, `WalkingRoute.sourceSegmentStartIndices`
+- Produces: `SimplifiedRouteGeometry(points: [GeoPoint], segmentStartIndices: [Int], sourceIndices: [Int])`
+- Produces: `RouteSimplifier.simplify(points: [GeoPoint], segmentStartIndices: [Int], toleranceMeters: Double, protectedIndices: Set<Int>) -> SimplifiedRouteGeometry`
 
 - [ ] **Step 1: Write geometry-preservation tests**
 
@@ -115,10 +120,11 @@ func testKeepsEndpointsProtectedTurnsAndSegmentStarts() {
         toleranceMeters: 8,
         protectedIndices: [2]
     )
-    XCTAssertEqual(result.first, routePoints.first)
-    XCTAssertTrue(result.contains(routePoints[2]))
-    XCTAssertTrue(result.contains(routePoints[4]))
-    XCTAssertEqual(result.last, routePoints.last)
+    XCTAssertEqual(result.points.first, routePoints.first)
+    XCTAssertTrue(result.sourceIndices.contains(2))
+    XCTAssertTrue(result.sourceIndices.contains(4))
+    XCTAssertEqual(result.points.last, routePoints.last)
+    XCTAssertEqual(result.segmentStartIndices.count, 2)
 }
 ```
 
@@ -132,7 +138,7 @@ Expected: FAIL because `RouteSimplifier` is missing.
 
 - [ ] **Step 3: Implement segment-local iterative Ramer–Douglas–Peucker**
 
-Project latitude/longitude to local meters per segment, split work ranges at endpoints, segment starts, and protected indices, use an explicit array stack rather than recursion, and always return original `GeoPoint` values rather than calculated replacements.
+Project latitude/longitude to local meters per segment, split work ranges at endpoints, segment starts, and protected indices, use an explicit array stack rather than recursion, and always return original `GeoPoint` values plus their source indices. Recalculate segment starts in the returned point array; never copy source-array segment indices into simplified geometry.
 
 - [ ] **Step 4: Verify focused and full tests**
 
@@ -143,7 +149,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/DashboardCore/Navigation/RouteSimplifier.swift Tests/DashboardCoreTests/Navigation/RouteSimplifierTests.swift
+git add Sources/DashboardCore/Navigation Tests/DashboardCoreTests/Navigation
 git commit -m "feat: simplify walking routes without moving geometry"
 ```
 
@@ -162,7 +168,7 @@ git commit -m "feat: simplify walking routes without moving geometry"
   - bytes `0...3`: ASCII `X3RT`
   - byte `4`: version `1`
   - byte `5`: flags (`bit0 = has elevation summary`, all other bits zero)
-  - bytes `6...7`: header size `36`
+  - bytes `6...7`: header size `38`
   - bytes `8...11`: total package length including CRC32
   - bytes `12...15`: route id
   - bytes `16...17`: point count including origin
@@ -171,9 +177,10 @@ git commit -m "feat: simplify walking routes without moving geometry"
   - bytes `24...27`: origin longitude E7
   - bytes `28...31`: total distance meters
   - bytes `32...33`: estimated minutes
-  - byte `34`: route-name UTF-8 byte count
-  - byte `35`: reserved zero
-  - payload: route name, `(pointCount - 1)` pairs of signed `Int16` E5 deltas, then maneuvers
+  - bytes `34...35`: segment count
+  - byte `36`: route-name UTF-8 byte count
+  - byte `37`: reserved zero
+  - payload: route name, `segmentCount` start indices as `UInt16`, `(pointCount - 1)` pairs of signed `Int16` E5 deltas, then maneuvers
   - maneuver: point index `UInt16`, type `UInt8`, name length `UInt8`, distance from start `UInt32`, name UTF-8
   - final 4 bytes: CRC32 over every preceding byte
 
@@ -193,7 +200,7 @@ func testRejectsAnUnrepresentableCoordinateDelta() {
 }
 ```
 
-Also reject zero points, more than `UInt16.max` points/maneuvers, strings over 255 UTF-8 bytes, package length over 65,535, and nonzero reserved flags.
+Also reject zero points, missing/unsorted/out-of-range segment starts, more than `UInt16.max` points/maneuvers/segments, strings over 255 UTF-8 bytes, package length over 65,535, and nonzero reserved flags.
 
 - [ ] **Step 2: Verify failure**
 
