@@ -198,6 +198,10 @@ The X3 renders vector geometry directly into a one-bit portrait framebuffer. The
 
 The renderer reads only the visible map cells from SD and retains the current and likely next cells in a bounded cache. It does not load a province map into RAM. Map panning redraws the map region; marker-only movement restores the affected local background before drawing the new marker.
 
+The same streaming rule applies to route transfer and decoding. Incoming BLE chunks are written directly to a temporary SD file through a 512–1024 byte buffer while CRC is accumulated. The X3 never retains both a complete encoded package and a complete decoded route in RAM. Overview geometry is separately simplified to a small bounded representation; detailed geometry and maneuver records are read by offset when needed.
+
+On the X3 hardware, the SD enable and battery latch share a GPIO. The navigator therefore must not attempt to power-cycle or disable the SD rail independently. It closes inactive files, leaves the bus idle between reads, and minimizes reads through caching. Actual idle current with BLE and SD available is an early hardware acceptance measurement.
+
 Partial refresh is preferred for marker, maneuver, and distance changes. A full or high-quality refresh occurs after a configurable number of partial updates, on a major viewport change, or when switching screens.
 
 ## Existing, reused, and new components
@@ -250,13 +254,14 @@ The MVP excludes an on-X3 route planner, raw OSM parsing, continuous Wi-Fi, spok
 1. Define and test the Swift `WalkingRoute` model and GPX import.
 2. Define a versioned binary route package and golden test vectors shared by Swift and C++.
 3. Render transferred route geometry and cached position in the existing X3 navigator.
-4. Create a Noord-Holland `walkmap` generator prototype and measure real package sizes.
-5. Add the bounded SD map reader, spatial cell lookup, and walking-path rendering.
-6. Implement the BLE navigation-session state flow and cached wake display.
-7. Add adaptive partial-refresh behavior and ghosting cleanup.
-8. Add off-route detection, temporary return-to-GPX guidance, and iPhone alerts.
-9. Measure battery, latency, readability, SD behavior, and 10 km, 15 km, and 40 km route performance.
-10. Add the city planner only after the shared route flow is stable.
+4. Measure navigator idle current with BLE active and the SD card mounted but idle.
+5. Create a Noord-Holland `walkmap` generator prototype and measure real package sizes.
+6. Add the bounded SD map reader, spatial cell lookup, and walking-path rendering.
+7. Implement the BLE navigation-session state flow and cached wake display.
+8. Add adaptive partial-refresh behavior and ghosting cleanup.
+9. Add off-route detection, temporary return-to-GPX guidance, and iPhone alerts.
+10. Measure battery, latency, readability, SD behavior, and 10 km, 15 km, and 40 km route performance.
+11. Add the city planner only after the shared route flow is stable.
 
 Bounded low- and medium-risk implementation tasks may be delegated to DeepSeek. Architecture, storage boundaries, protocol acceptance, hardware safety, and final verification remain Codex responsibilities.
 
@@ -280,6 +285,7 @@ Bounded low- and medium-risk implementation tasks may be delegated to DeepSeek. 
 - **E-ink ghosting:** threshold movement, isolate dirty rectangles, and schedule cleanup refreshes.
 - **Dense map rendering:** use zoom-specific geometry, label limits, and walking-first feature priorities.
 - **SD latency or removal:** bounded cell cache, checked reads, atomic packages, and an internal emergency route.
+- **Shared SD-enable/battery-latch pin:** never toggle the SD rail independently; close files, idle the bus, cache cells, and measure session current early.
 - **GPS noise:** require accurate consecutive fixes and use different urban/rural thresholds.
 - **OSM data quality:** preserve the GPX as authority and treat enrichment as advisory.
 - **Update-slot assumptions:** leave the partition table unchanged for the MVP and audit update behavior before any later repartitioning.

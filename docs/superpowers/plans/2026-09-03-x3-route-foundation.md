@@ -19,6 +19,8 @@
 - Do not change the partition table, `app1` offset/size, or SPIFFS offset/size.
 - Do not modify or reset the user's dirty `freeink-sdk` submodule.
 - New route storage is one atomic, checksummed SD file capped at 256 KiB; this plan does not write SPIFFS.
+- Route transfer and decoding use one 512–1024 byte working buffer and never retain the entire encoded package plus decoded route in RAM.
+- The SD enable and battery latch share a GPIO on X3; code must not disable or power-cycle the SD rail independently.
 - All wire integers are little-endian; coordinates are signed E7 degrees.
 - Every Swift/C++ wire-format test uses the same checked-in golden byte vector.
 - No device flash is required until the final hardware task.
@@ -224,8 +226,9 @@ Expected: Swift tests PASS; fixture length and hash match constants in `RoutePac
 - Modify: `test/navigator/CMakeLists.txt`
 
 **Interfaces:**
-- Produces: `DecodeStatus decodeRoutePackageV1(const uint8_t* bytes, size_t length, RoutePackage& out)`
-- Produces bounded `RoutePackage` with `std::array<RoutePoint, 4096> points`, `std::array<RouteManeuver, 512> maneuvers`, fixed `char name[64]`, counts, distance, and duration.
+- Produces: `DecodeStatus validateRoutePackageV1(RouteByteSource& source, RouteIndex& out)`
+- `RouteByteSource` exposes bounded `read(offset, buffer, length)` calls over a host vector or SD file.
+- Produces bounded `RouteIndex` containing header metadata, geometry/maneuver offsets, segment offsets, a maximum 1,024-point overview line, and no duplicate full package.
 - `DecodeStatus`: `Ok`, `NullInput`, `TooShort`, `TooLarge`, `BadMagic`, `UnsupportedVersion`, `BadHeader`, `BadLength`, `BadCrc`, `TooManyPoints`, `TooManyManeuvers`, `BadUtf8Length`, `BadManeuver`, `TrailingPayload`.
 
 - [ ] **Step 1: Add decoder tests against the Swift fixture and corrupt copies**
@@ -233,15 +236,16 @@ Expected: Swift tests PASS; fixture length and hash match constants in `RoutePac
 ```cpp
 TEST(RoutePackageV1Test, DecodesSwiftGoldenVector) {
   const auto bytes = loadFixture("route_package_v1.bin");
-  navigator::RoutePackage route{};
-  ASSERT_EQ(navigator::decodeRoutePackageV1(bytes.data(), bytes.size(), route),
+  VectorRouteByteSource source(bytes);
+  navigator::RouteIndex route{};
+  ASSERT_EQ(navigator::validateRoutePackageV1(source, route),
             navigator::DecodeStatus::Ok);
   EXPECT_EQ(route.id, 0x01020304U);
   EXPECT_EQ(route.pointCount, 4U);
 }
 ```
 
-Test every status, unchanged guard bytes around input/output, maximum arrays, signed deltas, CRC mismatch, truncated maneuver names, and no heap allocation in the decoder.
+Test every status, guarded 1,024-byte read buffers, short reads, signed deltas, CRC mismatch, truncated maneuver names, and no full-package allocation in the decoder.
 
 - [ ] **Step 2: Verify focused test failure**
 
@@ -249,9 +253,9 @@ Run: `cmake --build build/test --target NavigatorCoreTest && ./build/test/test/n
 
 Expected: FAIL at compile because the decoder is absent.
 
-- [ ] **Step 3: Implement cursor-based checked decoding**
+- [ ] **Step 3: Implement cursor-based streaming validation**
 
-Validate header and CRC before mutating `out`; decode into a static/local candidate whose size is reviewed against ESP32 stack constraints, then assign only on success. If the candidate is too large for stack, make the caller own it and decode fields only after full structural validation.
+Read through a caller-owned 1,024-byte buffer, validate header and CRC before publishing `out`, and record file offsets instead of copying detailed geometry or maneuver strings. Build the overview line incrementally with a fixed-capacity simplifier and make the caller own the `RouteIndex`; no function places it on a task stack.
 
 - [ ] **Step 4: Run navigator and full host suites**
 
@@ -278,10 +282,10 @@ git commit -m "feat: decode X3 walking route packages"
 - Modify: `test/navigator/CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: decoded `RoutePackage`, current position E7, logical portrait map rectangle.
+- Consumes: `RouteIndex`, `RouteByteSource`, current position E7, logical portrait map rectangle.
 - Produces: `CurrentPosition { GeoPoint point; uint16_t accuracyMeters; uint16_t bearingDegrees; }`.
 - Produces: `RouteViewport::fitOverview(...)`, `RouteViewport::centered(...)`, and `project(GeoPoint) -> ScreenPoint`.
-- Produces: `RouteMapRenderer::draw(RouteCanvas&, const RoutePackage&, const RouteViewport&, const CurrentPosition*)`.
+- Produces: `RouteMapRenderer::draw(RouteCanvas&, RouteByteSource&, const RouteIndex&, const RouteViewport&, const CurrentPosition*)`.
 - `RouteCanvas` exposes only clipped `line`, `disc`, and `ring`; it has no display-driver dependency.
 
 - [ ] **Step 1: Write projection tests**
@@ -300,7 +304,7 @@ Expected: compile failure for missing viewport/renderer.
 
 - [ ] **Step 4: Implement integer/fixed-point projection and line clipping**
 
-Use an equirectangular local projection with one cosine scale fixed per viewport; keep intermediate multiplication in `int64_t`. Use Cohen–Sutherland or Liang–Barsky clipping so no primitive receives coordinates outside a small guarded range.
+Use an equirectangular local projection with one cosine scale fixed per viewport; keep intermediate multiplication in `int64_t`. Stream detailed points through a fixed 1,024-byte buffer and use Cohen–Sutherland or Liang–Barsky clipping so no primitive receives coordinates outside a small guarded range.
 
 - [ ] **Step 5: Run all host tests and commit**
 
@@ -318,7 +322,7 @@ Expected: PASS.
 - Create: `test/navigator/NavigatorRouteScreenTest.cpp`
 
 **Interfaces:**
-- Adds: `NavScreenRenderer::draw(..., const NavState&, const RoutePackage*, const CurrentPosition*)`.
+- Adds: `NavScreenRenderer::draw(..., const NavState&, RouteByteSource*, const RouteIndex*, const CurrentPosition*)`.
 - Preserves: existing overload and byte-identical default proof screen when route is null.
 
 - [ ] **Step 1: Add compatibility and routed-screen tests**
@@ -376,7 +380,7 @@ git commit -m "feat: render transferred route geometry in navigator"
 - Status values: `0x21 route-ready`, `0x22 route-progress`, `0x23 route-accepted`, `0x24 route-invalid`, `0x25 route-storage-failed`; all use the existing seven-byte status envelope.
 - Stores `/Navigation/Routes/active/route.bin` only after package decode and CRC validation.
 
-- [ ] **Step 1: Write matching Swift frame tests and C++ assembler tests**
+- [ ] **Step 1: Write matching Swift frame tests and C++ streaming-receiver tests**
 
 Use the same golden package and maximum BLE write lengths 20, 185, and 512. Assert contiguous offsets, duplicate-chunk idempotence, gap rejection, wrong-id rejection, over-65,535 rejection, and commit-before-complete rejection.
 
@@ -388,13 +392,15 @@ Run C++: `cmake --build build/test --target NavigatorCoreTest`
 
 Expected: missing protocol types.
 
-- [ ] **Step 3: Implement pure frame builder and bounded assembler**
+- [ ] **Step 3: Implement the frame builder and streaming receiver**
 
-The assembler owns no filesystem and exposes completed immutable bytes only after CRC verification. Keep dashboard package framing unchanged.
+The receiver validates id and contiguous offsets, passes each accepted payload directly to a `RouteSink`, and retains at most one BLE frame plus a 1,024-byte work buffer. On COMMIT it closes the sink and invokes streaming Route Package validation; it never exposes or allocates a complete in-memory package. Keep dashboard package framing unchanged.
 
 - [ ] **Step 4: Implement SD storage behind a testable file abstraction**
 
 Write `/Navigation/Routes/active/route.tmp`, flush/close, decode from disk, rename to `route.bin`, and delete the temporary file on every failure. Enforce canonical fixed paths and a 256 KiB active-route quota even though Route Package v1 is capped lower. The host test uses an in-memory fake; the hardware adapter uses the existing `HalStorage`/SD-card manager.
+
+Do not call a new SD power-off routine: close files and leave the shared bus idle. The X3 battery latch and SD enable must remain asserted according to the existing board profile.
 
 - [ ] **Step 5: Add the minimal app0 route receiver**
 
@@ -493,7 +499,7 @@ Import the short fixture, launch app0, reconnect, send the route, compare route 
 
 - [ ] **Step 6: Record timing and failure behavior**
 
-Measure GPX parse time, package bytes, BLE transfer time, launch time, render time, and return time. Interrupt one transfer and corrupt one test package; both must leave the previous active route usable.
+Measure GPX parse time, package bytes, BLE transfer time, launch time, render time, return time, free heap, largest allocatable block, and current draw with BLE active plus SD mounted/idle. Interrupt one transfer and corrupt one test package; both must leave the previous active route usable.
 
 - [ ] **Step 7: Run final regression suites and commit the acceptance record**
 
