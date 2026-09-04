@@ -10,6 +10,7 @@ struct TransferResult {
   TransferStatus status = TransferStatus::InvalidFrame;
   uint32_t packageId = 0;
   uint16_t received = 0;
+  bool navigationLaunchRequested = false;
 };
 
 class TransferAssembler {

@@ -2,6 +2,10 @@
 
 ### Added
 
+- X3 walking navigation can use an offline four-level grayscale map with filled water, green areas and buildings, clear road hierarchy, proportional Noto Sans labels and a cased route line. During a live walk, a larger position dot refreshes automatically after meaningful movement and immediately when entering or leaving the route. The existing vector map remains the automatic fallback.
+
+- X3 dashboard builds offer Receive on the home menu: a visible 60-second Bluetooth window, cancellable with Back, for dashboard updates or launching navigation without waiting for the next scheduled wake.
+
 - On X3, hold and release the physical left side button while reading to reopen the previous available book. Repeating switches back. This only uses a free hold: Side Buttons → Long Press must be Off and side buttons must be enabled. Existing long-press actions, right-button timing and front-button shortcuts are preserved; a short left press turns the page on release.
 
 - Putting the device down now refreshes the dashboard. The quarter-hour update cycle only runs while the device sleeps, so an hour of reading was an hour without updates and the card left on the panel was whichever one happened to arrive before you picked the device up. A session that ends on a card older than the refresh interval now opens one update window before going to sleep, so the panel you glance at was composed at the moment you set it down — away from home as much as at it, since the phone remains the source. A short look costs nothing: a card that is still fresh is left alone. An attempt the phone does not answer keeps the old card and waits for the normal cycle rather than trying again.
@@ -18,6 +22,8 @@
 
 ### Fixed
 
+- Navigator map loading keeps a single SD handle open for each draw instead of reopening and seeking the regional file for every small read. Back can cancel map reads; target timings still require hardware measurement.
+
 - A dashboard update the phone does not answer no longer wakes the whole reader. When nothing arrived in the wake window the device carried on booting and was left sitting on its home screen until the inactivity timer put it back to sleep — on roughly one wake in four or five, at the rates measured in August, and on a panel whose only purpose is to show the dashboard. It now goes straight back to sleep with the dashboard still on screen.
 - A dashboard stored before a firmware update no longer reads as broken. The panel called it unreadable and advised updating the firmware — the very thing that had just happened — where the package was merely older than the build. It now says it is waiting for a new dashboard, which is what it is doing: the next update from the phone clears it.
 - A heavy shower now reads as solid black on the V3 rain strip. Intensity was carried on a scale whose darkest band only began around 44 mm/h — heavier than any shower the Netherlands gets — so drizzle and a downpour were drawn in the same half tone and the strip was in effect a wet/dry bar.
@@ -28,6 +34,12 @@
 - The X3 no longer switches itself off when it goes to sleep with a scheduled wake-up pending, so a dashboard left on battery keeps refreshing instead of going dark until the power button is pressed. Its power latch and its SD-card power switch turn out to be the same pin, and releasing it for sleep cut the battery rail; on USB the device stayed powered through the cable and the problem was invisible.
 
 ### Changed
+
+- Navigator supports an optional detailed walking map with street names, building outlines, water hatching, road/path styles, a larger position marker, north/scale and approximate straight-line direction to the GPX route. The previous regional map remains available as fallback.
+
+- Navigator can show the latest received GPS position at a 400-meter walking scale on OK, with explicit GPS status and a route-overview fallback when no fresh position is available.
+
+- Navigator shows a loading screen before reading the regional map. Batched index reads reduce repeated SD seeks and a small CRC lookup table speeds validation; route geometry and corruption checks remain unchanged.
 
 - Dashboard tile values are set in one typeface at four sizes, so a value reads clearly apart from its label. Previously every tile used the same two sizes.
 - Every dashboard tile is now framed the same way. Agenda tiles previously went unframed while value tiles were outlined, which left the grid looking half finished.

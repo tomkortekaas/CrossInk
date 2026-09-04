@@ -1,3 +1,6 @@
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+#include "spikes/ble_handoff/HomeReceiveBoot.h"
+#endif
 #include "HomeActivity.h"
 
 #include <Bitmap.h>
@@ -42,7 +45,11 @@ namespace {
 constexpr uint32_t CAROUSEL_CACHE_MAGIC = 0x43434152;  // "CCAR"
 // Cached frames include all Home visuals, including the menu icons. Bump this
 // whenever their rendering changes so stale snapshots are rebuilt after OTA.
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+constexpr uint16_t CAROUSEL_CACHE_VERSION = 6;
+#else
 constexpr uint16_t CAROUSEL_CACHE_VERSION = 5;
+#endif
 constexpr char CAROUSEL_CACHE_PATH[] = "/.crosspoint/home_carousel_cache.bin";
 constexpr char CAROUSEL_CACHE_TMP_PATH[] = "/.crosspoint/home_carousel_cache.tmp";
 constexpr uint32_t CAROUSEL_FRAME_MIN_FREE_AFTER_ALLOC = 64U * 1024U;
@@ -58,6 +65,9 @@ enum class HomeMenuAction {
   ReadingStats,
   Bookmarks,
   FileTransfer,
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+  Receive,
+#endif
   Settings,
 };
 
@@ -68,7 +78,7 @@ struct HomeMenuEntry {
 };
 
 struct HomeMenuEntries {
-  static constexpr int kCapacity = 8;
+  static constexpr int kCapacity = 9;
   std::array<HomeMenuEntry, kCapacity> entries{};
   int count = 0;
 
@@ -261,6 +271,9 @@ const char* savedItemsLabel(bool hasBookmarks, bool hasClippings) {
 
 void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks,
                          bool hasClippings) {
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+  items.push({tr(STR_HOME_RECEIVE), Wifi, HomeMenuAction::Receive});
+#endif
   items.push({tr(STR_BROWSE_FILES), Folder, HomeMenuAction::BrowseFiles});
   items.push({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks});
 
@@ -286,6 +299,9 @@ HomeMenuEntries buildHomeMenuItems(bool hasOpdsServers, bool hasReadingStats, bo
 
 HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasReadingStats, bool hasBookmarks, bool hasClippings) {
   HomeMenuEntries items;
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+  items.push({tr(STR_HOME_RECEIVE), Wifi, HomeMenuAction::Receive});
+#endif
   items.push({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks});
 
   if (hasOpdsServers) {
@@ -594,6 +610,9 @@ static_assert(HomeActivity::kMaxCachedBooks >= LyraCarouselMetrics::values.homeR
 int HomeActivity::getMenuItemCount() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   int count = 4;  // File Browser, Recents, File transfer, Settings
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+  ++count;
+#endif
   if (!metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     count += getVisibleRecentBookCount();
   } else if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
@@ -1445,6 +1464,11 @@ void HomeActivity::loop() {
           case HomeMenuAction::Bookmarks:
             onSavedItemsOpen();
             break;
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+          case HomeMenuAction::Receive:
+            dashboard::requestHomeReceive();
+            break;
+#endif
           case HomeMenuAction::FileTransfer:
             onFileTransferOpen();
             break;
@@ -1655,6 +1679,11 @@ void HomeActivity::loop() {
       case HomeMenuAction::Bookmarks:
         onSavedItemsOpen();
         break;
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+      case HomeMenuAction::Receive:
+        dashboard::requestHomeReceive();
+        break;
+#endif
       case HomeMenuAction::FileTransfer:
         onFileTransferOpen();
         break;

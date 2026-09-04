@@ -110,9 +110,20 @@ uint16_t localMinuteOfDay(const uint8_t utcHour, const uint8_t utcMinute, const 
   return static_cast<uint16_t>((shifted % perDay + perDay) % perDay);
 }
 
+bool manualReceiverHoldMet(const uint32_t powerButtonHeldMs) { return powerButtonHeldMs >= MANUAL_RECEIVER_HOLD_MS; }
+
 AgendaBootRoute chooseAgendaBootRoute(const bool agendaCycleArmed, const WakeSource wakeSource,
-                                      const bool inProcessAvailable) {
-  if (!agendaCycleArmed || wakeSource != WakeSource::Timer) return AgendaBootRoute::NormalReader;
+                                      const bool inProcessAvailable, const bool holdQualified) {
+  if (!agendaCycleArmed) return AgendaBootRoute::NormalReader;
+  if (wakeSource == WakeSource::PowerButton) {
+    // A deliberate ~1s hold during an armed Agenda sleep is a manual request for
+    // an immediate in-process receiver window. Without an in-process receiver
+    // there is nothing to open on this boot, so the long hold then falls back to
+    // the normal reader wake.
+    return holdQualified && inProcessAvailable ? AgendaBootRoute::ManualInProcessReceiver
+                                               : AgendaBootRoute::NormalReader;
+  }
+  if (wakeSource != WakeSource::Timer) return AgendaBootRoute::NormalReader;
   return inProcessAvailable ? AgendaBootRoute::InProcessReceiver : AgendaBootRoute::Receiver;
 }
 

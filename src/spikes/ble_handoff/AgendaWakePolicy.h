@@ -5,8 +5,8 @@
 namespace dashboard {
 
 enum class WakeSource : uint8_t { Other, PowerButton, Timer };
-enum class AgendaBootRoute : uint8_t { NormalReader, Receiver, InProcessReceiver };
-enum class ReceiverResult : uint8_t { None, AwaitingWindow, Accepted, TimedOut };
+enum class AgendaBootRoute : uint8_t { NormalReader, Receiver, InProcessReceiver, ManualInProcessReceiver };
+enum class ReceiverResult : uint8_t { None, AwaitingWindow, Accepted, TimedOut, Cancelled };
 enum class InProcessWindowAction : uint8_t { ContinueBoot, SleepToNextTick };
 
 #ifndef CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES
@@ -15,6 +15,19 @@ enum class InProcessWindowAction : uint8_t { ContinueBoot, SleepToNextTick };
 constexpr uint32_t AGENDA_WAKE_INTERVAL_MINUTES = CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES;
 constexpr uint8_t AGENDA_WAKE_WINDOW_START_HOUR = 7;
 constexpr uint8_t AGENDA_WAKE_WINDOW_END_HOUR = 22;
+
+// Cumulative power-button hold that qualifies as a manual request for an
+// on-demand receiver window during an armed Agenda sleep. Measured on the hold
+// the firmware can observe: InputManager stamps the press at the first update()
+// after the wake and getPowerButtonHeldTime() counts from that stamp, so the
+// portion of the hold verifyPowerButtonWakeup consumed counts toward it, and
+// the boundary is deliberately NOT a fresh count started after verification.
+constexpr uint32_t MANUAL_RECEIVER_HOLD_MS = 1000;
+
+// How long the manual (power-hold requested) in-process receiver window
+// listens. Longer than the automatic 20 s timer window because the phone was
+// not scheduled for this wake and may need time to notice and connect.
+constexpr uint32_t MANUAL_RECEIVER_WINDOW_MS = 30000;
 
 // The wake interval and window the device falls back to until it has ever
 // received a package, or when a received one carries an out-of-range value.
@@ -102,7 +115,25 @@ bool shouldRefreshAtStandby(bool agendaSleep, bool clockAvailable, uint64_t nowE
 // returnedFromReceiver branch); the in-process route did not.
 InProcessWindowAction actionAfterInProcessWindow(ReceiverResult result);
 
-AgendaBootRoute chooseAgendaBootRoute(bool agendaCycleArmed, WakeSource wakeSource, bool inProcessAvailable = false);
+// Pure decision boundary for the manual receiver hold: whether a cumulative
+// power-button hold of `powerButtonHeldMs` - as reported by
+// gpio.getPowerButtonHeldTime(), measured from the press that woke the device -
+// has reached MANUAL_RECEIVER_HOLD_MS. Lives here so the threshold semantics
+// are host-testable; main.cpp owns the bounded polling of the live GPIO around
+// it (waiting for the crossing or for the release, never indefinitely).
+bool manualReceiverHoldMet(uint32_t powerButtonHeldMs);
+
+// Chooses what the boot does with an armed Agenda cycle.
+//
+// NormalReader unless a timer wake (or a manual power-hold request) earns a
+// receiver window. A manual request - a deliberate ~1s power-button hold during
+// an armed Agenda sleep - opens the in-process receiver immediately, but only
+// when one is linked: without it the long hold falls back to the normal reader
+// wake (a partition switch from a button press is out of scope). `holdQualified`
+// only ever matters for a PowerButton wake; timer and other wake sources ignore
+// it, keeping the automatic schedule unchanged.
+AgendaBootRoute chooseAgendaBootRoute(bool agendaCycleArmed, WakeSource wakeSource, bool inProcessAvailable = false,
+                                      bool holdQualified = false);
 uint32_t encodeReceiverResultWord(ReceiverResult result);
 ReceiverResult decodeReceiverResultWord(uint32_t word);
 

@@ -14,7 +14,9 @@
 #include <array>
 #include <cstring>
 
+#include "../navigator/NavHandoff.h"
 #include "BleHandoffNvs.h"
+#include "DashboardBootSwitch.h"
 #include "DashboardSlotSelection.h"
 #include "DashboardTransfer.h"
 #include "ReceiverWindow.h"
@@ -115,7 +117,28 @@ WriteCallbacks writeCallbacks;
 
 namespace dashboard {
 
-ReceiverResult runReceiverWindow(const uint32_t windowMs) {
+bool handleNavigationLaunch(const uint32_t requestId) {
+  if (!navigator::writeNavMarker(requestId)) {
+    Serial.printf("BLE-RX navigation marker write failed request=%u\n", requestId);
+    notify(0x15, requestId, 0);
+    return false;
+  }
+  if (!dashboard_boot::switchToSlot0()) {
+    Serial.printf("BLE-RX navigation slot switch failed request=%u\n", requestId);
+    navigator::clearNavMarker();
+    // 0x14 remains the established generic boot-switch-failed status used by
+    // the legacy partition receiver and existing phone builds.
+    notify(0x14, requestId, 0);
+    return false;
+  }
+  Serial.printf("BLE-RX navigation launch accepted request=%u\n", requestId);
+  notify(0x20, requestId, 0);
+  delay(250);
+  ESP.restart();
+  return true;
+}
+
+ReceiverResult runReceiverWindow(const uint32_t windowMs, bool (*cancelRequested)()) {
   // Start the clock before the radio comes up, so the time the stack takes to
   // initialise counts against the window rather than extending it.
   receiverWindow = ReceiverWindow(millis(), windowMs);
@@ -137,8 +160,13 @@ ReceiverResult runReceiverWindow(const uint32_t windowMs) {
   Serial.printf("BLE-RX ready free=%u maxAlloc=%u\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   while (true) {
-    const ReceiverWindowAction windowAction = receiverWindow.actionAt(millis(), packageAccepted);
+    const ReceiverWindowAction windowAction = receiverWindow.actionAt(
+        millis(), packageAccepted, cancelRequested != nullptr && cancelRequested());
     if (windowAction == ReceiverWindowAction::ReturnAccepted) return ReceiverResult::Accepted;
+    if (windowAction == ReceiverWindowAction::ReturnCancelled) {
+      Serial.println("BLE-RX home window cancelled");
+      return ReceiverResult::Cancelled;
+    }
     if (windowAction == ReceiverWindowAction::ReturnTimedOut) {
       Serial.println("BLE-RX window timed out; returning to reader");
       return ReceiverResult::TimedOut;
@@ -164,6 +192,10 @@ ReceiverResult runReceiverWindow(const uint32_t windowMs) {
     const TransferResult result = assembler.accept(frame.data(), length);
     Serial.printf("BLE-RX frame type=%u length=%u status=%u package=%u received=%u\n", frame[0], length,
                   static_cast<unsigned>(result.status), result.packageId, result.received);
+    if (result.navigationLaunchRequested) {
+      handleNavigationLaunch(result.packageId);
+      continue;
+    }
     if (result.status == TransferStatus::Ready) {
       notify(0x01, result.packageId, result.received);
       continue;

@@ -113,6 +113,8 @@ inline esp_sleep_wakeup_cause_t esp_sleep_get_wakeup_cause() { return ESP_SLEEP_
 #include "spikes/ble_handoff/BleHandoffNvs.h"
 #ifdef CROSSINK_IN_PROCESS_RECEIVER
 #include "spikes/ble_handoff/InProcessReceiver.h"
+#include "spikes/ble_handoff/HomeReceiveBoot.h"
+#include "activities/RenderLock.h"
 #endif
 #include "spikes/ble_handoff/BleHandoffReaderProbe.h"
 #include "spikes/ble_handoff/BleHandoffTrace.h"
@@ -389,6 +391,33 @@ enum class BootResume : uint8_t {
 // device back up against the user's sleep gesture. Never cleared:
 // startDeepSleep() does not return, so a set latch only ends at the wakeup reset.
 static bool deepSleepInProgress = false;
+
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+RTC_NOINIT_ATTR uint32_t homeReceiveRequest;
+
+void dashboard::requestHomeReceive() {
+  if (deepSleepInProgress) return;
+  // Draw using the existing framebuffer/fonts before reboot frees reader RAM.
+  // Retain this frame while the boot-only receiver runs; no second framebuffer.
+  RenderLock lock;
+  renderer.clearScreen();
+  const int y = renderer.getScreenHeight() / 2;
+  const int line = renderer.getLineHeight(UI_10_FONT_ID);
+  renderer.drawCenteredText(UI_10_FONT_ID, y - 2 * line, tr(STR_HOME_RECEIVE_WAITING));
+  renderer.drawCenteredText(UI_10_FONT_ID, y, tr(STR_HOME_RECEIVE_DURATION));
+  renderer.drawCenteredText(UI_10_FONT_ID, y + 2 * line, tr(STR_HOME_RECEIVE_BACK));
+  renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+  dashboard::retainReceiverResult(dashboard::ReceiverResult::None);
+  homeReceiveRequest = dashboard::homeReceiveToken(SETTINGS.frontButtonBack);
+  LOG_INF("BLEPAY", "Home receive requested; rebooting before BLE memory release");
+  ESP.restart();
+}
+
+static bool cancelHomeReceive() {
+  mappedInputManager.update();
+  return mappedInputManager.wasReleased(MappedInputManager::Button::Back);
+}
+#endif
 
 static void restartWithSilentToken() {
 #ifdef SIMULATOR
@@ -940,6 +969,47 @@ void setupDisplayAndFonts(const bool seamless = false, const bool loadReaderReso
   }
 }
 
+#if defined(CROSSINK_BLE_HANDOFF_READER) && defined(CROSSINK_IN_PROCESS_RECEIVER)
+// Watches the live power-button state after verifyPowerButtonWakeup() has
+// accepted the wake hold, to decide whether the user is asking for a manual
+// receiver window (~1s hold) or a normal reader wake (release before that).
+//
+// How the 1s threshold is measured: on the observed hold, not on a fresh count
+// started here - but only as far back as the firmware can timestamp. InputManager
+// stamps the press at the first update() that observes it after the wake
+// (powerButtonPressStart), and getPowerButtonHeldTime() counts from that stamp.
+// The segment of the hold verifyPowerButtonWakeup consumed (up to
+// POWER_BUTTON_WAKE_LONG_MS of it) therefore counts toward the second; the few
+// hundred milliseconds of boot before that first input sample cannot be
+// timestamped and are not counted. Re-arming a fresh 1s count after
+// verification would demand ~1.2s+ of extra real hold and is exactly the
+// "re-detect a duration verify already consumed" mistake to avoid.
+//
+// Release handling: the poll ends the moment the button is released. A release
+// before the threshold is a short-press normal wake (false); a release at or
+// after the threshold - or a crossing observed while still held - qualifies
+// (true). The wait is bounded: the press began before this function ran, so the
+// crossing is guaranteed within MANUAL_RECEIVER_HOLD_MS of here, and there is
+// no indefinite wait on a button that stays down.
+bool detectManualReceiverWindowHold() {
+  const unsigned long waitStart = millis();
+  const unsigned long waitDeadline = waitStart + dashboard::MANUAL_RECEIVER_HOLD_MS;
+  while (millis() < waitDeadline) {
+    gpio.update();
+    if (!gpio.isPressed(HalGPIO::BTN_POWER)) {
+      // The press is over; the held time is final either way.
+      return dashboard::manualReceiverHoldMet(static_cast<uint32_t>(gpio.getPowerButtonHeldTime()));
+    }
+    if (dashboard::manualReceiverHoldMet(static_cast<uint32_t>(gpio.getPowerButtonHeldTime()))) {
+      return true;  // Still held and already across the threshold.
+    }
+    delay(10);
+  }
+  gpio.update();
+  return dashboard::manualReceiverHoldMet(static_cast<uint32_t>(gpio.getPowerButtonHeldTime()));
+}
+#endif
+
 void setup() {
 #ifdef SIMULATOR
   SimulatorLifecycle::restoreSilentRebootToken(silentRebootMagic, silentRebootTarget, silentRebootPayload);
@@ -949,6 +1019,9 @@ void setup() {
   t1 = millis();
 
   const esp_reset_reason_t rawResetReason = esp_reset_reason();
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+  const int homeReceiveBack = dashboard::consumeHomeReceiveToken(homeReceiveRequest, rawResetReason == ESP_RST_SW);
+#endif
   const esp_sleep_wakeup_cause_t rawWakeupCause = esp_sleep_get_wakeup_cause();
   bool resumeAgendaAfterAccepted = false;
 
@@ -1025,9 +1098,39 @@ void setup() {
   // not-yet-mounted SD card.
   const auto wakeupReason = gpio.getWakeupReason();
   LOG_INF("BOOT", "Wake route: %s", wakeupRouteName(wakeupReason));
+#ifdef CROSSINK_IN_PROCESS_RECEIVER
+  if (homeReceiveBack >= 0) {
+    // Settings/SD/fonts are deliberately not loaded: only the Back mapping is
+    // carried over. The waiting frame was painted before the reboot.
+    SETTINGS.frontButtonBack = static_cast<uint8_t>(homeReceiveBack);
+    dashboard::retainReceiverResult(dashboard::ReceiverResult::None);
+    LOG_INF("BLEPAY", "Home receive window starting (60s)");
+    const auto result = dashboard::runReceiverWindow(dashboard::HOME_RECEIVE_WINDOW_MS, cancelHomeReceive);
+    if (result == dashboard::ReceiverResult::Accepted) {
+      dashboard::notifyReceiverStatus(0x03);
+      delay(250);  // Existing phone acknowledgement gets time to leave the radio.
+    }
+    LOG_INF("BLEPAY", "Home receive finished result=%u; restarting to home", static_cast<unsigned>(result));
+    // A reboot returns all radio memory without deinitializing a live BLE
+    // callback/server. Never feed manual timeout into the Agenda sleep path.
+    dashboard::retainReceiverResult(dashboard::ReceiverResult::None);
+    silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
+    silentRebootPayload = 0;
+    silentRebootMagic = SILENT_REBOOT_MAGIC;
+    ESP.restart();
+    return;
+  }
+#endif
+
 #ifdef CROSSINK_BLE_HANDOFF_READER
   const dashboard::ReceiverResult retainedResult = dashboard::retainedReceiverResult();
   const bool returnedFromReceiver = rawResetReason == ESP_RST_SW && dashboard_boot::isRunningReader();
+  // Set on a PowerButton wake when the user holds the button through the ~1s
+  // manual-window threshold on an Agenda sleep that armed a window; the route
+  // decision below turns that into a ManualInProcessReceiver window. Only the
+  // in-process build detects holds (see detectManualReceiverWindowHold), so on
+  // partition builds this stays false and the power wake reads normally.
+  bool manualReceiverHoldDetected = false;
   if (returnedFromReceiver && retainedResult == dashboard::ReceiverResult::TimedOut) {
     LOG_INF("BLEPAY", "Receiver window timed out; returning directly to Agenda sleep");
     dashboard::appendEarlyBootTrace(static_cast<uint8_t>(wakeupReason), retainedResult,
@@ -1067,6 +1170,20 @@ void setup() {
 #endif
         powerManager.startDeepSleep(gpio);
       }
+#if defined(CROSSINK_BLE_HANDOFF_READER) && defined(CROSSINK_IN_PROCESS_RECEIVER)
+      // Only an Agenda sleep that actually armed a window can answer a long
+      // power-hold with a manual one. Ordinary non-Agenda power wakes skip this
+      // wait entirely and keep today's behaviour. retainedResult is the value
+      // read at wake (the RTC copy was cleared above for non-timer wakes).
+#ifdef CROSSINK_EXPERIMENTAL_WAKE_HOLD
+      if (retainedResult == dashboard::ReceiverResult::AwaitingWindow) {
+        manualReceiverHoldDetected = detectManualReceiverWindowHold();
+        if (manualReceiverHoldDetected) {
+          LOG_INF("BLEPAY", "Manual power-hold detected; requesting an in-process receiver window");
+        }
+      }
+#endif
+#endif
       break;
     }
     case HalGPIO::WakeupReason::AfterUSBPower:
@@ -1092,10 +1209,15 @@ void setup() {
 #else
   constexpr bool inProcessAvailable = false;
 #endif
-  const dashboard::AgendaBootRoute agendaRoute = dashboard::chooseAgendaBootRoute(
-      retainedResult == dashboard::ReceiverResult::AwaitingWindow,
-      wakeupReason == HalGPIO::WakeupReason::Timer ? dashboard::WakeSource::Timer : dashboard::WakeSource::Other,
-      inProcessAvailable);
+  dashboard::WakeSource wakeSource = dashboard::WakeSource::Other;
+  if (wakeupReason == HalGPIO::WakeupReason::Timer) {
+    wakeSource = dashboard::WakeSource::Timer;
+  } else if (wakeupReason == HalGPIO::WakeupReason::PowerButton) {
+    wakeSource = dashboard::WakeSource::PowerButton;
+  }
+  const dashboard::AgendaBootRoute agendaRoute =
+      dashboard::chooseAgendaBootRoute(retainedResult == dashboard::ReceiverResult::AwaitingWindow, wakeSource,
+                                       inProcessAvailable, manualReceiverHoldDetected);
   if (agendaRoute == dashboard::AgendaBootRoute::Receiver) {
     LOG_INF("BLEPAY", "Agenda timer wake; switching to isolated dashboard receiver");
     // Written before the hand-off, not after it: this is the one line that says
@@ -1112,13 +1234,18 @@ void setup() {
     LOG_ERR("BLEPAY", "Receiver slot unavailable; continuing reader boot");
   }
 #ifdef CROSSINK_IN_PROCESS_RECEIVER
-  else if (agendaRoute == dashboard::AgendaBootRoute::InProcessReceiver) {
-    LOG_INF("BLEPAY", "Agenda timer wake; running in-process dashboard receiver");
+  else if (agendaRoute == dashboard::AgendaBootRoute::InProcessReceiver ||
+           agendaRoute == dashboard::AgendaBootRoute::ManualInProcessReceiver) {
+    const bool manualWindow = agendaRoute == dashboard::AgendaBootRoute::ManualInProcessReceiver;
+    LOG_INF("BLEPAY", manualWindow ? "Manual power-hold wake; running in-process dashboard receiver (30s)"
+                                   : "Agenda timer wake; running in-process dashboard receiver (20s)");
     // Same trace stage as the partition route so old and new traces keep the
     // same shape and can be compared side by side.
     dashboard::appendEarlyBootTrace(static_cast<uint8_t>(wakeupReason), retainedResult,
                                     dashboard::BootTraceStage::ReceiverHandoff, resetReasonName(rawResetReason));
-    const auto result = dashboard::runReceiverWindow(20000);
+    // A manual window runs longer because the phone was not scheduled for this
+    // wake; the automatic timer window keeps its original 20 s length.
+    const auto result = dashboard::runReceiverWindow(manualWindow ? dashboard::MANUAL_RECEIVER_WINDOW_MS : 20000);
     if (result == dashboard::ReceiverResult::Accepted) {
       dashboard::notifyReceiverStatus(0x03);
       resumeAgendaAfterAccepted = true;
@@ -1156,7 +1283,8 @@ void setup() {
   // on boots where the window never ran, because it comes from linking BLE in
   // rather than from switching it on. After a window teardownReceiver() has
   // already handed that memory back, so only the other path needs this.
-  if (agendaRoute != dashboard::AgendaBootRoute::InProcessReceiver) {
+  if (agendaRoute != dashboard::AgendaBootRoute::InProcessReceiver &&
+      agendaRoute != dashboard::AgendaBootRoute::ManualInProcessReceiver) {
     dashboard::releaseBluetoothMemory("window not run");
   }
 #endif

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="X3 route software test" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>X3 softwaretest - geen wandeladvies</name>
+    <desc>Synthetische lijn voor import, portretweergave en losse tracksegmenten. Niet bedoeld om buiten te volgen.</desc>
+  </metadata>
+  <trk>
+    <name>X3 testwandeling</name>
+    <trkseg>
+      <trkpt lat="52.3600" lon="4.9000"/>
+      <trkpt lat="52.3630" lon="4.9000"/>
+      <trkpt lat="52.3630" lon="4.9040"/>
+      <trkpt lat="52.3680" lon="4.9040"/>
+      <trkpt lat="52.3680" lon="4.9100"/>
+      <trkpt lat="52.3720" lon="4.9100"/>
+      <trkpt lat="52.3750" lon="4.9080"/>
+      <trkpt lat="52.3760" lon="4.9000"/>
+    </trkseg>
+    <trkseg>
+      <trkpt lat="52.3740" lon="4.8940"/>
+      <trkpt lat="52.3690" lon="4.8940"/>
+      <trkpt lat="52.3670" lon="4.8900"/>
+      <trkpt lat="52.3610" lon="4.8900"/>
+    </trkseg>
+  </trk>
+</gpx>

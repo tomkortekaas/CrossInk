@@ -67,17 +67,22 @@ bool switchToSubtype(const esp_partition_subtype_t subtype) {
 
 }  // namespace
 
-bool switchToReader() { return switchToSubtype(ESP_PARTITION_SUBTYPE_APP_OTA_0); }
-bool switchToReceiver() { return switchToSubtype(ESP_PARTITION_SUBTYPE_APP_OTA_1); }
+bool switchToSlot0() { return switchToSubtype(ESP_PARTITION_SUBTYPE_APP_OTA_0); }
+bool switchToSlot1() { return switchToSubtype(ESP_PARTITION_SUBTYPE_APP_OTA_1); }
 
-bool isRunningReader() {
+bool isRunningInSlot0() {
   const esp_partition_t* running = esp_ota_get_running_partition();
   return running != nullptr && running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0;
 }
 
-bool isRunningReceiver() {
+bool isRunningInSlot1() {
   const esp_partition_t* running = esp_ota_get_running_partition();
   return running != nullptr && running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1;
 }
+
+bool switchToReader() { return switchToSlot0(); }
+bool switchToReceiver() { return switchToSlot1(); }
+bool isRunningReader() { return isRunningInSlot0(); }
+bool isRunningReceiver() { return isRunningInSlot1(); }
 
 }  // namespace dashboard_boot

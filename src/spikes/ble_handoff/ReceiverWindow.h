@@ -4,7 +4,7 @@
 
 namespace dashboard {
 
-enum class ReceiverWindowAction : uint8_t { Listen, ReturnAccepted, ReturnTimedOut };
+enum class ReceiverWindowAction : uint8_t { Listen, ReturnAccepted, ReturnTimedOut, ReturnCancelled };
 
 class ReceiverWindow {
  public:
@@ -16,7 +16,7 @@ class ReceiverWindow {
   explicit ReceiverWindow(uint32_t startedAtMs, uint32_t windowMs = DEFAULT_WINDOW_MS)
       : startedAtMs(startedAtMs), windowMs(windowMs) {}
 
-  ReceiverWindowAction actionAt(uint32_t nowMs, bool accepted) const;
+  ReceiverWindowAction actionAt(uint32_t nowMs, bool accepted, bool cancelled = false) const;
 
  private:
   uint32_t startedAtMs;

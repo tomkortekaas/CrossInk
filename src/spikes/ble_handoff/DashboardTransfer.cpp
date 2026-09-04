@@ -8,12 +8,13 @@ namespace {
 uint16_t readU16(const uint8_t* in) { return static_cast<uint16_t>(in[0]) | (static_cast<uint16_t>(in[1]) << 8U); }
 
 uint32_t readU32(const uint8_t* in) {
-  return static_cast<uint32_t>(in[0]) | (static_cast<uint32_t>(in[1]) << 8U) |
-         (static_cast<uint32_t>(in[2]) << 16U) | (static_cast<uint32_t>(in[3]) << 24U);
+  return static_cast<uint32_t>(in[0]) | (static_cast<uint32_t>(in[1]) << 8U) | (static_cast<uint32_t>(in[2]) << 16U) |
+         (static_cast<uint32_t>(in[3]) << 24U);
 }
 
-TransferResult result(TransferStatus status, uint32_t packageId, uint16_t received) {
-  return {status, packageId, received};
+TransferResult result(TransferStatus status, uint32_t packageId, uint16_t received,
+                      bool navigationLaunchRequested = false) {
+  return {status, packageId, received, navigationLaunchRequested};
 }
 
 }  // namespace
@@ -33,6 +34,12 @@ TransferResult TransferAssembler::accept(const uint8_t* frame, const size_t fram
     started_ = true;
     bytes_.fill(0);
     return result(TransferStatus::Ready, id, 0);
+  }
+  if (type == 4) {
+    if (started_ || frameLength != 9 || readU32(frame + 5) != 0) {
+      return result(TransferStatus::InvalidFrame, id, received_);
+    }
+    return result(TransferStatus::Ready, id, 0, true);
   }
   if (!started_ || id != packageId_) return result(TransferStatus::InvalidFrame, id, received_);
   if (type == 2) {

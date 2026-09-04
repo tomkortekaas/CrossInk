@@ -10,7 +10,11 @@ namespace dashboard {
 // package has arrived. Deliberately leaves the stack up: the caller must still
 // be able to notify before tearing it down. Always followed by
 // teardownReceiver(), even on failure.
-ReceiverResult runReceiverWindow(uint32_t windowMs);
+ReceiverResult runReceiverWindow(uint32_t windowMs, bool (*cancelRequested)() = nullptr);
+
+// Persists the launch intent before selecting app0. Returns only on failure;
+// success notifies the phone and restarts into the navigator image.
+bool handleNavigationLaunch(uint32_t requestId);
 
 // Sends a status notification over the still-open connection, carrying the
 // package id and byte count of the transfer that was just received. Only valid
