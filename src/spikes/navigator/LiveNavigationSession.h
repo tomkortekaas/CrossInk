@@ -21,6 +21,9 @@ class LiveNavigationSession {
   LiveNavigationStatus receive(const uint8_t* bytes, size_t length, uint32_t activeRouteId, bool routeTransferring,
                                uint32_t now);
   bool position(uint32_t now, LivePosition& out) const;
+  // Returns a force-refresh request once for each newly accepted FIX carrying
+  // flags bit 1. Replayed FIX frames never re-arm it.
+  bool takeForceRefresh();
   bool active() const { return active_; }
   void disconnect();
   void expire(uint32_t now);
@@ -29,7 +32,7 @@ class LiveNavigationSession {
  private:
   uint32_t routeId_ = 0, sessionId_ = 0, lastStoppedId_ = 0, lastActivity_ = 0, receivedAt_ = 0;
   uint8_t lastFrame_[20]{};
-  bool active_ = false, hasFix_ = false;
+  bool active_ = false, hasFix_ = false, forceRefreshPending_ = false;
 };
 static_assert(sizeof(LiveNavigationSession) <= 64, "Live state must stay bounded");
 }  // namespace navigator

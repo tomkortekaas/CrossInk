@@ -27,5 +27,20 @@ int main() {
   assert(p.decide(60102, &off, false, false) == NavigationRefresh::Full);  // safety state bypasses timer
   assert(p.decide(60102, &a, true, true) == NavigationRefresh::Full);
   for (int i = 0; i < 20; ++i) p.rendered(50000 + i, &a, NavigationRefresh::Fast);
+  assert(p.decide(60000, &b, false, false) == NavigationRefresh::None);  // ordinary fix stays throttled
   assert(p.decide(60000, &b, true, false) == NavigationRefresh::Full);
+  // A forced (manual) refresh bypasses the 30-second wait even without real
+  // movement; an ordinary fix in the same window remains throttled.
+  NavigationRefreshPolicy forced;
+  forced.setActiveView(true);
+  LivePosition near{523700000, 49000000, 5, false};
+  assert(forced.decide(1000, &near, false, false) == NavigationRefresh::Full);  // first fix is immediate
+  forced.rendered(1000, &near, NavigationRefresh::Full);
+  LivePosition moved = near;
+  moved.latitudeE7 += 20000;
+  assert(forced.decide(5000, &moved, false, false) == NavigationRefresh::None);  // throttled
+  assert(forced.decide(5000, &moved, true, false) == NavigationRefresh::Fast);   // forced bypasses
+  forced.rendered(5000, &moved, NavigationRefresh::Fast);
+  assert(forced.decide(5100, &near, false, false) == NavigationRefresh::None);   // still throttled
+  assert(forced.decide(5100, &near, true, false) == NavigationRefresh::Fast);    // forced needs no movement
 }

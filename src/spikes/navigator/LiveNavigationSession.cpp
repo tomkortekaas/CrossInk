@@ -21,14 +21,20 @@ void LiveNavigationStatus::writeEnvelope(uint8_t out[7]) const {
 void LiveNavigationSession::disconnect() {
   active_ = false;
   hasFix_ = false;
+  forceRefreshPending_ = false;
 }
 void LiveNavigationSession::expire(uint32_t now) {
   if (active_ && uint32_t(now - lastActivity_) >= 90000) disconnect();
 }
 bool LiveNavigationSession::position(uint32_t now, LivePosition& out) const {
   if (!active_ || !hasFix_ || uint64_t(uint32_t(now - receivedAt_)) + u16(lastFrame_ + 17) > 30000) return false;
-  out = {i32(lastFrame_ + 7), i32(lastFrame_ + 11), u16(lastFrame_ + 15), lastFrame_[19] != 0};
+  out = {i32(lastFrame_ + 7), i32(lastFrame_ + 11), u16(lastFrame_ + 15), (lastFrame_[19] & 0x01) != 0};
   return true;
+}
+bool LiveNavigationSession::takeForceRefresh() {
+  const bool pending = forceRefreshPending_;
+  forceRefreshPending_ = false;
+  return pending;
 }
 LiveNavigationStatus LiveNavigationSession::receive(const uint8_t* b, size_t n, uint32_t route, bool busy,
                                                     uint32_t now) {
@@ -72,8 +78,10 @@ LiveNavigationStatus LiveNavigationSession::receive(const uint8_t* b, size_t n, 
     disconnect();
     return invalid;
   }
+  // FIX frame: ... accuracy u16, age u16, flags u8. Only flags bits 0 (off-route)
+  // and 1 (force refresh) are defined; reject any other bit.
   if (i32(b + 7) < -900000000 || i32(b + 7) > 900000000 || i32(b + 11) < -1800000000 || i32(b + 11) > 1800000000 ||
-      u16(b + 15) < 1 || u16(b + 15) > 50 || u16(b + 17) > 15000 || b[19] > 1)
+      u16(b + 15) < 1 || u16(b + 15) > 50 || u16(b + 17) > 15000 || b[19] > 3)
     return invalid;
   if (hasFix_) {
     const uint16_t advance = static_cast<uint16_t>(sequence - u16(lastFrame_ + 5));
@@ -85,6 +93,7 @@ LiveNavigationStatus LiveNavigationSession::receive(const uint8_t* b, size_t n, 
   }
   std::memcpy(lastFrame_, b, 20);
   hasFix_ = true;
+  forceRefreshPending_ = (b[19] & 0x02) != 0;
   receivedAt_ = now;
   lastActivity_ = now;
   return {LiveNavigationCode::FixAccepted, id, sequence};

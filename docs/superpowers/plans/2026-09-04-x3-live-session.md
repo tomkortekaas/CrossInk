@@ -11,7 +11,7 @@
 All integers little endian. No changes to 0x04 launch or 0x05–0x07 route transfer.
 
 - START: 10 bytes: opcode 0x08, version 1, routeId u32, sessionId u32. IDs nonzero; route must match the validated active SD route. New session can begin only without a route transfer in progress. A repeated identical START is idempotent; a different active session must first stop or expire.
-- FIX: 20 bytes: opcode 0x09, sessionId u32, sequence u16, latitude E7 i32, longitude E7 i32, accuracy meters u16, age milliseconds u16, flags u8 (bit0 off-route; all others zero). Accuracy 1–50 m, age 0–15000 ms, world-valid coordinates. Accept only the current session. Exact duplicate is idempotent; same sequence with different content is rejected. New sequence uses the forward half of the modulo-65536 range.
+- FIX: 20 bytes: opcode 0x09, sessionId u32, sequence u16, latitude E7 i32, longitude E7 i32, accuracy meters u16, age milliseconds u16, flags u8 (bit0 off-route; bit1 force refresh; only bits 0–1 defined, all other bits rejected). Accuracy 1–50 m, age 0–15000 ms, world-valid coordinates. Accept only the current session. Exact duplicate is idempotent; same sequence with different content is rejected. New sequence uses the forward half of the modulo-65536 range.
 - STOP: 5 bytes: opcode 0x0B and sessionId u32; only current session. Duplicate matching STOP is idempotent.
 - Status: existing 7-byte envelope: code u8, sessionId u32, sequence u16. Codes 0x26 ready, 0x27 fix accepted, 0x28 stopped, 0x29 invalid. Ready/stopped sequence zero. Each sender must match active session/request; status parsing is not authorization.
 - This protocol has no pairing/authentication; trusted test context remains required. No security claim from random IDs or CRCs.

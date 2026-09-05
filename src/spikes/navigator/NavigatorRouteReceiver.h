@@ -9,6 +9,7 @@ void stopRouteReceiver();
 bool routeReceiverOpen();
 bool navigationSessionActive();
 bool navigationPosition(uint32_t now, LivePosition& out);
+bool takeNavigationForceRefresh();
 // Returns true only when a status was processed; caller decides if UI changes.
 bool pollRouteReceiver(NavigationRouteSession& session, RouteTransferStatus& result);
 }

@@ -82,4 +82,34 @@ int main() {
   assert(s.position(20, p));
   s.expire(90000);
   assert(!s.active());
+  // Live FIX flags byte: bit 0 = off-route, bit 1 = force refresh. Values 0..3
+  // are accepted and survive position(); any other bit is rejected.
+  LiveNavigationSession flags;
+  auto sendFlags = [&](const std::vector<uint8_t>& b, uint32_t now = 100) {
+    return flags.receive(b.data(), b.size(), 7, false, now);
+  };
+  auto startFlags = start(7, 13);
+  assert(sendFlags(startFlags, 100).code == LiveNavigationCode::Ready);
+  uint16_t seq = 1;
+  for (uint8_t raw = 0; raw <= 3; ++raw) {
+    auto f = fix(seq++, 13);
+    f[19] = raw;
+    assert(sendFlags(f, 100 + seq).code == LiveNavigationCode::FixAccepted);
+    assert(flags.position(100 + seq, p));
+    assert(p.offRoute == ((raw & 1) != 0));
+    assert(flags.takeForceRefresh() == ((raw & 2) != 0));
+    assert(!flags.takeForceRefresh());  // consumed exactly once
+  }
+  for (uint8_t raw : {4u, 8u, 0x80u, 255u}) {
+    auto bad = fix(seq++, 13);
+    bad[19] = raw;
+    assert(sendFlags(bad, 100 + seq).code == LiveNavigationCode::Invalid);
+  }
+  auto good = fix(seq++, 13);
+  good[19] = 2;  // force refresh without off-route
+  assert(sendFlags(good, 100 + seq).code == LiveNavigationCode::FixAccepted);
+  assert(flags.position(100 + seq, p));
+  assert(!p.offRoute);
+  assert(flags.takeForceRefresh());
+  assert(!flags.takeForceRefresh());
 }

@@ -102,6 +102,7 @@ void stopRouteReceiver() {
 bool routeReceiverOpen() { return open; }
 bool navigationSessionActive() { return live.active(); }
 bool navigationPosition(uint32_t now, LivePosition& out) { return live.position(now, out); }
+bool takeNavigationForceRefresh() { return live.takeForceRefresh(); }
 
 bool pollRouteReceiver(NavigationRouteSession& session, RouteTransferStatus& result) {
   bool wasDisconnected, bad, link;

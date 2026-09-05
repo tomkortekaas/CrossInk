@@ -235,7 +235,14 @@ void loop() {
   navigator::LivePosition automaticPosition{};
   const navigator::LivePosition* automaticFix =
       navigator::navigationPosition(millis(), automaticPosition) ? &automaticPosition : nullptr;
-  const auto automaticRefresh = refreshPolicy.decide(millis(), automaticFix, false, false);
+  // A fix flagged forceRefresh is an urgent/synthetic position that must reach
+  // the screen immediately; route it through the policy's manual path so it
+  // bypasses the 30-second routine-movement throttle. Ordinary fixes keep the
+  // throttled path (manual=false).
+  // Consume the request once. Keeping it on the retained position would make
+  // every 20 ms loop redraw the same e-ink frame until the fix ages out.
+  const bool forced = automaticFix != nullptr && navigator::takeNavigationForceRefresh();
+  const auto automaticRefresh = refreshPolicy.decide(millis(), automaticFix, forced, false);
   if (automaticRefresh != navigator::NavigationRefresh::None && !routes.transferring())
     showRoute(false, automaticRefresh);
   const bool receiverOpen = navigator::routeReceiverOpen();

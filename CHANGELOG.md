@@ -43,6 +43,8 @@
 
 - Navigator can show the latest received GPS position at a 400-meter walking scale on OK, with explicit GPS status and a route-overview fallback when no fresh position is available.
 
+- Navigator can now draw a phone-marked live position immediately: a fix whose flags set the force-refresh bit skips the 30-second automatic refresh pause, while routine fixes keep the existing throttle and e-ink behaviour.
+
 - Navigator shows a loading screen before reading the regional map. Batched index reads reduce repeated SD seeks and a small CRC lookup table speeds validation; route geometry and corruption checks remain unchanged.
 
 - Dashboard tile values are set in one typeface at four sizes, so a value reads clearly apart from its label. Previously every tile used the same two sizes.
