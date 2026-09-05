@@ -46,6 +46,7 @@ using navigator::RenderStatus;
 using navigator::RouteCanvas;
 using navigator::RouteIndex;
 using navigator::RouteMapRenderer;
+using navigator::RouteProximity;
 using navigator::RouteViewport;
 using navigator::ScreenPoint;
 
@@ -103,8 +104,11 @@ int64_t quantizeE5(int32_t e7) {
 // Encodes a valid Route Package v1 from E7 points and per-segment start
 // indices, mirroring the authoritative Swift encoder used for the golden
 // fixture (segment 0 starts at the header origin; later segments restart with
-// an absolute E7 anchor; interior points are signed Int16 E5 deltas).
-Bytes encodeRoute(const std::vector<GeoPoint>& points, const std::vector<uint16_t>& segmentStarts) {
+// an absolute E7 anchor; interior points are signed Int16 E5 deltas). The
+// optional declared totals fill the header fields the along-route progress
+// tests scale against; the existing callers keep the historical 0/0 header.
+Bytes encodeRoute(const std::vector<GeoPoint>& points, const std::vector<uint16_t>& segmentStarts,
+                  uint32_t totalMeters = 0, uint16_t estimatedMinutes = 0) {
   if (points.empty() || segmentStarts.empty() || segmentStarts.front() != 0) {
     ADD_FAILURE() << "encodeRoute requires non-empty points starting at 0";
     return Bytes();
@@ -156,8 +160,8 @@ Bytes encodeRoute(const std::vector<GeoPoint>& points, const std::vector<uint16_
   putU16(bytes, 18, 0);
   putI32(bytes, 20, points.front().latitudeE7);
   putI32(bytes, 24, points.front().longitudeE7);
-  putU32(bytes, 28, 0);
-  putU16(bytes, 32, 0);
+  putU32(bytes, 28, totalMeters);
+  putU16(bytes, 32, estimatedMinutes);
   putU16(bytes, 34, static_cast<uint16_t>(segmentStarts.size()));
   bytes[36] = 0;
   bytes[37] = 0;
@@ -390,6 +394,33 @@ RouteViewport viewFor(const std::vector<GeoPoint>& points, const Rect& mapRect) 
   const GeoPoint middle{static_cast<int32_t>(sumLat / static_cast<int64_t>(points.size())),
                         static_cast<int32_t>(sumLon / static_cast<int64_t>(points.size()))};
   return RouteViewport::centered(middle, mapRect, 3000, 8);
+}
+
+// Draws a synthetic route through the real production renderer with a live
+// fix and returns the RouteProximity it fills, so tests exercise the exact
+// along-route progress computation (measurement + declared-total scaling)
+// rather than a test-side copy of it. A walking-scale viewport centered on
+// the route origin keeps the geometry inside the 600x600 map.
+struct ProximityOutcome {
+  RenderStatus status;
+  RouteProximity proximity;
+};
+
+ProximityOutcome drawWithFix(const Bytes& bytes, const RouteIndex& index, const GeoPoint& fix,
+                             uint16_t accuracyMeters = 5) {
+  ProximityOutcome outcome;
+  const Rect mapRect{0, 0, 600, 600};
+  const GeoPoint origin{index.originLatitudeE7, index.originLongitudeE7};
+  const RouteViewport viewport = RouteViewport::centered(origin, mapRect, 6000, 8);
+  if (!viewport.isValid()) {
+    outcome.status = RenderStatus::InvalidViewport;
+    return outcome;
+  }
+  RecordingCanvas canvas(mapRect.width, mapRect.height);
+  TrackingSource source(bytes);
+  const CurrentPosition position{fix, accuracyMeters, 0};
+  outcome.status = RouteMapRenderer::draw(canvas, source, index, viewport, &position, nullptr, &outcome.proximity);
+  return outcome;
 }
 
 }  // namespace
@@ -775,4 +806,125 @@ TEST(RouteMapRendererTest, RenderStatusEnumHasStableOrder) {
   EXPECT_LT(static_cast<int>(RenderStatus::Ok), static_cast<int>(RenderStatus::InvalidViewport));
   EXPECT_LT(static_cast<int>(RenderStatus::InvalidViewport), static_cast<int>(RenderStatus::InvalidIndex));
   EXPECT_LT(static_cast<int>(RenderStatus::InvalidIndex), static_cast<int>(RenderStatus::ShortRead));
+}
+
+// ---------------------------------------------------------------------------
+// Along-route remaining distance for a live fix
+// ---------------------------------------------------------------------------
+
+TEST(RouteMapRendererTest, RemainingDistanceAtRouteStartMiddleAndEnd) {
+  // Straight north-south route: four equal 100,000 E7 (~1.1 km) edges whose
+  // E5 wire quantization is lossless. The declared total (4,000 m) is what
+  // the remaining estimate scales to.
+  const int32_t baseLat = 520'000'000;
+  const int32_t baseLon = 40'000'000;
+  std::vector<GeoPoint> points;
+  for (int i = 0; i < 5; ++i) {
+    points.push_back(GeoPoint{baseLat + i * 100'000, baseLon});
+  }
+  const Bytes bytes = encodeRoute(points, {0}, 4000, 100);
+  RouteIndex index;
+  ASSERT_EQ(decode(bytes, index), DecodeStatus::Ok);
+  ASSERT_EQ(index.totalDistanceMeters, 4000U);
+  ASSERT_EQ(index.estimatedMinutes, 100U);
+
+  const ProximityOutcome start = drawWithFix(bytes, index, points[0]);
+  ASSERT_EQ(start.status, RenderStatus::Ok);
+  EXPECT_TRUE(start.proximity.valid);
+  EXPECT_EQ(start.proximity.remainingDistanceMeters, 4000U);
+
+  const ProximityOutcome middle = drawWithFix(bytes, index, points[2]);
+  ASSERT_EQ(middle.status, RenderStatus::Ok);
+  EXPECT_TRUE(middle.proximity.valid);
+  EXPECT_EQ(middle.proximity.remainingDistanceMeters, 2000U);
+
+  const ProximityOutcome end = drawWithFix(bytes, index, points[4]);
+  ASSERT_EQ(end.status, RenderStatus::Ok);
+  EXPECT_TRUE(end.proximity.valid);
+  EXPECT_EQ(end.proximity.remainingDistanceMeters, 0U);
+}
+
+TEST(RouteMapRendererTest, RemainingDistanceAlongLongitudeUsesSameScale) {
+  // The same start/middle/end walk along the longitude axis: the renderer
+  // measures through the viewport's cosine-scaled U units, so the remaining
+  // share must match the north-south route even though every edge has no
+  // latitude component.
+  const int32_t baseLat = 520'000'000;
+  const int32_t baseLon = 40'000'000;
+  std::vector<GeoPoint> points;
+  for (int i = 0; i < 5; ++i) {
+    points.push_back(GeoPoint{baseLat, baseLon + i * 100'000});
+  }
+  const Bytes bytes = encodeRoute(points, {0}, 4000, 100);
+  RouteIndex index;
+  ASSERT_EQ(decode(bytes, index), DecodeStatus::Ok);
+
+  EXPECT_EQ(drawWithFix(bytes, index, points[0]).proximity.remainingDistanceMeters, 4000U);
+  EXPECT_EQ(drawWithFix(bytes, index, points[2]).proximity.remainingDistanceMeters, 2000U);
+  EXPECT_EQ(drawWithFix(bytes, index, points[4]).proximity.remainingDistanceMeters, 0U);
+}
+
+TEST(RouteMapRendererTest, RemainingDistanceClampsBeforeStartPastEndAndInsideEdge) {
+  const int32_t baseLat = 520'000'000;
+  const int32_t baseLon = 40'000'000;
+  std::vector<GeoPoint> points;
+  for (int i = 0; i < 5; ++i) {
+    points.push_back(GeoPoint{baseLat + i * 100'000, baseLon});
+  }
+  const Bytes bytes = encodeRoute(points, {0}, 4000, 100);
+  RouteIndex index;
+  ASSERT_EQ(decode(bytes, index), DecodeStatus::Ok);
+
+  // A fix before the first point still has the whole route ahead; a fix past
+  // the last point has nothing ahead. Both stay inside [0, total].
+  EXPECT_EQ(drawWithFix(bytes, index, GeoPoint{baseLat - 100'000, baseLon}).proximity.remainingDistanceMeters,
+            4000U);
+  EXPECT_EQ(drawWithFix(bytes, index, GeoPoint{baseLat + 5 * 100'000, baseLon}).proximity.remainingDistanceMeters,
+            0U);
+  // A fix 25% into the P1->P2 edge has walked 1.25 of the 4 equal edges:
+  // (4 - 1.25) / 4 * 4000 m = 2,750 m remain.
+  EXPECT_EQ(drawWithFix(bytes, index, GeoPoint{baseLat + 125'000, baseLon}).proximity.remainingDistanceMeters,
+            2750U);
+}
+
+TEST(RouteMapRendererTest, RemainingDistanceNeverMeasuresAcrossSegmentGap) {
+  // Segment 0 is two equal edges; segment 1 restarts far north (a ~111 km
+  // gap) at an absolute anchor and runs two more equal edges. A renderer
+  // that joined the segments would count the gap as walked route, so a fix
+  // at the end of segment 0 and one at the start of segment 1 must report
+  // the same remaining share: the second half of the route.
+  const int32_t baseLat = 520'000'000;
+  const int32_t baseLon = 40'000'000;
+  const std::vector<GeoPoint> points = {
+      GeoPoint{baseLat, baseLon},              // A0
+      GeoPoint{baseLat + 100'000, baseLon},    // A1
+      GeoPoint{baseLat + 200'000, baseLon},    // A2 (end of segment 0)
+      GeoPoint{baseLat + 10'200'000, baseLon},  // B0 (absolute anchor)
+      GeoPoint{baseLat + 10'300'000, baseLon},  // B1
+      GeoPoint{baseLat + 10'400'000, baseLon},  // B2 (end of route)
+  };
+  const Bytes bytes = encodeRoute(points, {0, 3}, 4000, 100);
+  RouteIndex index;
+  ASSERT_EQ(decode(bytes, index), DecodeStatus::Ok);
+  ASSERT_EQ(index.segmentCount, 2U);
+
+  EXPECT_EQ(drawWithFix(bytes, index, points[0]).proximity.remainingDistanceMeters, 4000U);
+  EXPECT_EQ(drawWithFix(bytes, index, points[2]).proximity.remainingDistanceMeters, 2000U);
+  EXPECT_EQ(drawWithFix(bytes, index, points[3]).proximity.remainingDistanceMeters, 2000U);
+  EXPECT_EQ(drawWithFix(bytes, index, points[5]).proximity.remainingDistanceMeters, 0U);
+}
+
+TEST(RouteMapRendererTest, RemainingDistanceWithoutMeasurableGeometryKeepsDeclaredTotal) {
+  // A route whose geometry collapses to a single point has nothing measured,
+  // so the renderer reports the whole declared total instead of guessing 0.
+  const std::vector<GeoPoint> points = {GeoPoint{520'000'000, 40'000'000},
+                                        GeoPoint{520'000'000, 40'000'000}};
+  const Bytes bytes = encodeRoute(points, {0}, 4000, 100);
+  RouteIndex index;
+  ASSERT_EQ(decode(bytes, index), DecodeStatus::Ok);
+
+  const ProximityOutcome outcome = drawWithFix(bytes, index, points[0]);
+  ASSERT_EQ(outcome.status, RenderStatus::Ok);
+  EXPECT_TRUE(outcome.proximity.valid);
+  EXPECT_EQ(outcome.proximity.remainingDistanceMeters, 4000U);
 }

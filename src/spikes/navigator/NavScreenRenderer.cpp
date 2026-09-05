@@ -942,6 +942,31 @@ class MapRouteCanvas final : public RouteCanvas {
 
 }  // namespace
 
+uint16_t NavScreenRenderer::remainingMinutes(uint16_t estimatedMinutes, uint32_t remainingMeters,
+                                             uint32_t totalMeters) {
+  if (totalMeters == 0) return 0;
+  const uint64_t scaled = (uint64_t(remainingMeters) * estimatedMinutes + totalMeters / 2) / totalMeters;
+  const uint64_t clamped = scaled < uint64_t(estimatedMinutes) ? scaled : uint64_t(estimatedMinutes);
+  return static_cast<uint16_t>(clamped);
+}
+
+NavFooterMetrics NavScreenRenderer::chooseFooterMetrics(const CurrentPosition* position,
+                                                        const RouteProximity& proximity, const RouteIndex& route) {
+  NavFooterMetrics metrics;
+  metrics.distanceMeters = route.totalDistanceMeters;
+  metrics.minutes = route.estimatedMinutes;
+  // Without a fix, or when the route declares no total, only the whole-route
+  // metrics are meaningful. A fix that is far enough from the route to draw
+  // the off-route footer estimate is also too far for its projection along
+  // the route to describe where the walk actually is: keep the totals.
+  if (position == nullptr || !proximity.valid || route.totalDistanceMeters == 0) return metrics;
+  if (proximity.distanceMeters > std::max<uint32_t>(40, 2u * position->accuracyMeters)) return metrics;
+  metrics.mode = NavMetricMode::Remaining;
+  metrics.distanceMeters = std::min(proximity.remainingDistanceMeters, route.totalDistanceMeters);
+  metrics.minutes = remainingMinutes(route.estimatedMinutes, metrics.distanceMeters, route.totalDistanceMeters);
+  return metrics;
+}
+
 void NavScreenRenderer::drawMessage(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx, const char* title,
                                     const char* detail) {
   if (!frameBuffer || !widthPx || !heightPx) return;
@@ -1015,12 +1040,20 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
       drawNormalText(frameBuffer, g, 18, g.LH - 138, "(c) OpenStreetMap contributors", navFont14);
     fillRectLog(frameBuffer, g, 16, g.LH - 116, g.LW - 32, 1, true);
     fillRectLog(frameBuffer, g, g.LW / 2, g.LH - 106, 1, 62, true);
-    drawNormalText(frameBuffer, g, 22, g.LH - 103, mapText ? mapText->totalRoute : nullptr, navFont14);
-    drawNormalText(frameBuffer, g, g.LW / 2 + 18, g.LH - 103, mapText ? mapText->duration : nullptr, navFont14);
+    // A live fix that is close enough to the route swaps the two metric
+    // columns from the whole-route totals to the distance and minutes still
+    // to walk; a fix that is absent or off-route keeps the totals (and the
+    // off-route footer estimate below keeps its existing behavior).
+    const NavFooterMetrics footerMetrics = chooseFooterMetrics(position, proximity, index);
+    const bool remainingMetrics = footerMetrics.mode == NavMetricMode::Remaining;
+    drawNormalText(frameBuffer, g, 22, g.LH - 103,
+                   mapText ? (remainingMetrics ? mapText->remainingRoute : mapText->totalRoute) : nullptr, navFont14);
+    drawNormalText(frameBuffer, g, g.LW / 2 + 18, g.LH - 103,
+                   mapText ? (remainingMetrics ? mapText->remainingDuration : mapText->duration) : nullptr, navFont14);
     char value[32];
-    formatDistanceMeters(value, index.totalDistanceMeters);
+    formatDistanceMeters(value, footerMetrics.distanceMeters);
     drawNormalText(frameBuffer, g, 22, g.LH - 80, value, navFont34, true);
-    const int n = writeUint(value, index.estimatedMinutes);
+    const int n = writeUint(value, footerMetrics.minutes);
     std::memcpy(value + n, " MIN", 5);
     drawNormalText(frameBuffer, g, g.LW / 2 + 18, g.LH - 80, value, navFont34, true);
     if (position && routeDistanceTitle && proximity.valid &&

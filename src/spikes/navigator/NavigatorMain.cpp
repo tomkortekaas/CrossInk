@@ -74,7 +74,8 @@ void showRoute(bool showLoading = true, navigator::NavigationRefresh refresh = n
     if (hasPosition) return (fix.offRoute ? tr(STR_NAV_OFF_ROUTE_SNAPSHOT) : tr(STR_NAV_POSITION_SNAPSHOT));
     return (navigator::navigationSessionActive() ? tr(STR_NAV_WAITING_GPS) : tr(STR_NAV_GPS_INACTIVE));
   };
-  const navigator::NavMapText mapText{tr(STR_NAV_TOTAL_ROUTE), tr(STR_NAV_DURATION)};
+  const navigator::NavMapText mapText{tr(STR_NAV_TOTAL_ROUTE), tr(STR_NAV_DURATION), tr(STR_NAV_REMAINING_ROUTE),
+                                      tr(STR_NAV_REMAINING_DURATION)};
   bool useGray = grayReady;
   bool drawn = navigator::NavScreenRenderer::drawOverview(
       display.getFrameBuffer(), display.getDisplayWidth(), display.getDisplayHeight(), routes.source(), routes.index(),

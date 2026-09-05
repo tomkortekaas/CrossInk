@@ -109,6 +109,13 @@ class RouteViewport {
   // rings. Returns 0 for an invalid viewport or meters == 0.
   int pixelsForMeters(uint32_t meters) const;
 
+  // Fixed-point (Q16) cosine of the viewport's reference latitude. Route
+  // geometry renderers use this to measure along-route ground lengths with
+  // the same equirectangular scaling the projection applies, so one measured
+  // unit means the same ground distance everywhere on the route. Returns
+  // 65536 (cos 0 degrees) for an invalid viewport.
+  int32_t cosScaleQ16() const { return valid_ ? static_cast<int32_t>(cosScaleQ16_) : 65536; }
+
   // --- read-only geometry helpers (exposed for tests / the renderer) ---
   int32_t centerLatitudeE7() const { return centerLatitudeE7_; }
   int32_t centerLongitudeE7() const { return centerLongitudeE7_; }

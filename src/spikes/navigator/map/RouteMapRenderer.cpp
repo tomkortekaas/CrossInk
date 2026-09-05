@@ -65,6 +65,19 @@ inline int64_t foldLongitudeE5(int64_t e5) {
   return e5;
 }
 
+// Folds a longitude difference expressed in E7 units to the shortest arc,
+// [-180, +180] degrees. The input is the difference of two values that are
+// themselves folded into [-180, +180] degrees, so a single correction step is
+// exact.
+inline int64_t foldLongitudeDeltaE7(int64_t e7) {
+  if (e7 > 1800000000LL) {
+    e7 -= 3600000000LL;
+  } else if (e7 < -1800000000LL) {
+    e7 += 3600000000LL;
+  }
+  return e7;
+}
+
 // Re-requests a read until `length` bytes arrived; a source that returns 0
 // while bytes are still required is treated as truncation. Every individual
 // request is <= `length` (callers pass at most the 1,024-byte work buffer).
@@ -179,8 +192,9 @@ void drawEdge(RouteCanvas& canvas, int xmin, int ymin, int xmax, int ymax, int a
 }
 
 // Raster-space nearest segment, evaluated before clipping. Fixed-point
-// interpolation keeps products below int64 limits at kMaxProjectedPx.
-void nearestSegment(const ScreenPoint& marker, const ScreenPoint& a, const ScreenPoint& b, uint64_t& best,
+// interpolation keeps products below int64 limits at kMaxProjectedPx. When
+// this edge is closer than `best`, updates best/nearest and returns true.
+bool nearestSegment(const ScreenPoint& marker, const ScreenPoint& a, const ScreenPoint& b, uint64_t& best,
                     ScreenPoint& nearest) {
   const int64_t dx = int64_t(b.x) - a.x, dy = int64_t(b.y) - a.y;
   const int64_t length2 = dx * dx + dy * dy;
@@ -192,7 +206,9 @@ void nearestSegment(const ScreenPoint& marker, const ScreenPoint& a, const Scree
   if (d < best) {
     best = d;
     nearest = p;
+    return true;
   }
+  return false;
 }
 uint64_t integerRoot(uint64_t n) {
   uint64_t root = 0, bit = uint64_t(1) << 62;
@@ -309,6 +325,55 @@ RenderStatus RouteMapRenderer::draw(RouteCanvas& canvas, RouteByteSource& source
 
   uint8_t work[kRoutePackageV1WorkBufferBytes];
 
+  // Along-route progress for a live fix. Length is accumulated in projected
+  // U units (E7 latitude as-is, longitude scaled by the viewport's fixed Q16
+  // cosine), so one unit is the same ground distance everywhere and the
+  // streamed geometry can be summed without libm, heap or a second pass.
+  // Only consecutive points *within* a GPX segment are ever connected: each
+  // later segment restarts from its own absolute anchor, so a synthetic join
+  // across a segment gap is never measured as route.
+  uint64_t routeUnits = 0;        // measured length of every edge so far
+  uint64_t bestBeforeUnits = 0;   // routeUnits when the closest edge began
+  uint64_t bestEdgeUnits = 0;     // measured length of the closest edge
+  uint32_t bestT4096 = 0;         // clamped projection parameter on that edge
+  const int64_t measureCosQ16 = position && proximity ? viewport.cosScaleQ16() : 65536;
+  const auto measureEdge = [&](const ScreenPoint& a, const ScreenPoint& b, int64_t aLatE5, int64_t aLonE5,
+                               int64_t bLatE5, int64_t bLonE5) -> uint64_t {
+    if (!position || !proximity) return 0;
+    const int64_t dLatE7 = (bLatE5 - aLatE5) * 100;
+    const int64_t dLonE7 = foldLongitudeE5(bLonE5 - aLonE5) * 100;
+    const int64_t dxU = dLatE7;
+    const int64_t dyU = roundDiv(dLonE7 * measureCosQ16, 65536);
+    const uint64_t edgeUnits = integerRoot(uint64_t(dxU * dxU + dyU * dyU));
+    if (!nearestSegment(positionPixel, a, b, nearestDistance, nearest)) return edgeUnits;
+    // Projection parameter along this edge measured in the same U space as
+    // the length sums, so a fix between two route points lands exactly where
+    // it is on the ground rather than where a pixel-grid projection happened
+    // to put it. The clamped branch order keeps every product inside int64:
+    // when 0 < dot < length2 (the only case that needs precision), dot is
+    // below length2 (~2.1e13), so dot * 4096 cannot overflow.
+    const int64_t mdxU = int64_t(position->point.latitudeE7) - aLatE5 * 100;
+    const int64_t mdyU = roundDiv(foldLongitudeDeltaE7(int64_t(position->point.longitudeE7) - aLonE5 * 100) *
+                                      measureCosQ16,
+                                  65536);
+    const int64_t length2 = dxU * dxU + dyU * dyU;
+    const int64_t dot = mdxU * dxU + mdyU * dyU;
+    int64_t t = 0;
+    if (length2 > 0) {
+      if (dot <= 0) {
+        t = 0;
+      } else if (dot >= length2) {
+        t = 4096;
+      } else {
+        t = dot * 4096 / length2;
+      }
+    }
+    bestBeforeUnits = routeUnits;
+    bestEdgeUnits = edgeUnits;
+    bestT4096 = static_cast<uint32_t>(t);
+    return edgeUnits;
+  };
+
   for (uint16_t seg = 0; seg < route.segmentCount; ++seg) {
     const uint32_t startIndex = route.segments[seg].startPointIndex;
     const uint32_t endIndex = seg + 1 < route.segmentCount ? route.segments[seg + 1].startPointIndex : route.pointCount;
@@ -332,7 +397,12 @@ RenderStatus RouteMapRenderer::draw(RouteCanvas& canvas, RouteByteSource& source
     }
 
     ScreenPoint previous = projectE5(viewport, latitudeE5, longitudeE5);
-    if (position && proximity) nearestSegment(positionPixel, previous, previous, nearestDistance, nearest);
+    // A segment's first point is its own candidate (also the only point of a
+    // single-point segment). Nothing has been walked inside this segment yet,
+    // so any progress recorded here lands exactly at its start.
+    int64_t edgeLatitudeE5 = latitudeE5;
+    int64_t edgeLongitudeE5 = longitudeE5;
+    routeUnits += measureEdge(previous, previous, latitudeE5, longitudeE5, latitudeE5, longitudeE5);
     uint32_t deltaBytes = (span - 1) * 4;
     while (deltaBytes > 0) {
       const uint32_t chunk = std::min(deltaBytes, static_cast<uint32_t>(kRoutePackageV1WorkBufferBytes));
@@ -348,9 +418,11 @@ RenderStatus RouteMapRenderer::draw(RouteCanvas& canvas, RouteByteSource& source
         longitudeE5 = foldLongitudeE5(longitudeE5 + deltaLongitudeE5);
 
         const ScreenPoint current = projectE5(viewport, latitudeE5, longitudeE5);
-        if (position && proximity) nearestSegment(positionPixel, previous, current, nearestDistance, nearest);
+        routeUnits += measureEdge(previous, current, edgeLatitudeE5, edgeLongitudeE5, latitudeE5, longitudeE5);
         drawEdge(canvas, xmin, ymin, xmax, ymax, previous.x, previous.y, current.x, current.y);
         previous = current;
+        edgeLatitudeE5 = latitudeE5;
+        edgeLongitudeE5 = longitudeE5;
       }
       deltaBytes -= chunk;
     }
@@ -363,6 +435,22 @@ RenderStatus RouteMapRenderer::draw(RouteCanvas& canvas, RouteByteSource& source
       proximity->distanceMeters = uint32_t(integerRoot(nearestDistance) * 1000 / uint32_t(pixelsPerKm));
       proximity->dx = nearest.x - positionPixel.x;
       proximity->dy = nearest.y - positionPixel.y;
+    }
+    // Distance still to walk to the end of the route, measured along the
+    // route itself from the projection of the fix onto its closest edge and
+    // scaled to the package's declared total. routeUnits > 0 because the
+    // closest edge was found, so both divisions below are safe.
+    if (routeUnits == 0) {
+      proximity->remainingDistanceMeters = route.totalDistanceMeters;
+    } else {
+      const uint64_t closestUnits =
+          bestBeforeUnits + static_cast<uint64_t>(roundDiv(int64_t(bestEdgeUnits) * int64_t(bestT4096), 4096));
+      const uint64_t aheadUnits = closestUnits <= routeUnits ? routeUnits - closestUnits : 0;
+      // Q16 share of the route still ahead (65536 == the whole route), half-up.
+      const uint64_t aheadQ16 = (2 * aheadUnits * 65536 + routeUnits) / (2 * routeUnits);
+      const uint64_t fraction = aheadQ16 <= 65536 ? aheadQ16 : 65536;
+      const uint64_t remaining = (uint64_t(route.totalDistanceMeters) * fraction + 32768) / 65536;
+      proximity->remainingDistanceMeters = static_cast<uint32_t>(remaining);
     }
     // A short direction arrow only: never a fabricated traversable connection.
     if (proximity->valid && proximity->distanceMeters > std::max<uint32_t>(40, 2u * position->accuracyMeters)) {

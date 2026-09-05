@@ -26,13 +26,45 @@ struct GrayMapLayer;
 // Native SDK nudge masks: black/white are 0 in both overlay planes;
 // dark gray is 1 in LSB+MSB; light gray is 1 only in MSB.
 enum class NavGrayPlane : uint8_t { Base, Lsb, Msb };
+struct RouteProximity;  // defined in map/RouteMapRenderer.h
+
+// The two metric captions of the four-gray overview footer, provided by the
+// caller as already-localized strings. When a live fix is close enough to the
+// route to trust along-route progress, the remaining pair replaces the total
+// pair above the two value columns.
 struct NavMapText {
-  const char* totalRoute;
-  const char* duration;
+  const char* totalRoute;         // whole-route distance caption
+  const char* duration;           // whole-route estimated time caption
+  const char* remainingRoute;     // distance-still-to-go caption
+  const char* remainingDuration;  // time-still-to-go caption
+};
+
+// Which metric pair the gray footer shows for a fix.
+enum class NavMetricMode : uint8_t {
+  Total = 0,  // whole-route distance and estimated duration
+  Remaining,  // distance and minutes still to walk from the fix
+};
+
+struct NavFooterMetrics {
+  NavMetricMode mode = NavMetricMode::Total;
+  uint32_t distanceMeters = 0;  // value under the left caption
+  uint16_t minutes = 0;         // value under the right caption
 };
 
 class NavScreenRenderer {
  public:
+  // Decides the two metric values of the gray footer for a fix. Remaining is
+  // chosen only when a fix is present, its straight-line distance to the
+  // route is within the off-route guard used by the footer estimate
+  // (max(40 m, 2x accuracy)) and the route declares a positive total;
+  // otherwise the established total metrics win.
+  static NavFooterMetrics chooseFooterMetrics(const CurrentPosition* position, const RouteProximity& proximity,
+                                              const RouteIndex& route);
+  // Minutes left for `remainingMeters` of `totalMeters`, proportional to
+  // `estimatedMinutes`, rounded half-up and clamped to `estimatedMinutes`.
+  // Returns 0 when `totalMeters` is 0. Integer-only, no overflow.
+  static uint16_t remainingMinutes(uint16_t estimatedMinutes, uint32_t remainingMeters, uint32_t totalMeters);
+
   // Production route-foundation screens: no schematic map or simulated GPS.
   static void drawMessage(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx, const char* title,
                           const char* detail);

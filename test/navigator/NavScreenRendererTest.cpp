@@ -25,13 +25,22 @@
 #include "NavSplash.h"
 #include "NavState.h"
 #include "NavTestFrame.h"
+#include "map/RouteMapRenderer.h"
+#include "map/RouteViewport.h"
+#include "route/RoutePackageV1.h"
 
 namespace {
 
+using navigator::CurrentPosition;
+using navigator::GeoPoint;
 using navigator::Maneuver;
+using navigator::NavFooterMetrics;
+using navigator::NavMetricMode;
 using navigator::NavScreenRenderer;
 using navigator::NavState;
 using navigator::NavStatus;
+using navigator::RouteIndex;
+using navigator::RouteProximity;
 using navtest::countBlack;
 using navtest::countLogicalBlack;
 using navtest::expectGuardsUntouched;
@@ -605,6 +614,128 @@ TEST(NavScreenRendererTest, StatusScreensRenderOnSmallPanel) {
     expectGuardsUntouched(frame);
     EXPECT_GT(countLogicalBlack(frame, 0, winTop, g.LW, winBot), 300) << "status message missing on small panel";
   }
+}
+
+// ---------------------------------------------------------------------------
+// Gray footer metric policy (whole-route totals vs. distance/time still to go)
+// ---------------------------------------------------------------------------
+
+TEST(NavScreenRendererTest, FooterKeepsTotalsWithoutFixOrDeclaredTotal) {
+  RouteIndex route;
+  route.totalDistanceMeters = 4000;
+  route.estimatedMinutes = 100;
+  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 5, 0};
+  RouteProximity near;
+  near.valid = true;
+  near.distanceMeters = 10;  // within max(40 m, 2 * 5 m accuracy)
+  near.remainingDistanceMeters = 2000;
+
+  // No fix at all: only the whole-route totals are meaningful.
+  const NavFooterMetrics noFix = NavScreenRenderer::chooseFooterMetrics(nullptr, near, route);
+  EXPECT_EQ(noFix.mode, NavMetricMode::Total);
+  EXPECT_EQ(noFix.distanceMeters, 4000U);
+  EXPECT_EQ(noFix.minutes, 100U);
+
+  // A route that declares no total cannot scale a remaining estimate.
+  RouteIndex undeclared;
+  undeclared.totalDistanceMeters = 0;
+  undeclared.estimatedMinutes = 45;
+  const NavFooterMetrics zeroTotal = NavScreenRenderer::chooseFooterMetrics(&position, near, undeclared);
+  EXPECT_EQ(zeroTotal.mode, NavMetricMode::Total);
+  EXPECT_EQ(zeroTotal.distanceMeters, 0U);
+  EXPECT_EQ(zeroTotal.minutes, 45U);
+}
+
+TEST(NavScreenRendererTest, FooterSwapsToRemainingForCloseValidFix) {
+  RouteIndex route;
+  route.totalDistanceMeters = 4000;
+  route.estimatedMinutes = 100;
+  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 5, 0};
+
+  RouteProximity near;
+  near.valid = true;
+  near.distanceMeters = 10;  // within max(40 m, 2 * 5 m accuracy)
+  near.remainingDistanceMeters = 1500;
+  const NavFooterMetrics metrics = NavScreenRenderer::chooseFooterMetrics(&position, near, route);
+  EXPECT_EQ(metrics.mode, NavMetricMode::Remaining);
+  EXPECT_EQ(metrics.distanceMeters, 1500U);
+  // 1500 / 4000 * 100 minutes, rounded half-up.
+  EXPECT_EQ(metrics.minutes, 38U);
+
+  // A fix exactly on the off-route guard boundary is still close enough.
+  RouteProximity boundary;
+  boundary.valid = true;
+  boundary.distanceMeters = 40;  // == max(40, 2 * 5)
+  boundary.remainingDistanceMeters = 500;
+  const NavFooterMetrics atBoundary = NavScreenRenderer::chooseFooterMetrics(&position, boundary, route);
+  EXPECT_EQ(atBoundary.mode, NavMetricMode::Remaining);
+  EXPECT_EQ(atBoundary.minutes, 13U);  // 500 / 4000 * 100, half-up
+
+  // The remaining meters are clamped to the declared total before scaling.
+  RouteProximity oversized;
+  oversized.valid = true;
+  oversized.distanceMeters = 10;
+  oversized.remainingDistanceMeters = 999'999;
+  const NavFooterMetrics clamped = NavScreenRenderer::chooseFooterMetrics(&position, oversized, route);
+  EXPECT_EQ(clamped.mode, NavMetricMode::Remaining);
+  EXPECT_EQ(clamped.distanceMeters, 4000U);
+  EXPECT_EQ(clamped.minutes, 100U);
+
+  // Walked to the end: nothing left, zero minutes.
+  RouteProximity arrived;
+  arrived.valid = true;
+  arrived.distanceMeters = 10;
+  arrived.remainingDistanceMeters = 0;
+  const NavFooterMetrics done = NavScreenRenderer::chooseFooterMetrics(&position, arrived, route);
+  EXPECT_EQ(done.mode, NavMetricMode::Remaining);
+  EXPECT_EQ(done.distanceMeters, 0U);
+  EXPECT_EQ(done.minutes, 0U);
+}
+
+TEST(NavScreenRendererTest, FooterFallsBackToTotalsWhenFixIsOffRoute) {
+  RouteIndex route;
+  route.totalDistanceMeters = 4000;
+  route.estimatedMinutes = 100;
+  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 5, 0};
+
+  // Straight-line distance beyond max(40 m, 2x accuracy): the projection
+  // along the route no longer describes where the walk is, so the footer
+  // keeps the established whole-route totals.
+  RouteProximity off;
+  off.valid = true;
+  off.distanceMeters = 500;
+  off.remainingDistanceMeters = 100;  // would be shown if the guard failed
+  const NavFooterMetrics metrics = NavScreenRenderer::chooseFooterMetrics(&position, off, route);
+  EXPECT_EQ(metrics.mode, NavMetricMode::Total);
+  EXPECT_EQ(metrics.distanceMeters, 4000U);
+  EXPECT_EQ(metrics.minutes, 100U);
+
+  // An invalid proximity (e.g. no closest route edge was found) keeps totals.
+  RouteProximity invalid;
+  invalid.valid = false;
+  invalid.distanceMeters = 10;
+  invalid.remainingDistanceMeters = 1500;
+  const NavFooterMetrics noProximity = NavScreenRenderer::chooseFooterMetrics(&position, invalid, route);
+  EXPECT_EQ(noProximity.mode, NavMetricMode::Total);
+  EXPECT_EQ(noProximity.distanceMeters, 4000U);
+  EXPECT_EQ(noProximity.minutes, 100U);
+}
+
+TEST(NavScreenRendererTest, RemainingMinutesAreProportionalWithZeroAndOverflowBounds) {
+  EXPECT_EQ(NavScreenRenderer::remainingMinutes(60, 0, 1000), 0U);
+  EXPECT_EQ(NavScreenRenderer::remainingMinutes(60, 500, 1000), 30U);
+  EXPECT_EQ(NavScreenRenderer::remainingMinutes(60, 999, 1000), 60U);  // half-up rounding
+  EXPECT_EQ(NavScreenRenderer::remainingMinutes(60, 1000, 1000), 60U);
+  EXPECT_EQ(NavScreenRenderer::remainingMinutes(60, 1, 1000), 0U);  // sub-minute stays 0
+  EXPECT_EQ(NavScreenRenderer::remainingMinutes(0, 500, 1000), 0U);  // no declared estimate
+  EXPECT_EQ(NavScreenRenderer::remainingMinutes(60, 1000, 0), 0U);  // degenerate total
+  EXPECT_EQ(NavScreenRenderer::remainingMinutes(60, 2000, 1000), 60U);  // clamped to the estimate
+
+  // 32-bit extremes: the product remainingMeters * estimatedMinutes must be
+  // computed in 64 bits and the result clamped to the uint16 estimate.
+  EXPECT_EQ(NavScreenRenderer::remainingMinutes(65535, 0xFFFFFFFFu, 0xFFFFFFFFu), 65535U);
+  EXPECT_EQ(NavScreenRenderer::remainingMinutes(65535, 0, 0xFFFFFFFFu), 0U);
+  EXPECT_EQ(NavScreenRenderer::remainingMinutes(30'000, 0xFFFFFFFFu, 0xFFFFFFFFu), 30'000U);
 }
 
 }  // namespace

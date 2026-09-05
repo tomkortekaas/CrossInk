@@ -4,6 +4,8 @@
 
 - X3 walking navigation can use an offline four-level grayscale map with filled water, green areas and buildings, clear road hierarchy, proportional Noto Sans labels and a cased route line. During a live walk, a larger position dot refreshes automatically after meaningful movement and immediately when entering or leaving the route. The existing vector map remains the automatic fallback.
 
+- X3 walking navigation shows how much route and time is still to go on the grayscale route overview: while a fresh fix is close enough to the route to trust, the footer swaps the whole-route distance and estimated time for the distance and minutes remaining from the current position, measured along the route itself and never across a GPX segment gap. A missing or off-route fix keeps the route totals.
+
 - X3 dashboard builds offer Receive on the home menu: a visible 60-second Bluetooth window, cancellable with Back, for dashboard updates or launching navigation without waiting for the next scheduled wake.
 
 - On X3, hold and release the physical left side button while reading to reopen the previous available book. Repeating switches back. This only uses a free hold: Side Buttons → Long Press must be Off and side buttons must be enabled. Existing long-press actions, right-button timing and front-button shortcuts are preserved; a short left press turns the page on release.

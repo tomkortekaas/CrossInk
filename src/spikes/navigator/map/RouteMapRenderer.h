@@ -87,6 +87,12 @@ struct RouteProximity {
   bool valid = false;
   uint32_t distanceMeters = 0;  // approximate local projection, not walking distance
   int dx = 0, dy = 0;
+  // Along-route estimate for a live fix: meters still to walk to the end of
+  // the route, measured along the streamed detailed geometry from the
+  // projection of the fix onto its closest edge. Bounded to
+  // [0, totalDistanceMeters]; a route with no measurable geometry keeps the
+  // whole declared total. Never counts a synthetic join between segments.
+  uint32_t remainingDistanceMeters = 0;
 };
 struct MapLabel {
   GeoPoint point;
