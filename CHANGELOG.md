@@ -6,6 +6,8 @@
 
 - X3 walking navigation shows how much route and time is still to go on the grayscale route overview: while a fresh fix is close enough to the route to trust, the footer swaps the whole-route distance and estimated time for the distance and minutes remaining from the current position, measured along the route itself and never across a GPX segment gap. A missing or off-route fix keeps the route totals.
 
+- X3 walking navigation marks the walk as finished on the grayscale route overview: once a live fix is close enough to the route to trust and its remaining distance along the route itself has fallen inside a small, accuracy-derived arrival band, the footer status reads "BESTEMMING BEREIKT" / "DESTINATION REACHED". A looping route that passes geographically near its own endpoint earlier keeps showing its remaining distance instead of an arrival.
+
 - X3 dashboard builds offer Receive on the home menu: a visible 60-second Bluetooth window, cancellable with Back, for dashboard updates or launching navigation without waiting for the next scheduled wake.
 
 - On X3, hold and release the physical left side button while reading to reopen the previous available book. Repeating switches back. This only uses a free hold: Side Buttons → Long Press must be Off and side buttons must be enabled. Existing long-press actions, right-button timing and front-button shortcuts are preserved; a short left press turns the page on release.

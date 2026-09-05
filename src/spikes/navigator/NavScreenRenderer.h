@@ -28,15 +28,18 @@ struct GrayMapLayer;
 enum class NavGrayPlane : uint8_t { Base, Lsb, Msb };
 struct RouteProximity;  // defined in map/RouteMapRenderer.h
 
-// The two metric captions of the four-gray overview footer, provided by the
-// caller as already-localized strings. When a live fix is close enough to the
-// route to trust along-route progress, the remaining pair replaces the total
-// pair above the two value columns.
+// The localized caption strings of the four-gray overview footer, provided by
+// the caller as already-localized strings. When a live fix is close enough to
+// the route to trust along-route progress, the remaining pair replaces the
+// total pair above the two value columns. Once the fix has reliably reached
+// the route end (hasReachedRouteEnd), the footer's bottom status line is
+// replaced by `arrivedStatus`.
 struct NavMapText {
   const char* totalRoute;         // whole-route distance caption
   const char* duration;           // whole-route estimated time caption
   const char* remainingRoute;     // distance-still-to-go caption
   const char* remainingDuration;  // time-still-to-go caption
+  const char* arrivedStatus;      // footer status when the route end is reached
 };
 
 // Which metric pair the gray footer shows for a fix.
@@ -53,6 +56,15 @@ struct NavFooterMetrics {
 
 class NavScreenRenderer {
  public:
+  // A live fix may confirm arrival only while it is at most this accurate; a
+  // coarser fix cannot tell "standing at the end" from "still one
+  // accuracy-sized step before it".
+  static constexpr uint16_t kMaxArrivalAccuracyMeters = 25;
+  // Absolute floor of the arrival band: the along-route remaining is measured
+  // through pixel-quantized geometry, so it never needs to read exactly 0 for
+  // the walker to actually be at the end.
+  static constexpr uint16_t kMinArrivalRemainingMeters = 10;
+
   // Decides the two metric values of the gray footer for a fix. Remaining is
   // chosen only when a fix is present, its straight-line distance to the
   // route is within the off-route guard used by the footer estimate
@@ -60,6 +72,17 @@ class NavScreenRenderer {
   // otherwise the established total metrics win.
   static NavFooterMetrics chooseFooterMetrics(const CurrentPosition* position, const RouteProximity& proximity,
                                               const RouteIndex& route);
+  // Decides whether a live fix has reliably reached the route end, for the
+  // four-gray overview's localized arrival footer status. Returns true only
+  // when a fix is present, its along-route proximity result is valid, its
+  // straight-line distance to the route is within the same off-route guard
+  // used to trust the along-route projection (max(40 m, 2x accuracy)), its
+  // accuracy is at most kMaxArrivalAccuracyMeters, the route declares a
+  // positive total and the along-route distance still to walk is within a
+  // conservative band of max(kMinArrivalRemainingMeters, 1x accuracy). Pure
+  // integer decision: no heap, no floating point, no I18n.
+  static bool hasReachedRouteEnd(const CurrentPosition* position, const RouteProximity& proximity,
+                                 const RouteIndex& route);
   // Minutes left for `remainingMeters` of `totalMeters`, proportional to
   // `estimatedMinutes`, rounded half-up and clamped to `estimatedMinutes`.
   // Returns 0 when `totalMeters` is 0. Integer-only, no overflow.

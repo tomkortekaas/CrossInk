@@ -967,6 +967,27 @@ NavFooterMetrics NavScreenRenderer::chooseFooterMetrics(const CurrentPosition* p
   return metrics;
 }
 
+bool NavScreenRenderer::hasReachedRouteEnd(const CurrentPosition* position, const RouteProximity& proximity,
+                                           const RouteIndex& route) {
+  // Without a live fix, a valid along-route proximity result or a declared
+  // positive total there is nothing trustworthy to declare arrival from.
+  if (position == nullptr || !proximity.valid || route.totalDistanceMeters == 0) return false;
+  // A fix that is far enough from the route to distrust its along-route
+  // projection cannot confirm the end either: reuse the off-route guard.
+  if (proximity.distanceMeters > std::max<uint32_t>(40, 2u * position->accuracyMeters)) return false;
+  // A coarse fix cannot prove the walk is at the end rather than still one
+  // accuracy-sized step before it.
+  if (position->accuracyMeters > kMaxArrivalAccuracyMeters) return false;
+  // The fix may read up to roughly its reported accuracy short of the end
+  // while the walker is actually there, so arrival is declared only while the
+  // along-route remaining is inside a band of at most one accuracy step
+  // (floored so the pixel-quantized remaining can reach it at the true end).
+  // A looping route whose endpoint passes geographically near an earlier fix
+  // still reports its full remaining distance here and never declares.
+  const uint32_t arrivalBand = std::max<uint32_t>(kMinArrivalRemainingMeters, position->accuracyMeters);
+  return proximity.remainingDistanceMeters <= arrivalBand;
+}
+
 void NavScreenRenderer::drawMessage(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx, const char* title,
                                     const char* detail) {
   if (!frameBuffer || !widthPx || !heightPx) return;
@@ -1065,7 +1086,14 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
       formatDistanceMeters(estimate + prefix + 1, ((proximity.distanceMeters + 5) / 10) * 10);
       drawNormalText(frameBuffer, g, 22, g.LH - 43, estimate, navFont18);
     }
-    drawNormalText(frameBuffer, g, 22, g.LH - 21, statusText, navFont14);
+    // A live fix that has reliably reached the route end swaps the bottom
+    // footer status for the localized arrival message. A missing, off-route or
+    // still-walking fix keeps the caller's status text exactly as before.
+    const char* footerStatus = statusText;
+    if (hasReachedRouteEnd(position, proximity, index) && mapText && mapText->arrivedStatus) {
+      footerStatus = mapText->arrivedStatus;
+    }
+    drawNormalText(frameBuffer, g, 22, g.LH - 21, footerStatus, navFont14);
     return true;
   }
   if ((gray && gray->status == WalkMapStatus::Ok) ||
