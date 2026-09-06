@@ -35,6 +35,22 @@ target_link_libraries(NavigatorCoreTest PRIVATE
 
 gtest_discover_tests(NavigatorCoreTest)
 
+# Focused Task 7 suite: fixed-state next-maneuver selection from a validated
+# RouteIndex. Kept as its own small target so the state machine can be run
+# (and linked) in isolation from the renderers, then runs again via ctest.
+add_executable(RouteManeuverSelectorTest
+  RouteManeuverSelectorTest.cpp
+  ${REPO_ROOT}/src/spikes/navigator/route/RouteManeuverSelector.cpp
+)
+target_include_directories(RouteManeuverSelectorTest PRIVATE
+  ${REPO_ROOT}/src/spikes/navigator
+)
+target_link_libraries(RouteManeuverSelectorTest PRIVATE
+  crosspoint_test_common
+  GTest::gtest_main
+)
+gtest_discover_tests(RouteManeuverSelectorTest)
+
 # Standalone acceptance tests use real assertions (also enabled in Release),
 # independent of the converter and without a replacement GoogleTest shim.
 set(NAV_SRC ${REPO_ROOT}/src/spikes/navigator)
