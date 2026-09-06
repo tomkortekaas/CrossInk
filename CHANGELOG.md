@@ -2,6 +2,16 @@
 
 ### Added
 
+- X3 walking navigation opens on the whole route and lets you switch views on
+  the device: Up or Down toggles between Overview and a north-up GPS view
+  centred on your current position with a fixed 250-metre span, OK refreshes
+  the current view and Back still returns to the reader. Choosing the close
+  view before the first GPS fix keeps it selected and switches to it
+  automatically once a fix arrives. Starting navigation no longer flashes a
+  full-screen loading page: the route appears in its final layout right away
+  with a compact loading status that the completed map then replaces in
+  place.
+
 - X3 walking navigation can use an offline four-level grayscale map with filled water, green areas and buildings, clear road hierarchy, proportional Noto Sans labels and a cased route line. During a live walk, a larger position dot refreshes automatically after meaningful movement and immediately when entering or leaving the route. The existing vector map remains the automatic fallback.
 
 - X3 walking navigation shows how much route and time is still to go on the grayscale route overview: while a fresh fix is close enough to the route to trust, the footer swaps the whole-route distance and estimated time for the distance and minutes remaining from the current position, measured along the route itself and never across a GPX segment gap. A missing or off-route fix keeps the route totals.

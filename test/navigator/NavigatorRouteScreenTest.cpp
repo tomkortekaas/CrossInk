@@ -44,6 +44,7 @@
 #include "NavSplash.h"
 #include "NavState.h"
 #include "NavTestFrame.h"
+#include "NavigationViewController.h"
 #include "map/GrayMap.h"
 #include "map/RouteMapRenderer.h"
 #include "map/RouteViewport.h"
@@ -983,9 +984,7 @@ int overviewHeaderTop(bool gray) {
   return gray ? NavScreenRenderer::kOverviewHeaderGrayPx : NavScreenRenderer::kOverviewHeaderPlainPx;
 }
 
-int overviewBandHeight(int physW) {
-  return physW * NavScreenRenderer::kManeuverBandHeightPercent / 100;
-}
+int overviewBandHeight(int physW) { return physW * NavScreenRenderer::kManeuverBandHeightPercent / 100; }
 
 // Logical rows [ly0, logical height) must be byte-identical between two
 // frames. The overview chrome below the map (attribution, separators, metric
@@ -1124,7 +1123,8 @@ TEST(NavigatorRouteScreenTest, OverviewReservesFixedBandAboveMapWithoutTouchingF
   const int bandTop = overviewHeaderTop(false);
   const int bandH = overviewBandHeight(792);
   EXPECT_GT(countLogicalBlack(withBand, 0, bandTop, 528, bandTop + bandH), 400) << "band content missing";
-  EXPECT_GT(countLogicalBlack(withBand, 16, bandTop + bandH + 4, 512, chromeTop), 100) << "route map missing below band";
+  EXPECT_GT(countLogicalBlack(withBand, 16, bandTop + bandH + 4, 512, chromeTop), 100)
+      << "route map missing below band";
 }
 
 TEST(NavigatorRouteScreenTest, GrayOverviewBandReservedAndConfinedInEveryPlane) {
@@ -1168,8 +1168,9 @@ TEST(NavigatorRouteScreenTest, GrayOverviewBandReservedAndConfinedInEveryPlane) 
     navigator::RouteProximity proximity;
     Frame withBand(792, 528, kSentinel);
     navigator::GrayMapLayer withBandLayer = grayLayer;
-    EXPECT_TRUE(NavScreenRenderer::drawOverview(withBand.pixels(), 792, 528, source, index, nullptr, &position, "STATUS",
-                                                nullptr, &withBandLayer, plane, nullptr, &presentation, &proximity));
+    EXPECT_TRUE(NavScreenRenderer::drawOverview(withBand.pixels(), 792, 528, source, index, nullptr, &position,
+                                                "STATUS", nullptr, &withBandLayer, plane, nullptr, &presentation,
+                                                &proximity));
     EXPECT_EQ(withBandLayer.status, navigator::WalkMapStatus::Ok);
     ASSERT_TRUE(proximity.valid);
     NavScreenRenderer::drawManeuverBand(withBand.pixels(), 792, 528, presentation, plane, true);
@@ -1197,6 +1198,165 @@ TEST(NavigatorRouteScreenTest, GrayOverviewBandReservedAndConfinedInEveryPlane) 
     EXPECT_GT(bandInk, 400) << "band content missing in plane " << static_cast<int>(plane);
     EXPECT_GT(mapInk, 100) << "gray map missing below the band in plane " << static_cast<int>(plane);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Task: inject one selected viewport into every render plane.
+//
+// drawOverview gains an optional trailing `const RouteViewport* viewport`.
+// NavigatorMain selects the viewport once per submitted frame (whole-route fit
+// for Overview, a fixed 250 m centred viewport for GPS zoom) and feeds the
+// SAME object to the Base, LSB and MSB passes. The renderer must:
+//   * use the injected viewport for route, background, marker and scale
+//     geometry whenever it is non-null and valid;
+//   * keep a null/invalid viewport on the exact historical per-call choice,
+//     so existing map-only and live-position frames stay byte-identical;
+//   * never let the three grayscale planes disagree geometrically;
+//   * keep guard bytes, row padding, the maneuver band and the footer
+//     untouched by the injected geometry.
+// ---------------------------------------------------------------------------
+
+// The equal padding drawOverview's own fit/centre path applies (the renderer
+// keeps this mirror of the pure controller's kNavigationViewPaddingPx).
+constexpr int kOverviewInjectPaddingPx = 24;
+
+TEST(NavigatorRouteScreenTest, OverviewDefaultAndInjectedFitViewportAreByteIdentical) {
+  const auto route = TurnRoute::make(5000);
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  // The historical no-viewport call fits the whole route into the map rect
+  // that overviewMapRect() reports; injecting that same fit must not move a
+  // single pixel (route, chrome, footer, row padding or guards).
+  const Rect mapRect = NavScreenRenderer::overviewMapRect(792, 528, false, false);
+  const RouteViewport fitted = RouteViewport::fitOverview(index, mapRect, kOverviewInjectPaddingPx);
+  ASSERT_TRUE(fitted.isValid());
+
+  Frame defaults(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(defaults.pixels(), 792, 528, source, index));
+  Frame injected(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(injected.pixels(), 792, 528, source, index, nullptr, nullptr, nullptr,
+                                              nullptr, nullptr, navigator::NavGrayPlane::Base, nullptr, nullptr,
+                                              nullptr, &fitted));
+  EXPECT_EQ(std::memcmp(defaults.pixels(), injected.pixels(), rowBytes(792) * 528), 0)
+      << "injecting the fitted overview changed the whole-route frame";
+  expectGuardsUntouched(defaults);
+  expectGuardsUntouched(injected);
+}
+
+TEST(NavigatorRouteScreenTest, OverviewInjectedInvalidViewportFallsBackToDefaultFit) {
+  const auto route = TurnRoute::make(5000);
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  // A null or invalid viewport keeps the historical per-call behaviour.
+  const RouteViewport invalid;  // default-constructed: not valid
+  ASSERT_FALSE(invalid.isValid());
+  Frame defaults(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(defaults.pixels(), 792, 528, source, index));
+  Frame invalidInjected(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(invalidInjected.pixels(), 792, 528, source, index, nullptr, nullptr,
+                                              nullptr, nullptr, nullptr, navigator::NavGrayPlane::Base, nullptr,
+                                              nullptr, nullptr, &invalid));
+  EXPECT_EQ(std::memcmp(defaults.pixels(), invalidInjected.pixels(), rowBytes(792) * 528), 0)
+      << "an invalid injected viewport must not change the frame";
+}
+
+TEST(NavigatorRouteScreenTest, InjectedCenteredViewportCentresPositionMarkerAtMapCentre) {
+  const auto route = TurnRoute::make(5000);
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  // A GPS-zoom selection centres the supplied fix: the marker must land on
+  // the logical centre of the map rectangle the renderer uses.
+  CurrentPosition position;
+  position.point = GeoPoint{523'700'000, 49'090'000};
+  position.accuracyMeters = 5;
+  const Rect mapRect = NavScreenRenderer::overviewMapRect(792, 528, false, false);
+  const RouteViewport zoom =
+      RouteViewport::centered(position.point, mapRect, navigator::kGpsZoomSpanMeters, kOverviewInjectPaddingPx);
+  ASSERT_TRUE(zoom.isValid());
+
+  Frame frame(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(frame.pixels(), 792, 528, source, index, nullptr, &position, "STATUS",
+                                              nullptr, nullptr, navigator::NavGrayPlane::Base, nullptr, nullptr,
+                                              nullptr, &zoom));
+  expectGuardsUntouched(frame);
+
+  const int mapX = 16;
+  const int mapY = NavScreenRenderer::kOverviewHeaderPlainPx;
+  const int cx = mapX + mapRect.width / 2;
+  const int cy = mapY + mapRect.height / 2;
+  expectLogicalBlack(frame, cx, cy, "position marker centre at the injected viewport centre");
+
+  // The accuracy ring (clamped to the renderer's minimum) is centred on the
+  // same point, so the injected geometry drives the marker ring too.
+  const int ring = std::clamp(zoom.pixelsForMeters(position.accuracyMeters), RouteMapRenderer::kMarkerMinRingRadiusPx,
+                              static_cast<int>(RouteMapRenderer::kMarkerMaxRingRadiusPx));
+  ASSERT_GT(ring, 0);
+  expectLogicalBlack(frame, cx + ring, cy, "marker ring east");
+  expectLogicalBlack(frame, cx - ring, cy, "marker ring west");
+  expectLogicalBlack(frame, cx, cy + ring, "marker ring south");
+  expectLogicalBlack(frame, cx, cy - ring, "marker ring north");
+}
+
+TEST(NavigatorRouteScreenTest, InjectedViewportUsesIdenticalGeometryInEveryGrayPlane) {
+  const auto route = TurnRoute::make(5000);
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  const Bytes grayBytes = encodeGrayMap(523'400'000, 48'800'000, 6, 6);
+  VectorWalkMapByteSource graySource(grayBytes);
+  navigator::GrayMap grayMap;
+  ASSERT_EQ(grayMap.open(graySource), navigator::WalkMapStatus::Ok);
+
+  CurrentPosition position;
+  position.point = GeoPoint{523'700'000, 49'090'000};
+  position.accuracyMeters = 5;
+  const Rect mapRect = NavScreenRenderer::overviewMapRect(792, 528, true, false);
+  const RouteViewport zoom =
+      RouteViewport::centered(position.point, mapRect, navigator::kGpsZoomSpanMeters, kOverviewInjectPaddingPx);
+  ASSERT_TRUE(zoom.isValid());
+
+  const int mapX = 16;
+  const int mapY = NavScreenRenderer::kOverviewHeaderGrayPx;
+  const int cx = mapX + mapRect.width / 2;
+  const int cy = mapY + mapRect.height / 2;
+  const navigator::NavMapText mapText{nullptr, nullptr, nullptr, nullptr, nullptr};
+
+  Frame frames[3] = {Frame(792, 528, kSentinel), Frame(792, 528, kSentinel), Frame(792, 528, kSentinel)};
+  const navigator::NavGrayPlane planes[] = {navigator::NavGrayPlane::Base, navigator::NavGrayPlane::Lsb,
+                                            navigator::NavGrayPlane::Msb};
+  for (int i = 0; i < 3; ++i) {
+    SCOPED_TRACE("plane=" + std::to_string(static_cast<int>(planes[i])));
+    navigator::GrayMapLayer layer;
+    layer.source = &graySource;
+    layer.map = &grayMap;
+    EXPECT_TRUE(NavScreenRenderer::drawOverview(frames[i].pixels(), 792, 528, source, index, nullptr, &position,
+                                                "STATUS", nullptr, &layer, planes[i], &mapText, nullptr, nullptr,
+                                                &zoom));
+    EXPECT_EQ(layer.status, navigator::WalkMapStatus::Ok);
+    expectGuardsUntouched(frames[i]);
+  }
+
+  // The marker centre sits at exactly the same logical pixel in all three
+  // planes: ink in Base, mask (clear) ink in the LSB/MSB overlays.
+  const bool baseBlack = logicalPixelIsBlack(frames[0], cx, cy);
+  EXPECT_TRUE(baseBlack) << "base marker centre";
+  EXPECT_FALSE(logicalPixelIsBlack(frames[1], cx, cy)) << "lsb marker centre matches geometry";
+  EXPECT_FALSE(logicalPixelIsBlack(frames[2], cx, cy)) << "msb marker centre matches geometry";
+
+  // The ring radius is the same in every plane: probe one logical ring pixel
+  // (east) in each plane and confirm the plane polarity agrees.
+  const int ring = std::clamp(zoom.pixelsForMeters(position.accuracyMeters), RouteMapRenderer::kMarkerMinRingRadiusPx,
+                              static_cast<int>(RouteMapRenderer::kMarkerMaxRingRadiusPx));
+  ASSERT_GT(ring, 0);
+  EXPECT_NE(logicalPixelIsBlack(frames[1], cx + ring, cy), baseBlack) << "lsb ring east";
+  EXPECT_NE(logicalPixelIsBlack(frames[2], cx + ring, cy), baseBlack) << "msb ring east";
 }
 
 }  // namespace

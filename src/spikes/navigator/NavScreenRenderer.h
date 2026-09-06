@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "NavState.h"
+#include "map/RouteViewport.h"
 
 // Draws a supplied NavState into a physical row-major 1-bpp framebuffer.
 //
@@ -130,12 +131,32 @@ class NavScreenRenderer {
   // into the reserved area with drawManeuverBand. A null/empty `maneuver`, a
   // route without maneuvers, and every pre-existing call site keep the
   // current map-only layout byte-for-byte.
+  //
+  // `viewport` is the optional viewport selected once by the orchestrator for
+  // the current view (whole-route fit for Overview, the fixed 250 m centred
+  // viewport for GPS zoom). When non-null and valid it drives the route,
+  // background, position marker and scale geometry of this pass, so the same
+  // object can be handed to the Base, LSB and MSB planes of one submitted
+  // frame without the grayscale planes ever disagreeing. A null or invalid
+  // viewport keeps the historical per-call choice: centre a supplied live fix
+  // at the 400 m walking span, otherwise fit the whole route. An injected
+  // viewport must be built on the map rectangle reported by overviewMapRect()
+  // for this panel/overview mode.
   static bool drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx, RouteByteSource& source,
                            const RouteIndex& index, WalkMapLayer* background = nullptr,
                            const CurrentPosition* position = nullptr, const char* statusText = nullptr,
                            const char* routeDistanceTitle = nullptr, GrayMapLayer* gray = nullptr,
                            NavGrayPlane plane = NavGrayPlane::Base, const NavMapText* mapText = nullptr,
-                           const NavManeuverPresentation* maneuver = nullptr, RouteProximity* outProximity = nullptr);
+                           const NavManeuverPresentation* maneuver = nullptr, RouteProximity* outProximity = nullptr,
+                           const RouteViewport* viewport = nullptr);
+  // The logical overview map rectangle drawOverview uses for a physical panel
+  // of `widthPx` x `heightPx` in the gray (`gray`) or plain overview mode,
+  // optionally shortened by a reserved maneuver band (`bandReserved`).
+  // drawOverview derives its own map geometry from this same helper, so an
+  // orchestrator that builds an injected RouteViewport from the returned rect
+  // stays pixel-aligned with the frame it submits. Returns an invalid (empty)
+  // rect when the panel cannot host the overview.
+  static Rect overviewMapRect(uint16_t widthPx, uint16_t heightPx, bool gray, bool bandReserved = false);
   // Paints a maneuver presentation into the fixed instruction band that a
   // preceding drawOverview(maneuver != nullptr) reserved above the map. Must
   // be called with the same widthPx/heightPx/plane and the same `gray` mode
@@ -144,8 +165,8 @@ class NavScreenRenderer {
   // stroke is laid out strictly inside the reserved band rectangle, so the
   // band never overlaps the map or footer on any supported panel size.
   static void drawManeuverBand(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx,
-                               const NavManeuverPresentation& presentation,
-                               NavGrayPlane plane = NavGrayPlane::Base, bool gray = true);
+                               const NavManeuverPresentation& presentation, NavGrayPlane plane = NavGrayPlane::Base,
+                               bool gray = true);
   // A supplied position must be fresh and validated by the caller. It centers
   // the map at a 400-meter walking span. statusText is already localized.
   // Legacy screen. draw() is byte-identical to the historical static NavSplash

@@ -35,6 +35,54 @@ target_link_libraries(NavigatorCoreTest PRIVATE
 
 gtest_discover_tests(NavigatorCoreTest)
 
+# Focused view/action controller suite: session view state, pure released-
+# button mapping and viewport selection for the X3 navigator (see
+# src/spikes/navigator/NavigationViewController.h).
+add_executable(NavigationViewControllerTest
+  NavigationViewControllerTest.cpp
+  ${REPO_ROOT}/src/spikes/navigator/NavigationViewController.cpp
+  ${REPO_ROOT}/src/spikes/navigator/map/RouteViewport.cpp
+)
+target_include_directories(NavigationViewControllerTest PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/shim
+  ${REPO_ROOT}/src/spikes/navigator
+)
+target_link_libraries(NavigationViewControllerTest PRIVATE
+  crosspoint_test_common
+  GTest::gtest_main
+)
+gtest_discover_tests(NavigationViewControllerTest)
+
+# Pure startup submission controller for the calm navigator entry (header-only;
+# see src/spikes/navigator/NavigationStartup.h).
+add_executable(NavigationStartupTest
+  NavigationStartupTest.cpp
+)
+target_include_directories(NavigationStartupTest PRIVATE
+  ${REPO_ROOT}/src/spikes/navigator
+)
+target_link_libraries(NavigationStartupTest PRIVATE
+  crosspoint_test_common
+  GTest::gtest_main
+)
+gtest_discover_tests(NavigationStartupTest)
+
+# Refresh scheduling for the live walk (fixed cadences, movement throttle,
+# manual/forced refresh and immediate viewport-change Full refresh). Plain
+# assert-style suite kept as its own executable like the policy unit it tests.
+add_executable(NavigationRefreshPolicyTest
+  NavigationRefreshPolicyTest.cpp
+  ${REPO_ROOT}/src/spikes/navigator/NavigationRefreshPolicy.cpp
+  ${REPO_ROOT}/src/spikes/navigator/map/RouteViewport.cpp
+)
+target_include_directories(NavigationRefreshPolicyTest PRIVATE
+  ${REPO_ROOT}/src/spikes/navigator
+)
+target_link_libraries(NavigationRefreshPolicyTest PRIVATE
+  crosspoint_test_common
+)
+add_test(NAME NavigationRefreshPolicy COMMAND NavigationRefreshPolicyTest)
+
 # Focused Task 7 suite: fixed-state next-maneuver selection from a validated
 # RouteIndex. Kept as its own small target so the state machine can be run
 # (and linked) in isolation from the renderers, then runs again via ctest.

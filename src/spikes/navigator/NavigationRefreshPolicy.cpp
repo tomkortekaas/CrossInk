@@ -4,15 +4,21 @@
 namespace navigator {
 uint32_t NavigationRefreshPolicy::routineIntervalMs() const {
   switch (mode_) {
-    case WalkingRefreshMode::Fast: return 10000;
-    case WalkingRefreshMode::Balanced: return 20000;
-    case WalkingRefreshMode::Economical: return 30000;
+    case WalkingRefreshMode::Fast:
+      return 10000;
+    case WalkingRefreshMode::Balanced:
+      return 20000;
+    case WalkingRefreshMode::Economical:
+      return 30000;
   }
   return 30000;  // impossible enum values fail closed to the Economical cadence
 }
 NavigationRefresh NavigationRefreshPolicy::decide(uint32_t now, const LivePosition* p, bool manual,
                                                   bool viewportChanged) const {
-  if (!manual && !activeView_) return NavigationRefresh::None;
+  // A viewport change is an intentional display request (the walker toggled
+  // Overview/GPS zoom), so it bypasses the pocket-mode gate: it must reach
+  // the screen immediately even while no live view is active.
+  if (!manual && !activeView_ && !viewportChanged) return NavigationRefresh::None;
   if (!hasRendered_ || viewportChanged || (p != nullptr) != hadPosition_) return NavigationRefresh::Full;
   if (!manual && p && hadPosition_ && p->offRoute != last_.offRoute) return NavigationRefresh::Full;
   // E-ink navigation is a glanceable snapshot. Limit routine movement updates

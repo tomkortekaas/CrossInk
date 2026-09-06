@@ -140,8 +140,18 @@ Layout makeLayout(int physW, int physH) {
 // pixels. Both drawOverview's reserve step and drawManeuverBand's content
 // layout use this exact function, so the painted ink always lands inside the
 // rectangle that was reserved.
-int maneuverBandHeight(const Layout& g) {
-  return g.LH * NavScreenRenderer::kManeuverBandHeightPercent / 100;
+int maneuverBandHeight(const Layout& g) { return g.LH * NavScreenRenderer::kManeuverBandHeightPercent / 100; }
+
+// Header height of the active overview mode and the fixed footer chrome below
+// the map are the only variables in the overview map rectangle (see the
+// header comment on NavScreenRenderer::overviewMapRect). Keeping this one
+// function the single source of the map geometry guarantees that an injected
+// RouteViewport built from overviewMapRect() is pixel-aligned with the frame
+// drawOverview actually draws.
+int overviewMapHeight(const Layout& g, bool gray, bool bandReserved) {
+  const int headerTop = gray ? NavScreenRenderer::kOverviewHeaderGrayPx : NavScreenRenderer::kOverviewHeaderPlainPx;
+  const int mapY = headerTop + (bandReserved ? maneuverBandHeight(g) : 0);
+  return g.LH - mapY - (gray ? 144 : 100);
 }
 
 // ---------------------------------------------------------------------------
@@ -1102,7 +1112,8 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
                                      const RouteIndex& index, WalkMapLayer* background, const CurrentPosition* position,
                                      const char* statusText, const char* routeDistanceTitle, GrayMapLayer* gray,
                                      NavGrayPlane plane, const NavMapText* mapText,
-                                     const NavManeuverPresentation* maneuver, RouteProximity* outProximity) {
+                                     const NavManeuverPresentation* maneuver, RouteProximity* outProximity,
+                                     const RouteViewport* viewport) {
   if (!frameBuffer || widthPx < 160 || heightPx < 120) return false;
   Layout g = makeLayout(widthPx, heightPx);
   g.plane = plane;
@@ -1134,15 +1145,24 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
   const int headerTop = gray ? NavScreenRenderer::kOverviewHeaderGrayPx : NavScreenRenderer::kOverviewHeaderPlainPx;
   const int bandReserved = maneuver != nullptr && index.maneuverCount > 0;
   const int mapY = headerTop + (bandReserved ? maneuverBandHeight(g) : 0);
-  const int mapHeight = g.LH - mapY - (gray ? 144 : 100);
+  const Rect mapRect = NavScreenRenderer::overviewMapRect(widthPx, heightPx, gray != nullptr, bandReserved != 0);
+  const int mapHeight = mapRect.height;
   if (mapHeight <= 0) return false;
   MapRouteCanvas canvas(frameBuffer, g, 16, mapY, g.LW - 32, mapHeight, 5, gray != nullptr);
-  const Rect mapRect{0, 0, g.LW - 32, mapHeight};
-  const auto viewport = position ? RouteViewport::centered(position->point, mapRect, 400, 24)
-                                 : RouteViewport::fitOverview(index, mapRect, 24);
+  // The orchestrator may inject the viewport it already selected for the
+  // current view (one object reused by the Base/LSB/MSB planes of a frame).
+  // A null or invalid viewport keeps the historical per-call choice: centre a
+  // supplied live fix at the 400 m walking span, otherwise fit the route.
+  RouteViewport fallbackViewport;
+  const RouteViewport* effective = viewport;
+  if (effective == nullptr || !effective->isValid()) {
+    fallbackViewport = position ? RouteViewport::centered(position->point, mapRect, 400, 24)
+                                : RouteViewport::fitOverview(index, mapRect, 24);
+    effective = &fallbackViewport;
+  }
   RouteProximity proximity;
-  if (!viewport.isValid() || RouteMapRenderer::draw(canvas, source, index, viewport, position, background, &proximity,
-                                                    gray) != RenderStatus::Ok)
+  if (!effective->isValid() || RouteMapRenderer::draw(canvas, source, index, *effective, position, background,
+                                                      &proximity, gray) != RenderStatus::Ok)
     return false;
   if (outProximity != nullptr) {
     *outProximity = proximity;
@@ -1154,7 +1174,7 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
   }
   if (position) {
     // Scale and north stay legible on a white panel over dense geometry.
-    const int scaleWidth = viewport.pixelsForMeters(100), sx = g.LW - 32 - scaleWidth, sy = mapY + mapHeight - 16;
+    const int scaleWidth = effective->pixelsForMeters(100), sx = g.LW - 32 - scaleWidth, sy = mapY + mapHeight - 16;
     fillRectLog(frameBuffer, g, sx - 6, sy - 24, scaleWidth + 12, 32, false);
     fillRectLog(frameBuffer, g, sx, sy, scaleWidth, 2, true);
     fillRectLog(frameBuffer, g, sx, sy - 5, 2, 7, true);
@@ -1234,6 +1254,15 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
   return true;
 }
 
+Rect NavScreenRenderer::overviewMapRect(uint16_t widthPx, uint16_t heightPx, bool gray, bool bandReserved) {
+  const Layout g = makeLayout(widthPx, heightPx);
+  const int mapHeight = overviewMapHeight(g, gray, bandReserved);
+  if (mapHeight <= 0) {
+    return Rect{};
+  }
+  return Rect{0, 0, g.LW - 32, mapHeight};
+}
+
 void NavScreenRenderer::drawManeuverBand(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx,
                                          const NavManeuverPresentation& presentation, NavGrayPlane plane, bool gray) {
   if (frameBuffer == nullptr || widthPx == 0 || heightPx == 0) {
@@ -1270,9 +1299,9 @@ void NavScreenRenderer::drawManeuverBand(uint8_t* frameBuffer, uint16_t widthPx,
   if (grayText) {
     // Proportional Noto ladder (native pixels, no scaling).
     char text[45];
-    const NavFont* distanceFont = fitNotoLadder(kBandDistanceLadder,
-                                                sizeof(kBandDistanceLadder) / sizeof(kBandDistanceLadder[0]),
-                                                distanceLine, availW, text, sizeof(text));
+    const NavFont* distanceFont =
+        fitNotoLadder(kBandDistanceLadder, sizeof(kBandDistanceLadder) / sizeof(kBandDistanceLadder[0]), distanceLine,
+                      availW, text, sizeof(text));
     if (distanceFont != nullptr && y + distanceFont->height <= contentBottom) {
       drawNormalText(frameBuffer, g, g.xRight - normalTextWidth(*distanceFont, text), y, text, *distanceFont, true);
       y += distanceFont->height + (distanceFont->height / 3 < 2 ? 2 : distanceFont->height / 3);

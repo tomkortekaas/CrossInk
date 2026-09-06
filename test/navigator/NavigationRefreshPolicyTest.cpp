@@ -41,8 +41,8 @@ int main() {
   assert(forced.decide(5000, &moved, false, false) == NavigationRefresh::None);  // throttled
   assert(forced.decide(5000, &moved, true, false) == NavigationRefresh::Fast);   // forced bypasses
   forced.rendered(5000, &moved, NavigationRefresh::Fast);
-  assert(forced.decide(5100, &near, false, false) == NavigationRefresh::None);   // still throttled
-  assert(forced.decide(5100, &near, true, false) == NavigationRefresh::Fast);    // forced needs no movement
+  assert(forced.decide(5100, &near, false, false) == NavigationRefresh::None);  // still throttled
+  assert(forced.decide(5100, &near, true, false) == NavigationRefresh::Fast);   // forced needs no movement
   // Task 6 - WalkingRefreshMode cadences are exact: Fast 10000 ms, Balanced
   // 20000 ms, Economical 30000 ms. In every mode the first fix stays
   // immediate, an ordinary refresh is suppressed one millisecond before the
@@ -73,4 +73,28 @@ int main() {
   unknownMoved.latitudeE7 += 20000;
   assert(unknown.decide(1000 + 29999, &unknownMoved, false, false) == NavigationRefresh::None);
   assert(unknown.decide(1000 + 30000, &unknownMoved, false, false) == NavigationRefresh::Fast);
+  // Task: a view change is an intentional viewport switch. It requests an
+  // immediate Full refresh even inside the routine throttle window, is never
+  // downgraded to Fast no matter how many Fast renders accumulated, and still
+  // renders when the live view is inactive (receiver closed) because the user
+  // asked for it.
+  NavigationRefreshPolicy viewChange;
+  viewChange.setActiveView(true);
+  LivePosition settled{523700000, 49000000, 5, false};
+  assert(viewChange.decide(1000, &settled, false, false) == NavigationRefresh::Full);
+  viewChange.rendered(1000, &settled, NavigationRefresh::Full);
+  LivePosition viewMoved = settled;
+  viewMoved.latitudeE7 += 20000;
+  // A routine moved fix stays throttled inside the interval...
+  assert(viewChange.decide(5000, &viewMoved, false, false) == NavigationRefresh::None);
+  // ...while the same fix with a viewport change must refresh immediately.
+  assert(viewChange.decide(5000, &viewMoved, false, true) == NavigationRefresh::Full);
+  viewChange.rendered(5000, &viewMoved, NavigationRefresh::Full);
+  for (int i = 0; i < 20; ++i) viewChange.rendered(6000 + i, &viewMoved, NavigationRefresh::Fast);
+  assert(viewChange.decide(100000, &viewMoved, false, true) == NavigationRefresh::Full);
+  viewChange.rendered(100000, &viewMoved, NavigationRefresh::Full);
+  // View changes do not depend on an active live view.
+  NavigationRefreshPolicy pocket;
+  assert(pocket.decide(100, &settled, false, false) == NavigationRefresh::None);
+  assert(pocket.decide(100, &settled, false, true) == NavigationRefresh::Full);
 }
