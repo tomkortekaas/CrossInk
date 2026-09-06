@@ -237,11 +237,16 @@ void loop() {
       navigator::navigationPosition(millis(), automaticPosition) ? &automaticPosition : nullptr;
   // A fix flagged forceRefresh is an urgent/synthetic position that must reach
   // the screen immediately; route it through the policy's manual path so it
-  // bypasses the 30-second routine-movement throttle. Ordinary fixes keep the
-  // throttled path (manual=false).
+  // bypasses the selected routine interval's movement throttle. Ordinary fixes
+  // keep the throttled path (manual=false).
   // Consume the request once. Keeping it on the retained position would make
   // every 20 ms loop redraw the same e-ink frame until the fix ages out.
   const bool forced = automaticFix != nullptr && navigator::takeNavigationForceRefresh();
+  // navigationPosition() above expires a stale session, so derive the mode
+  // here (after expiry, before decide): an active session applies its
+  // LIVE_START v2 mode, otherwise the policy keeps the Economical cadence.
+  refreshPolicy.setMode(navigator::navigationSessionActive() ? navigator::navigationRefreshMode()
+                                                             : navigator::WalkingRefreshMode::Economical);
   const auto automaticRefresh = refreshPolicy.decide(millis(), automaticFix, forced, false);
   if (automaticRefresh != navigator::NavigationRefresh::None && !routes.transferring())
     showRoute(false, automaticRefresh);

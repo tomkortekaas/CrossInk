@@ -2,6 +2,12 @@
 #include <cstddef>
 #include <cstdint>
 namespace navigator {
+// Routine redraw cadence of a live walking session, carried in byte 10 of
+// LIVE_START v2: 0 balanced, 1 fast, 2 economical. A legacy LIVE_START v1
+// (10 bytes) always means Economical. Modes fail closed: the session reports
+// Economical unless a valid v2 START named another mode, and every exit path
+// (disconnect, stop, expiry) resets the mode to Economical.
+enum class WalkingRefreshMode : uint8_t { Balanced = 0, Fast = 1, Economical = 2 };
 enum class LiveNavigationCode : uint8_t { Ready = 0x26, FixAccepted = 0x27, Stopped = 0x28, Invalid = 0x29 };
 struct LiveNavigationStatus {
   LiveNavigationCode code = LiveNavigationCode::Invalid;
@@ -24,6 +30,7 @@ class LiveNavigationSession {
   // Returns a force-refresh request once for each newly accepted FIX carrying
   // flags bit 1. Replayed FIX frames never re-arm it.
   bool takeForceRefresh();
+  WalkingRefreshMode refreshMode() const { return mode_; }
   bool active() const { return active_; }
   void disconnect();
   void expire(uint32_t now);
@@ -33,6 +40,7 @@ class LiveNavigationSession {
   uint32_t routeId_ = 0, sessionId_ = 0, lastStoppedId_ = 0, lastActivity_ = 0, receivedAt_ = 0;
   uint8_t lastFrame_[20]{};
   bool active_ = false, hasFix_ = false, forceRefreshPending_ = false;
+  WalkingRefreshMode mode_ = WalkingRefreshMode::Economical;
 };
 static_assert(sizeof(LiveNavigationSession) <= 64, "Live state must stay bounded");
 }  // namespace navigator

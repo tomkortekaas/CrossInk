@@ -43,4 +43,34 @@ int main() {
   forced.rendered(5000, &moved, NavigationRefresh::Fast);
   assert(forced.decide(5100, &near, false, false) == NavigationRefresh::None);   // still throttled
   assert(forced.decide(5100, &near, true, false) == NavigationRefresh::Fast);    // forced needs no movement
+  // Task 6 - WalkingRefreshMode cadences are exact: Fast 10000 ms, Balanced
+  // 20000 ms, Economical 30000 ms. In every mode the first fix stays
+  // immediate, an ordinary refresh is suppressed one millisecond before the
+  // boundary and allowed exactly at it (after meaningful movement), and an
+  // impossible enum value fails closed to the Economical interval.
+  const auto modeBoundary = [](WalkingRefreshMode mode, uint32_t interval) {
+    NavigationRefreshPolicy policy;
+    policy.setActiveView(true);
+    policy.setMode(mode);
+    LivePosition near{523700000, 49000000, 5, false};
+    assert(policy.decide(1000, &near, false, false) == NavigationRefresh::Full);  // first fix is immediate
+    policy.rendered(1000, &near, NavigationRefresh::Full);
+    LivePosition moved = near;
+    moved.latitudeE7 += 20000;
+    assert(policy.decide(1000 + interval - 1, &moved, false, false) == NavigationRefresh::None);
+    assert(policy.decide(1000 + interval, &moved, false, false) == NavigationRefresh::Fast);
+  };
+  modeBoundary(WalkingRefreshMode::Fast, 10000);
+  modeBoundary(WalkingRefreshMode::Balanced, 20000);
+  modeBoundary(WalkingRefreshMode::Economical, 30000);
+  NavigationRefreshPolicy unknown;
+  unknown.setActiveView(true);
+  unknown.setMode(static_cast<WalkingRefreshMode>(255));
+  LivePosition unknownNear{523700000, 49000000, 5, false};
+  assert(unknown.decide(1000, &unknownNear, false, false) == NavigationRefresh::Full);
+  unknown.rendered(1000, &unknownNear, NavigationRefresh::Full);
+  LivePosition unknownMoved = unknownNear;
+  unknownMoved.latitudeE7 += 20000;
+  assert(unknown.decide(1000 + 29999, &unknownMoved, false, false) == NavigationRefresh::None);
+  assert(unknown.decide(1000 + 30000, &unknownMoved, false, false) == NavigationRefresh::Fast);
 }

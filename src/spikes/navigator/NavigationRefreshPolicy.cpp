@@ -2,14 +2,23 @@
 
 #include "map/RouteViewport.h"
 namespace navigator {
+uint32_t NavigationRefreshPolicy::routineIntervalMs() const {
+  switch (mode_) {
+    case WalkingRefreshMode::Fast: return 10000;
+    case WalkingRefreshMode::Balanced: return 20000;
+    case WalkingRefreshMode::Economical: return 30000;
+  }
+  return 30000;  // impossible enum values fail closed to the Economical cadence
+}
 NavigationRefresh NavigationRefreshPolicy::decide(uint32_t now, const LivePosition* p, bool manual,
                                                   bool viewportChanged) const {
   if (!manual && !activeView_) return NavigationRefresh::None;
   if (!hasRendered_ || viewportChanged || (p != nullptr) != hadPosition_) return NavigationRefresh::Full;
   if (!manual && p && hadPosition_ && p->offRoute != last_.offRoute) return NavigationRefresh::Full;
   // E-ink navigation is a glanceable snapshot. Limit routine movement updates
-  // to once per 30 seconds; first-fix and off-route transitions above remain immediate.
-  if (!manual && uint32_t(now - renderedAt_) < 30000) return NavigationRefresh::None;
+  // to once per the selected walking mode's interval; first-fix and off-route
+  // transitions above remain immediate.
+  if (!manual && uint32_t(now - renderedAt_) < routineIntervalMs()) return NavigationRefresh::None;
   if (!manual) {
     if (!p) return NavigationRefresh::None;
     const auto view = RouteViewport::centered({last_.latitudeE7, last_.longitudeE7}, {0, 0, 1000, 1000}, 1000, 0);

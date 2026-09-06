@@ -22,6 +22,9 @@ void LiveNavigationSession::disconnect() {
   active_ = false;
   hasFix_ = false;
   forceRefreshPending_ = false;
+  // Fail closed to the legacy cadence: no mode may outlive the session that
+  // negotiated it, so the next START always begins from Economical.
+  mode_ = WalkingRefreshMode::Economical;
 }
 void LiveNavigationSession::expire(uint32_t now) {
   if (active_ && uint32_t(now - lastActivity_) >= 90000) disconnect();
@@ -51,7 +54,20 @@ LiveNavigationStatus LiveNavigationSession::receive(const uint8_t* b, size_t n, 
   if (!b || !n || !id) return invalid;
   expire(now);
   if (b[0] == 8) {
-    if (n != 10 || b[1] != 1 || !route || u32(b + 2) != route || busy) return invalid;
+    // LIVE_START accepts exactly legacy v1 (version 1, 10 bytes) as an
+    // Economical session, or v2 (version 2, 11 bytes) whose byte 10 is a
+    // known refresh mode. Validate the whole frame before touching any state
+    // so a rejected START never partially activates or changes a session.
+    WalkingRefreshMode mode = WalkingRefreshMode::Economical;
+    if (n == 10) {
+      if (b[1] != 1) return invalid;
+    } else if (n == 11) {
+      if (b[1] != 2 || b[10] > static_cast<uint8_t>(WalkingRefreshMode::Economical)) return invalid;
+      mode = static_cast<WalkingRefreshMode>(b[10]);
+    } else {
+      return invalid;
+    }
+    if (!route || u32(b + 2) != route || busy) return invalid;
     if (active_) {
       if (id == sessionId_ && route == routeId_) return {LiveNavigationCode::Ready, id, 0};
       return invalid;
@@ -62,6 +78,7 @@ LiveNavigationStatus LiveNavigationSession::receive(const uint8_t* b, size_t n, 
     routeId_ = route;
     active_ = true;
     hasFix_ = false;
+    mode_ = mode;  // commit the negotiated mode atomically with activation
     lastActivity_ = now;
     return {LiveNavigationCode::Ready, id, 0};
   }
