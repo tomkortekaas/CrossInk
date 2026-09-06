@@ -845,4 +845,261 @@ TEST(NavScreenRendererTest, RemainingMinutesAreProportionalWithZeroAndOverflowBo
   EXPECT_EQ(NavScreenRenderer::remainingMinutes(30'000, 0xFFFFFFFFu, 0xFFFFFFFFu), 30'000U);
 }
 
+// ---------------------------------------------------------------------------
+// Task 8: fixed maneuver instruction band (NavManeuverPresentation and
+// drawManeuverBand).
+//
+// drawManeuverBand paints a caller-built presentation into the fixed band
+// rectangle that drawOverview reserves above the map. The painter must:
+//   * draw the arrow symbol for every maneuver kind plus the rounded distance
+//     and action label, with an optional bounded street name;
+//   * confine every stroke to the reserved band rectangle on the X3 panel and
+//     on small panels, for every grayscale plane (Base/LSB/MSB), without ever
+//     writing guard bytes or row padding;
+//   * be deterministic and plane-independent: identical input produces the
+//     same layout in all three planes, so NavigatorMain can repaint the band
+//     once per plane with the same content.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Mirrors NavScreenRenderer's fixed band geometry (the constants live in
+// NavScreenRenderer.h and are shared by drawOverview's reserve step and
+// drawManeuverBand's content layout).
+struct BandGeom {
+  int LW;  // logical width  = physical height
+  int LH;  // logical height = physical width
+  int border;
+  int padR;
+  int xRight;
+
+  explicit BandGeom(int physW, int physH)
+      : LW(physH),
+        LH(physW),
+        border(clampInt(LW / 300 + 1, 1, 4)),
+        padR(std::max(4, LW / 60)),
+        xRight(LW - border - padR) {}
+
+  int bandTop(bool gray) const {
+    return gray ? NavScreenRenderer::kOverviewHeaderGrayPx : NavScreenRenderer::kOverviewHeaderPlainPx;
+  }
+
+  int bandH() const { return LH * NavScreenRenderer::kManeuverBandHeightPercent / 100; }
+
+  int bandBottom(bool gray) const { return bandTop(gray) + bandH(); }
+
+  // Horizontal icon box derived exactly like the renderer's makeIconBox with
+  // the band as the icon container (bandTop, bandH).
+  struct Icon {
+    int L;
+    int R;
+    int cx;
+    int T;
+    int B;
+    int cornerY;
+    int arrowThick;
+    int headHalf;
+    int iconH;
+  };
+
+  Icon icon(bool gray) const {
+    const int top = bandTop(gray);
+    const int h = bandH();
+    const int boxW = h * 70 / 100;
+    Icon box;
+    box.iconH = h * 72 / 100;
+    box.L = border + h / 10;
+    box.R = box.L + boxW;
+    box.cx = box.L + boxW / 2;
+    box.T = top + (h - box.iconH) / 2;
+    box.B = box.T + box.iconH;
+    box.arrowThick = std::max(2, h / 12);
+    box.headHalf = std::max(6, box.arrowThick * 2) / 2;
+    box.cornerY = box.T + box.iconH * 30 / 100;
+    return box;
+  }
+};
+
+// Fills the framebuffer (between the guard bytes) with the background a
+// drawOverview pass would leave before the band is painted: white in the Base
+// plane, black in the LSB/MSB overlay planes.
+void fillPlaneBackground(Frame* frame, navigator::NavGrayPlane plane) {
+  const size_t wb = rowBytes(frame->width);
+  std::memset(frame->pixels(), plane == navigator::NavGrayPlane::Base ? 0xFF : 0x00,
+              wb * static_cast<size_t>(frame->height));
+}
+
+// Every pixel outside the reserved band rectangle must be untouched by the
+// painter: white in the Base plane, black in the two overlay planes.
+void expectBandConfined(const Frame& frame, bool gray, navigator::NavGrayPlane plane, const char* label) {
+  SCOPED_TRACE(label);
+  const BandGeom g(frame.width, frame.height);
+  const int top = g.bandTop(gray);
+  const int bottom = g.bandBottom(gray);
+  for (int ly = 0; ly < frame.width; ++ly) {
+    for (int lx = 0; lx < frame.height; ++lx) {
+      if (lx >= g.border && lx < g.LW - g.border && ly >= top && ly < bottom) {
+        continue;
+      }
+      const bool black = navtest::logicalPixelIsBlack(frame, lx, ly);
+      if (plane == navigator::NavGrayPlane::Base) {
+        EXPECT_FALSE(black) << "band ink leaked outside the band rect at (" << lx << "," << ly << ")";
+      } else {
+        EXPECT_TRUE(black) << "overlay band ink leaked outside the band rect at (" << lx << "," << ly << ")";
+      }
+    }
+  }
+}
+
+// Ink count inside the reserved band rectangle, using the plane's polarity:
+// the Base plane marks ink black (0) over a white background; the LSB/MSB
+// overlay planes mark ink white (1) over a black background.
+int countBandInk(const Frame& frame, bool gray, navigator::NavGrayPlane plane) {
+  const BandGeom g(frame.width, frame.height);
+  const int top = g.bandTop(gray);
+  const int bottom = g.bandBottom(gray);
+  int ink = 0;
+  for (int ly = top; ly < bottom && ly < frame.width; ++ly) {
+    for (int lx = g.border; lx < g.LW - g.border && lx < frame.height; ++lx) {
+      const bool black = navtest::logicalPixelIsBlack(frame, lx, ly);
+      if (plane == navigator::NavGrayPlane::Base ? black : !black) {
+        ++ink;
+      }
+    }
+  }
+  return ink;
+}
+
+}  // namespace
+
+TEST(NavScreenRendererTest, ManeuverBandConfinesEverySymbolToTheBandInAllThreePlanes) {
+  const Maneuver all[] = {Maneuver::Straight,    Maneuver::Left,  Maneuver::Right, Maneuver::SlightLeft,
+                          Maneuver::SlightRight, Maneuver::UTurn, Maneuver::Arrive};
+  const navigator::NavGrayPlane planes[] = {navigator::NavGrayPlane::Base, navigator::NavGrayPlane::Lsb,
+                                            navigator::NavGrayPlane::Msb};
+  for (const bool gray : {false, true}) {
+    for (const navigator::NavGrayPlane plane : planes) {
+      for (const Maneuver m : all) {
+        SCOPED_TRACE("gray=" + std::string(gray ? "on" : "off") + " plane=" + std::to_string(static_cast<int>(plane)) +
+                     " maneuver=" + std::to_string(static_cast<int>(m)));
+        navigator::NavManeuverPresentation presentation;
+        presentation.maneuver = m;
+        presentation.distanceMeters = 180;
+        presentation.action = "LINKS";
+        presentation.street = "DUINWEG";
+
+        Frame frame(792, 528, kSentinel);
+        fillPlaneBackground(&frame, plane);
+        NavScreenRenderer::drawManeuverBand(frame.pixels(), frame.width, frame.height, presentation, plane, gray);
+
+        expectGuardsUntouched(frame);
+        expectBandConfined(frame, gray, plane, "792x528");
+        EXPECT_GT(countBandInk(frame, gray, plane), 400) << "band content missing";
+      }
+    }
+  }
+}
+
+TEST(NavScreenRendererTest, ManeuverBandIconAndTextBothPresentOnX3) {
+  const BandGeom g(792, 528);
+  navigator::NavManeuverPresentation presentation;
+  presentation.maneuver = Maneuver::Left;
+  presentation.distanceMeters = 180;
+  presentation.action = "LINKS";
+  presentation.street = "DUINWEG";
+
+  Frame frame(792, 528, kSentinel);
+  fillPlaneBackground(&frame, navigator::NavGrayPlane::Base);
+  NavScreenRenderer::drawManeuverBand(frame.pixels(), frame.width, frame.height, presentation,
+                                      navigator::NavGrayPlane::Base, false);
+
+  // The arrow icon is on the left: a Left turn keeps a black apex at the icon
+  // box's left edge on the corner row.
+  const BandGeom::Icon icon = g.icon(false);
+  expectLogicalBlack(frame, icon.L, icon.cornerY, "band left-turn head apex");
+
+  // The right text column (distance + action) is drawn right of the icon.
+  const int textLx0 = icon.R + 2;
+  const int ly0 = g.bandTop(false) + 4;
+  const int ly1 = g.bandBottom(false) - 4;
+  EXPECT_GT(countLogicalBlack(frame, textLx0, ly0, g.xRight, ly1), 200) << "band distance/action text missing";
+
+  // Text never runs past the right border.
+  int minLx = 0;
+  int maxLx = 0;
+  EXPECT_TRUE(logicalSpan(frame, ly0, ly1, textLx0, g.LW, &minLx, &maxLx)) << "no text strokes in band";
+  EXPECT_LT(maxLx, g.LW - g.border) << "band text crossed the right border";
+}
+
+TEST(NavScreenRendererTest, ManeuverBandRespondsToDistanceAndActionChanges) {
+  const BandGeom g(792, 528);
+  auto paint = [&](uint16_t meters, const char* action) {
+    navigator::NavManeuverPresentation presentation;
+    presentation.maneuver = Maneuver::Left;
+    presentation.distanceMeters = meters;
+    presentation.action = action;
+    Frame frame(792, 528, kSentinel);
+    fillPlaneBackground(&frame, navigator::NavGrayPlane::Base);
+    NavScreenRenderer::drawManeuverBand(frame.pixels(), frame.width, frame.height, presentation,
+                                        navigator::NavGrayPlane::Base, false);
+    return frame;
+  };
+
+  const int ly0 = g.bandTop(false) + 4;
+  const int ly1 = g.bandBottom(false) - 4;
+  const int ink180 = countLogicalBlack(paint(180, "LINKS"), 0, ly0, g.LW, ly1);
+  const int ink1200 = countLogicalBlack(paint(1200, "LINKS"), 0, ly0, g.LW, ly1);
+  const int ink180Right = countLogicalBlack(paint(180, "RECHTS"), 0, ly0, g.LW, ly1);
+
+  EXPECT_GT(ink180, 0);
+  EXPECT_NE(ink1200, ink180) << "changed distance must change the band text";
+  EXPECT_NE(ink180Right, ink180) << "changed action label must change the band text";
+}
+
+TEST(NavScreenRendererTest, ManeuverBandPlanesAreDeterministicForTheSameContent) {
+  navigator::NavManeuverPresentation presentation;
+  presentation.maneuver = Maneuver::UTurn;
+  presentation.distanceMeters = 950;
+  presentation.action = "OMKEREN";
+
+  // The three planes use the same layout; pixels are simply inverted (the
+  // overlay planes write white over the black mask background). Re-running
+  // the painter on identical input must be byte-reproducible in each plane.
+  for (const bool gray : {false, true}) {
+    for (const navigator::NavGrayPlane plane : {navigator::NavGrayPlane::Base, navigator::NavGrayPlane::Lsb,
+                                                navigator::NavGrayPlane::Msb}) {
+      Frame first(792, 528, kSentinel);
+      Frame second(792, 528, kSentinel);
+      fillPlaneBackground(&first, plane);
+      fillPlaneBackground(&second, plane);
+      NavScreenRenderer::drawManeuverBand(first.pixels(), first.width, first.height, presentation, plane, gray);
+      NavScreenRenderer::drawManeuverBand(second.pixels(), second.width, second.height, presentation, plane, gray);
+      EXPECT_EQ(std::memcmp(first.pixels(), second.pixels(), rowBytes(792) * 528), 0)
+          << "band painting is not deterministic in plane " << static_cast<int>(plane);
+    }
+  }
+}
+
+TEST(NavScreenRendererTest, ManeuverBandExtremeContentStaysBoundedOnSmallAndX3Panels) {
+  navigator::NavManeuverPresentation presentation;
+  presentation.maneuver = Maneuver::Right;
+  presentation.distanceMeters = UINT16_MAX;
+  presentation.action = "LICHT RECHTS NAAR DE ROTONDE";
+  presentation.street = "ZUIDELIJKE RINGWEG DWARS DOOR DE POLDER 1234567890";
+
+  const int sizes[][2] = {{792, 528}, {360, 200}, {240, 160}, {200, 160}, {160, 120}};
+  for (const bool gray : {false, true}) {
+    for (const auto& size : sizes) {
+      for (const navigator::NavGrayPlane plane :
+           {navigator::NavGrayPlane::Base, navigator::NavGrayPlane::Lsb, navigator::NavGrayPlane::Msb}) {
+        Frame frame(size[0], size[1], kSentinel);
+        fillPlaneBackground(&frame, plane);
+        NavScreenRenderer::drawManeuverBand(frame.pixels(), frame.width, frame.height, presentation, plane, gray);
+        expectGuardsUntouched(frame);
+        expectBandConfined(frame, gray, plane, "extreme content");
+      }
+    }
+  }
+}
+
 }  // namespace

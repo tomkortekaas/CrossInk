@@ -44,6 +44,7 @@
 #include "NavSplash.h"
 #include "NavState.h"
 #include "NavTestFrame.h"
+#include "map/GrayMap.h"
 #include "map/RouteMapRenderer.h"
 #include "map/RouteViewport.h"
 #include "route/RoutePackageV1.h"
@@ -128,7 +129,14 @@ int64_t quantizeE5(int32_t e7) {
 // Encodes a valid Route Package v1 from E7 points and per-segment starts
 // (segment 0 starts at the header origin; later segments restart with an
 // absolute E7 anchor; interior points are signed Int16 E5 deltas).
-Bytes encodeRoute(const std::vector<GeoPoint>& points, const std::vector<uint16_t>& segmentStarts) {
+struct ManeuverSpec {
+  uint8_t type = 0;  // wire kind byte 0..6, mapping 1:1 to navigator::Maneuver
+  uint16_t pointIndex = 0;
+  uint32_t distanceFromStartMeters = 0;
+};
+
+Bytes encodeRoute(const std::vector<GeoPoint>& points, const std::vector<uint16_t>& segmentStarts,
+                  const std::vector<ManeuverSpec>& maneuvers = {}) {
   Bytes payload;
   for (uint16_t start : segmentStarts) {
     appendU16(payload, start);
@@ -160,6 +168,15 @@ Bytes encodeRoute(const std::vector<GeoPoint>& points, const std::vector<uint16_
       appendU16(payload, static_cast<uint16_t>(static_cast<int16_t>(lonDelta)));
     }
   }
+  // Maneuver records follow the geometry: point index u16, type u8, name byte
+  // count u8 (empty in this milestone), distance-from-start u32, then the
+  // (empty) name bytes.
+  for (const ManeuverSpec& maneuver : maneuvers) {
+    appendU16(payload, maneuver.pointIndex);
+    payload.push_back(maneuver.type);
+    payload.push_back(0);
+    appendU32(payload, maneuver.distanceFromStartMeters);
+  }
 
   const uint32_t total = 38U + static_cast<uint32_t>(payload.size()) + 4U;
   Bytes bytes(total, 0);
@@ -173,7 +190,7 @@ Bytes encodeRoute(const std::vector<GeoPoint>& points, const std::vector<uint16_
   putU32(bytes, 8, total);
   putU32(bytes, 12, 0x05060708U);
   putU16(bytes, 16, static_cast<uint16_t>(points.size()));
-  putU16(bytes, 18, 0);
+  putU16(bytes, 18, static_cast<uint16_t>(maneuvers.size()));
   putI32(bytes, 20, points.front().latitudeE7);
   putI32(bytes, 24, points.front().longitudeE7);
   putU32(bytes, 28, 0);
@@ -866,6 +883,319 @@ TEST(NavigatorRouteScreenTest, MapLettersHaveReadableStrokes) {
     for (int row = 0; row < 7; ++row)
       for (int col = 0; col < 5; ++col)
         EXPECT_EQ(logicalPixelIsBlack(frame, 254 + 4 * col, 264 + 4 * row), (expected[letter][row] & (1 << col)) != 0);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Task 8: fixed maneuver instruction band on the production overview.
+//
+// drawOverview must reserve a fixed top band above the map when it is handed
+// a non-null maneuver presentation and the validated route declares maneuvers,
+// and must hand back the RouteProximity it already computed while drawing.
+// NavigatorMain then updates its RouteManeuverSelector from that proximity and
+// paints the band into the reserved area with drawManeuverBand. These tests
+// drive that contract with real encoded routes and (for the four-gray planes)
+// a synthetic all-white X3GM tile set.
+// ---------------------------------------------------------------------------
+
+// All-empty X3GM v1 grid (white tiles, no labels): every cell entry is zero,
+// so the file is just the 48-byte header plus the 12-byte cell table.
+Bytes encodeGrayMap(int32_t southE7, int32_t westE7, uint16_t rows, uint16_t cols) {
+  const uint32_t cells = uint32_t(rows) * uint32_t(cols);
+  const uint32_t data = 48 + cells * 12;
+  Bytes bytes(data, 0);
+  bytes[0] = 'X';
+  bytes[1] = '3';
+  bytes[2] = 'G';
+  bytes[3] = 'M';
+  putU16(bytes, 4, 1);   // version
+  putU16(bytes, 6, 48);  // header size
+  putU32(bytes, 8, data);
+  putI32(bytes, 12, southE7);
+  putI32(bytes, 16, westE7);
+  putU32(bytes, 20, 100000);  // cell resolution (0.01 degree)
+  putU16(bytes, 24, rows);
+  putU16(bytes, 26, cols);
+  putU16(bytes, 28, 512);
+  putU16(bytes, 30, 832);
+  putU32(bytes, 32, 48);  // label header offset (this encoder has none)
+  putU32(bytes, 36, data);
+  const Bytes entries(bytes.begin() + 48, bytes.end());
+  putU32(bytes, 40, crc32Of(entries));
+  const Bytes head(bytes.begin(), bytes.begin() + 44);
+  putU32(bytes, 44, crc32Of(head));
+  return bytes;
+}
+
+// Route-package sources and regional map sources are deliberately independent
+// interfaces (the regional maps may be much larger). The gray overview tests
+// need an in-memory WalkMapByteSource over the synthetic X3GM fixture.
+class VectorWalkMapByteSource : public navigator::WalkMapByteSource {
+ public:
+  explicit VectorWalkMapByteSource(Bytes bytes) : bytes_(std::move(bytes)) {}
+
+  uint32_t size() const override { return static_cast<uint32_t>(bytes_.size()); }
+
+  uint32_t read(uint32_t offset, uint8_t* destination, uint32_t length) override {
+    if (offset >= bytes_.size() || length == 0) {
+      return 0;
+    }
+    const uint32_t n = std::min(length, static_cast<uint32_t>(bytes_.size()) - offset);
+    std::memcpy(destination, bytes_.data() + offset, n);
+    return n;
+  }
+
+ private:
+  Bytes bytes_;
+};
+
+// A local, maneuver-carrying route near Amsterdam at walking scale. The three
+// wire maneuvers (left at 200 m, right at 480 m, arrival near the end) sit at
+// plausible distances on the segment; names are empty this milestone.
+struct TurnRoute {
+  std::vector<GeoPoint> points;
+  std::vector<uint16_t> segmentStarts;
+  Bytes bytes;
+
+  static TurnRoute make(uint32_t totalMeters) {
+    TurnRoute route;
+    route.points = {
+        GeoPoint{523'676'000, 49'041'000}, GeoPoint{523'696'000, 49'061'000}, GeoPoint{523'716'000, 49'081'000},
+        GeoPoint{523'736'000, 49'101'000}, GeoPoint{523'756'000, 49'121'000}, GeoPoint{523'776'000, 49'141'000},
+    };
+    route.segmentStarts = {0};
+    const std::vector<ManeuverSpec> maneuvers = {
+        {1, 1, 200},   // left
+        {2, 3, 480},   // right
+        {6, 5, 1180},  // arrival at the end
+    };
+    route.bytes = encodeRoute(route.points, route.segmentStarts, maneuvers);
+    putU32(route.bytes, 28, totalMeters);
+    putU16(route.bytes, 32, 45);
+    route.bytes.resize(route.bytes.size() - 4);
+    const uint32_t crc = crc32Of(route.bytes);
+    appendU32(route.bytes, crc);
+    return route;
+  }
+};
+
+int overviewHeaderTop(bool gray) {
+  return gray ? NavScreenRenderer::kOverviewHeaderGrayPx : NavScreenRenderer::kOverviewHeaderPlainPx;
+}
+
+int overviewBandHeight(int physW) {
+  return physW * NavScreenRenderer::kManeuverBandHeightPercent / 100;
+}
+
+// Logical rows [ly0, logical height) must be byte-identical between two
+// frames. The overview chrome below the map (attribution, separators, metric
+// columns and the status line) is fixed, so a reserved band must never change
+// a single pixel of it.
+void expectChromeIdenticalBelow(const Frame& withBand, const Frame& mapOnly, int ly0) {
+  ASSERT_EQ(withBand.width, mapOnly.width);
+  ASSERT_EQ(withBand.height, mapOnly.height);
+  for (int ly = ly0; ly < mapOnly.width; ++ly) {
+    for (int lx = 0; lx < mapOnly.height; ++lx) {
+      EXPECT_EQ(logicalPixelIsBlack(withBand, lx, ly), logicalPixelIsBlack(mapOnly, lx, ly))
+          << "chrome changed at logical (" << lx << "," << ly << ")";
+    }
+  }
+}
+
+TEST(NavigatorRouteScreenTest, OverviewNullManeuverPresentationKeepsMapOnlyBytes) {
+  const auto route = TurnRoute::make(5000);
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  ASSERT_EQ(index.maneuverCount, 3U);
+  VectorRouteByteSource source(route.bytes);
+
+  // The defaulted call and an explicit null presentation must be identical on
+  // a route that declares maneuvers: the null path never reserves the band.
+  Frame defaults(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(defaults.pixels(), 792, 528, source, index));
+  Frame explicitNull(792, 528, kSentinel);
+  navigator::NavManeuverPresentation presentation;
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(explicitNull.pixels(), 792, 528, source, index, nullptr, nullptr, nullptr,
+                                              nullptr, nullptr, navigator::NavGrayPlane::Base, nullptr, nullptr,
+                                              nullptr));
+  EXPECT_EQ(std::memcmp(defaults.pixels(), explicitNull.pixels(), rowBytes(792) * 528), 0)
+      << "null presentation changed the map-only geometry";
+
+  // A route without maneuvers never reserves either, even when the caller
+  // passes a presentation: the map keeps its exact layout.
+  const auto noManeuvers = LocalRoute::make();
+  RouteIndex plainIndex;
+  ASSERT_EQ(decode(noManeuvers.bytes, plainIndex), DecodeStatus::Ok);
+  ASSERT_EQ(plainIndex.maneuverCount, 0U);
+  VectorRouteByteSource plainSource(noManeuvers.bytes);
+  Frame mapOnly(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(mapOnly.pixels(), 792, 528, plainSource, plainIndex));
+  Frame withPresentation(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(withPresentation.pixels(), 792, 528, plainSource, plainIndex, nullptr,
+                                              nullptr, nullptr, nullptr, nullptr, navigator::NavGrayPlane::Base,
+                                              nullptr, &presentation, nullptr));
+  EXPECT_EQ(std::memcmp(mapOnly.pixels(), withPresentation.pixels(), rowBytes(792) * 528), 0)
+      << "presentation on a maneuver-less route must keep the map-only layout";
+  expectGuardsUntouched(defaults);
+  expectGuardsUntouched(withPresentation);
+}
+
+TEST(NavigatorRouteScreenTest, OverviewWritesAlreadyComputedRouteProximity) {
+  const auto route = TurnRoute::make(5000);
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  // A fix standing on the route start projects onto the route: the proximity
+  // the overview computed internally (and now hands back) is valid, close and
+  // reports a bounded remaining distance.
+  CurrentPosition position;
+  position.point = route.points[0];
+  position.accuracyMeters = 5;
+  navigator::RouteProximity proximity;
+  Frame frame(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(frame.pixels(), 792, 528, source, index, nullptr, &position, "STATUS",
+                                              nullptr, nullptr, navigator::NavGrayPlane::Base, nullptr, nullptr,
+                                              &proximity));
+  ASSERT_TRUE(proximity.valid);
+  EXPECT_LE(proximity.distanceMeters, 40U) << "fix on the route must be within the trust guard";
+  EXPECT_GT(proximity.remainingDistanceMeters, 0U);
+  EXPECT_LE(proximity.remainingDistanceMeters, index.totalDistanceMeters);
+
+  // The proximity is the same value the footer metrics are derived from.
+  const navigator::NavFooterMetrics metrics = NavScreenRenderer::chooseFooterMetrics(&position, proximity, index);
+  EXPECT_EQ(metrics.mode, navigator::NavMetricMode::Remaining);
+  EXPECT_EQ(metrics.distanceMeters, std::min(proximity.remainingDistanceMeters, index.totalDistanceMeters));
+
+  // Without a live fix the geometry pass cannot produce a proximity.
+  navigator::RouteProximity noFixProximity;
+  Frame noFixFrame(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(noFixFrame.pixels(), 792, 528, source, index, nullptr, nullptr, nullptr,
+                                              nullptr, nullptr, navigator::NavGrayPlane::Base, nullptr, nullptr,
+                                              &noFixProximity));
+  EXPECT_FALSE(noFixProximity.valid);
+
+  // A failed draw leaves the caller's proximity untouched.
+  navigator::RouteProximity untouched;
+  untouched.valid = true;
+  untouched.distanceMeters = 777;
+  StallingSource stalling(route.bytes, 0);
+  Frame failedFrame(792, 528, kSentinel);
+  EXPECT_FALSE(NavScreenRenderer::drawOverview(failedFrame.pixels(), 792, 528, stalling, index, nullptr, &position,
+                                               nullptr, nullptr, nullptr, navigator::NavGrayPlane::Base, nullptr,
+                                               nullptr, &untouched));
+  EXPECT_TRUE(untouched.valid);
+  EXPECT_EQ(untouched.distanceMeters, 777U);
+}
+
+TEST(NavigatorRouteScreenTest, OverviewReservesFixedBandAboveMapWithoutTouchingFooter) {
+  const auto route = TurnRoute::make(5000);
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  CurrentPosition position;
+  position.point = route.points[0];
+  position.accuracyMeters = 5;
+  navigator::NavManeuverPresentation presentation;
+  presentation.maneuver = navigator::Maneuver::Left;
+  presentation.distanceMeters = 200;
+  presentation.action = "LINKS";
+
+  Frame mapOnly(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(mapOnly.pixels(), 792, 528, source, index, nullptr, &position, "STATUS"));
+
+  navigator::RouteProximity proximity;
+  Frame withBand(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(withBand.pixels(), 792, 528, source, index, nullptr, &position, "STATUS",
+                                              nullptr, nullptr, navigator::NavGrayPlane::Base, nullptr, &presentation,
+                                              &proximity));
+  ASSERT_TRUE(proximity.valid);
+  NavScreenRenderer::drawManeuverBand(withBand.pixels(), 792, 528, presentation, navigator::NavGrayPlane::Base, false);
+  expectGuardsUntouched(withBand);
+
+  // The plain-vector overview chrome below its map (rows LH-100 and below)
+  // stays byte-identical: the band never touches attribution or status text.
+  const int chromeTop = 792 - 100;
+  expectChromeIdenticalBelow(withBand, mapOnly, chromeTop);
+
+  // The fixed band is reserved above the map: band ink lives in the reserved
+  // rows and real route ink still appears below the band and above the chrome.
+  const int bandTop = overviewHeaderTop(false);
+  const int bandH = overviewBandHeight(792);
+  EXPECT_GT(countLogicalBlack(withBand, 0, bandTop, 528, bandTop + bandH), 400) << "band content missing";
+  EXPECT_GT(countLogicalBlack(withBand, 16, bandTop + bandH + 4, 512, chromeTop), 100) << "route map missing below band";
+}
+
+TEST(NavigatorRouteScreenTest, GrayOverviewBandReservedAndConfinedInEveryPlane) {
+  const auto route = TurnRoute::make(5000);
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  // A synthetic all-white 6x6 X3GM grid around the local route lets the
+  // four-gray overview draw its Base/LSB/MSB passes without SD fixtures.
+  const Bytes grayBytes = encodeGrayMap(523'400'000, 48'800'000, 6, 6);
+  VectorWalkMapByteSource graySource(grayBytes);
+  navigator::GrayMap grayMap;
+  ASSERT_EQ(grayMap.open(graySource), navigator::WalkMapStatus::Ok);
+  navigator::GrayMapLayer grayLayer;
+  grayLayer.source = &graySource;
+  grayLayer.map = &grayMap;
+
+  CurrentPosition position;
+  position.point = route.points[0];
+  position.accuracyMeters = 5;
+  navigator::NavManeuverPresentation presentation;
+  presentation.maneuver = navigator::Maneuver::Right;
+  presentation.distanceMeters = 480;
+  presentation.action = "RECHTS";
+
+  const navigator::NavGrayPlane planes[] = {navigator::NavGrayPlane::Base, navigator::NavGrayPlane::Lsb,
+                                            navigator::NavGrayPlane::Msb};
+  const int bandTop = overviewHeaderTop(true);
+  const int bandH = overviewBandHeight(792);
+  const int chromeTop = 792 - 144;
+  for (const navigator::NavGrayPlane plane : planes) {
+    SCOPED_TRACE("plane=" + std::to_string(static_cast<int>(plane)));
+
+    Frame mapOnly(792, 528, kSentinel);
+    navigator::GrayMapLayer mapOnlyLayer = grayLayer;
+    EXPECT_TRUE(NavScreenRenderer::drawOverview(mapOnly.pixels(), 792, 528, source, index, nullptr, &position, "STATUS",
+                                                nullptr, &mapOnlyLayer, plane));
+    EXPECT_EQ(mapOnlyLayer.status, navigator::WalkMapStatus::Ok);
+
+    navigator::RouteProximity proximity;
+    Frame withBand(792, 528, kSentinel);
+    navigator::GrayMapLayer withBandLayer = grayLayer;
+    EXPECT_TRUE(NavScreenRenderer::drawOverview(withBand.pixels(), 792, 528, source, index, nullptr, &position, "STATUS",
+                                                nullptr, &withBandLayer, plane, nullptr, &presentation, &proximity));
+    EXPECT_EQ(withBandLayer.status, navigator::WalkMapStatus::Ok);
+    ASSERT_TRUE(proximity.valid);
+    NavScreenRenderer::drawManeuverBand(withBand.pixels(), 792, 528, presentation, plane, true);
+    expectGuardsUntouched(withBand);
+
+    // The gray overview chrome below the map stays byte-identical.
+    expectChromeIdenticalBelow(withBand, mapOnly, chromeTop);
+
+    // The reserved rows above the (shortened) map carry the band in every
+    // plane: black ink in Base, white mask ink in LSB/MSB.
+    int bandInk = 0;
+    int mapInk = 0;
+    for (int ly = bandTop; ly < bandTop + bandH; ++ly) {
+      for (int lx = 0; lx < 528; ++lx) {
+        const bool black = logicalPixelIsBlack(withBand, lx, ly);
+        bandInk += (plane == navigator::NavGrayPlane::Base ? black : !black) ? 1 : 0;
+      }
+    }
+    for (int ly = bandTop + bandH + 4; ly < chromeTop; ++ly) {
+      for (int lx = 0; lx < 528; ++lx) {
+        const bool black = logicalPixelIsBlack(withBand, lx, ly);
+        mapInk += (plane == navigator::NavGrayPlane::Base ? black : !black) ? 1 : 0;
+      }
+    }
+    EXPECT_GT(bandInk, 400) << "band content missing in plane " << static_cast<int>(plane);
+    EXPECT_GT(mapInk, 100) << "gray map missing below the band in plane " << static_cast<int>(plane);
   }
 }
 

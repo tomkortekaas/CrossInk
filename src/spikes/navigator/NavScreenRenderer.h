@@ -42,6 +42,26 @@ struct NavMapText {
   const char* arrivedStatus;      // footer status when the route end is reached
 };
 
+// Caller-built content of the fixed maneuver instruction band shown above the
+// four-gray overview map during a live walk. The caller (NavigatorMain) fills
+// it from its RouteManeuverSelector after drawOverview returns the already
+// computed RouteProximity, so the selector (never rendering code) owns which
+// maneuver is current. `action` and `street` are already-localized caller
+// strings: `action` is the translated turn label (tr(STR_*)) and `street` is
+// an optional bounded route/maneuver name whose absence never suppresses the
+// arrow, distance or action. The band painter truncates both further so they
+// can never collide with the maneuver symbol or leave the band.
+struct NavManeuverPresentation {
+  Maneuver maneuver = Maneuver::Straight;
+  uint16_t distanceMeters = 0;
+  const char* action = nullptr;
+  const char* street = nullptr;
+};
+
+// The presentation stays a plain value type so a band can live in static or
+// stack storage beside the selector; no heap, no strings, no SDK linkage.
+static_assert(sizeof(NavManeuverPresentation) <= 24, "maneuver presentation must stay small");
+
 // Which metric pair the gray footer shows for a fix.
 enum class NavMetricMode : uint8_t {
   Total = 0,  // whole-route distance and estimated duration
@@ -56,6 +76,15 @@ struct NavFooterMetrics {
 
 class NavScreenRenderer {
  public:
+  // Fixed instruction band geometry (logical portrait pixels), shared by
+  // drawOverview's reserve step and drawManeuverBand so both always agree.
+  // The band sits between the route-name header and the map: its top is the
+  // header height of the active overview mode and its height is a fixed
+  // fraction of the logical panel height.
+  static constexpr int kOverviewHeaderGrayPx = 64;    // header above the four-gray map
+  static constexpr int kOverviewHeaderPlainPx = 120;  // header above the plain vector map
+  static constexpr int kManeuverBandHeightPercent = 22;
+
   // A live fix may confirm arrival only while it is at most this accurate; a
   // coarser fix cannot tell "standing at the end" from "still one
   // accuracy-sized step before it".
@@ -91,11 +120,32 @@ class NavScreenRenderer {
   // Production route-foundation screens: no schematic map or simulated GPS.
   static void drawMessage(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx, const char* title,
                           const char* detail);
+  // Production four-gray (or plain vector) route overview. When `maneuver` is
+  // non-null and the validated route declares maneuvers, a fixed instruction
+  // band is reserved above the map before any map ink is drawn: the map top
+  // moves down by the band height and the map rectangle shrinks by the same
+  // amount, so the band can never overlap map or footer content. The caller
+  // then updates its maneuver selector from the `outProximity` this pass
+  // already computed (no second geometry scan) and paints the band content
+  // into the reserved area with drawManeuverBand. A null/empty `maneuver`, a
+  // route without maneuvers, and every pre-existing call site keep the
+  // current map-only layout byte-for-byte.
   static bool drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx, RouteByteSource& source,
                            const RouteIndex& index, WalkMapLayer* background = nullptr,
                            const CurrentPosition* position = nullptr, const char* statusText = nullptr,
                            const char* routeDistanceTitle = nullptr, GrayMapLayer* gray = nullptr,
-                           NavGrayPlane plane = NavGrayPlane::Base, const NavMapText* mapText = nullptr);
+                           NavGrayPlane plane = NavGrayPlane::Base, const NavMapText* mapText = nullptr,
+                           const NavManeuverPresentation* maneuver = nullptr, RouteProximity* outProximity = nullptr);
+  // Paints a maneuver presentation into the fixed instruction band that a
+  // preceding drawOverview(maneuver != nullptr) reserved above the map. Must
+  // be called with the same widthPx/heightPx/plane and the same `gray` mode
+  // as that drawOverview; NavigatorMain calls it once per plane after updating
+  // its selector, so Base/LSB/MSB stay deterministic and identical. Every
+  // stroke is laid out strictly inside the reserved band rectangle, so the
+  // band never overlaps the map or footer on any supported panel size.
+  static void drawManeuverBand(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx,
+                               const NavManeuverPresentation& presentation,
+                               NavGrayPlane plane = NavGrayPlane::Base, bool gray = true);
   // A supplied position must be fresh and validated by the caller. It centers
   // the map at a 400-meter walking span. statusText is already localized.
   // Legacy screen. draw() is byte-identical to the historical static NavSplash

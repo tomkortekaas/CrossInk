@@ -136,6 +136,14 @@ Layout makeLayout(int physW, int physH) {
   return g;
 }
 
+// Height of the fixed instruction band above the overview map, in logical
+// pixels. Both drawOverview's reserve step and drawManeuverBand's content
+// layout use this exact function, so the painted ink always lands inside the
+// rectangle that was reserved.
+int maneuverBandHeight(const Layout& g) {
+  return g.LH * NavScreenRenderer::kManeuverBandHeightPercent / 100;
+}
+
 // ---------------------------------------------------------------------------
 // Minimal fixed bitmap glyphs (7 rows each, top to bottom). Bit c of each row
 // encodes column c from the left; all are ASCII-uppercase because the tiny
@@ -309,12 +317,12 @@ void fillRectLog(uint8_t* frameBuffer, const Layout& g, int x0, int y0, int w, i
     return;
   }
   fillRect(frameBuffer, g.physW, g.physH, y0, g.physH - 1 - (x0 + w - 1), h, w,
-           g.plane == NavGrayPlane::Base ? black : true);
+           g.plane == NavGrayPlane::Base ? black : false);
 }
 
 // Logical disc: rotate the center and keep the radius.
 void fillDiscLog(uint8_t* frameBuffer, const Layout& g, int cx, int cy, int radius, bool black) {
-  fillDisc(frameBuffer, g.physW, g.physH, cy, g.physH - 1 - cx, radius, g.plane == NavGrayPlane::Base ? black : true);
+  fillDisc(frameBuffer, g.physW, g.physH, cy, g.physH - 1 - cx, radius, g.plane == NavGrayPlane::Base ? black : false);
 }
 
 // Filled triangle head with a vertical base at x = baseX spanning
@@ -470,98 +478,139 @@ const char* statusMessage(NavStatus status) {
 // Maneuver icons (logical space).
 // ---------------------------------------------------------------------------
 
+// Geometric metrics of one maneuver icon box. The legacy navigating band and
+// the fixed instruction band above the overview map both draw their arrows
+// with the same shapes; only the container's top and height differ, so the
+// box is derived explicitly instead of from the global Layout.
+struct IconBox {
+  int L = 0;  // box left (absolute logical x)
+  int R = 0;  // box right
+  int cx = 0;
+  int T = 0;  // icon top (absolute logical y)
+  int B = 0;  // icon bottom
+  int cornerY = 0;
+  int arrowThick = 2;
+  int headH = 6;
+  int headHalf = 3;
+  int iconH = 0;
+
+  int boxW() const { return R - L; }
+};
+
+IconBox makeIconBox(const Layout& g, int containerTop, int containerH) {
+  IconBox box;
+  box.iconH = containerH * 72 / 100;
+  const int boxW = containerH * 70 / 100;
+  box.L = g.border + containerH / 10;
+  box.R = box.L + boxW;
+  box.cx = box.L + boxW / 2;
+  box.T = containerTop + (containerH - box.iconH) / 2;
+  box.B = box.T + box.iconH;
+  box.arrowThick = containerH / 12 < 2 ? 2 : containerH / 12;
+  box.headH = 6 > box.arrowThick * 2 ? 6 : box.arrowThick * 2;
+  box.headHalf = box.headH / 2;
+  box.cornerY = box.T + box.iconH * 30 / 100;
+  return box;
+}
+
 // Rightmost painted logical x of a maneuver icon; the fitted text never draws
 // left of this edge so the street name cannot collide with the arrow.
-int maneuverIconRightEdge(const Layout& g, Maneuver maneuver) {
-  const int stemX = g.boxX0 + g.boxW * 60 / 100;
-  const int poleHalf = g.arrowThick / 5 < 2 ? 2 : g.arrowThick / 5;
+int maneuverIconRightEdge(const IconBox& box, Maneuver maneuver) {
+  const int stemX = box.L + box.boxW() * 60 / 100;
+  const int poleHalf = box.arrowThick / 5 < 2 ? 2 : box.arrowThick / 5;
   switch (maneuver) {
     case Maneuver::Straight:
     case Maneuver::SlightLeft:
-      return g.cx + g.arrowThick / 2;
+      return box.cx + box.arrowThick / 2;
     case Maneuver::Left:
-      return stemX + g.arrowThick / 2;
+      return stemX + box.arrowThick / 2;
     case Maneuver::Right:
-      return g.boxX1;
+      return box.R;
     case Maneuver::SlightRight:
-      return g.cx + g.boxW * 25 / 100;
+      return box.cx + box.boxW() * 25 / 100;
     case Maneuver::UTurn:
-      return g.cx + g.boxW * 20 / 100 + g.headHalf;
+      return box.cx + box.boxW() * 20 / 100 + box.headHalf;
     case Maneuver::Arrive:
-      return g.cx + poleHalf + 1 + g.boxW * 30 / 100;
+      return box.cx + poleHalf + 1 + box.boxW() * 30 / 100;
     case Maneuver::kCount:
       break;
   }
-  return g.boxX1;
+  return box.R;
 }
 
-void drawManeuverIcon(uint8_t* frameBuffer, const Layout& g, Maneuver maneuver) {
-  const int L = g.boxX0;
-  const int R = g.boxX1;
-  const int T = g.arrY0;
-  const int B = g.arrY1;
-  const int thick = g.arrowThick;
+void drawManeuverIconAt(uint8_t* frameBuffer, const Layout& g, const IconBox& box, Maneuver maneuver) {
+  const int L = box.L;
+  const int R = box.R;
+  const int T = box.T;
+  const int B = box.B;
+  const int thick = box.arrowThick;
   switch (maneuver) {
     case Maneuver::Straight: {
       // Up arrow in the center: triangle head over a vertical stem.
-      const int apexY = T + g.iconH * 12 / 100;
-      const int baseY = apexY + g.headH;
-      fillHeadVLog(frameBuffer, g, g.cx, apexY, baseY, g.headHalf, true);
-      fillRectLog(frameBuffer, g, g.cx - thick / 2, baseY, thick, B - baseY, true);
+      const int apexY = T + box.iconH * 12 / 100;
+      const int baseY = apexY + box.headH;
+      fillHeadVLog(frameBuffer, g, box.cx, apexY, baseY, box.headHalf, true);
+      fillRectLog(frameBuffer, g, box.cx - thick / 2, baseY, thick, B - baseY, true);
       break;
     }
     case Maneuver::Left: {
       // Legacy bold left turn: vertical shaft below a head pointing left.
-      const int stemX = L + g.boxW * 60 / 100;
+      const int stemX = L + box.boxW() * 60 / 100;
       const int shaftX = stemX - thick / 2;
-      fillRectLog(frameBuffer, g, shaftX, g.cornerY, thick, B - g.cornerY, true);
-      fillHeadLog(frameBuffer, g, L, g.cornerY, shaftX, g.headHalf, true);
+      fillRectLog(frameBuffer, g, shaftX, box.cornerY, thick, B - box.cornerY, true);
+      fillHeadLog(frameBuffer, g, L, box.cornerY, shaftX, box.headHalf, true);
       break;
     }
     case Maneuver::Right: {
       // Mirror of Left about the icon box's vertical center.
-      const int stemX = L + g.boxW * 60 / 100;
+      const int stemX = L + box.boxW() * 60 / 100;
       const int shaftX = stemX - thick / 2;
       const int shaftXr = L + R - (shaftX + thick);
-      fillRectLog(frameBuffer, g, shaftXr, g.cornerY, thick, B - g.cornerY, true);
-      fillHeadLog(frameBuffer, g, R, g.cornerY, L + R - shaftX, g.headHalf, true);
+      fillRectLog(frameBuffer, g, shaftXr, box.cornerY, thick, B - box.cornerY, true);
+      fillHeadLog(frameBuffer, g, R, box.cornerY, L + R - shaftX, box.headHalf, true);
       break;
     }
     case Maneuver::SlightLeft: {
       // Center stem with a shallower head that stops short of the box edge.
-      fillRectLog(frameBuffer, g, g.cx - thick / 2, g.cornerY, thick, B - g.cornerY, true);
-      fillHeadLog(frameBuffer, g, g.cx - g.boxW * 25 / 100, g.cornerY, g.cx, g.headHalf, true);
+      fillRectLog(frameBuffer, g, box.cx - thick / 2, box.cornerY, thick, B - box.cornerY, true);
+      fillHeadLog(frameBuffer, g, box.cx - box.boxW() * 25 / 100, box.cornerY, box.cx, box.headHalf, true);
       break;
     }
     case Maneuver::SlightRight: {
-      fillRectLog(frameBuffer, g, g.cx - thick / 2, g.cornerY, thick, B - g.cornerY, true);
-      fillHeadLog(frameBuffer, g, g.cx + g.boxW * 25 / 100, g.cornerY, g.cx, g.headHalf, true);
+      fillRectLog(frameBuffer, g, box.cx - thick / 2, box.cornerY, thick, B - box.cornerY, true);
+      fillHeadLog(frameBuffer, g, box.cx + box.boxW() * 25 / 100, box.cornerY, box.cx, box.headHalf, true);
       break;
     }
     case Maneuver::UTurn: {
       // Drive up the center stem, loop right over the top bar, come back down
       // with a downward head: a 180-degree turn-around.
-      const int topLoopY = T + g.iconH * 20 / 100;
-      const int exitX = g.cx + g.boxW * 20 / 100;
-      const int downApexY = T + g.iconH * 78 / 100;
-      const int downBaseY = downApexY - g.headH;
-      fillRectLog(frameBuffer, g, g.cx - thick / 2, topLoopY, thick, B - topLoopY, true);
-      fillRectLog(frameBuffer, g, g.cx, topLoopY, exitX - g.cx, thick, true);
+      const int topLoopY = T + box.iconH * 20 / 100;
+      const int exitX = box.cx + box.boxW() * 20 / 100;
+      const int downApexY = T + box.iconH * 78 / 100;
+      const int downBaseY = downApexY - box.headH;
+      fillRectLog(frameBuffer, g, box.cx - thick / 2, topLoopY, thick, B - topLoopY, true);
+      fillRectLog(frameBuffer, g, box.cx, topLoopY, exitX - box.cx, thick, true);
       fillRectLog(frameBuffer, g, exitX - thick / 2, topLoopY + thick, thick, downBaseY - (topLoopY + thick), true);
-      fillHeadVLog(frameBuffer, g, exitX, downApexY, downBaseY, g.headHalf, true);
+      fillHeadVLog(frameBuffer, g, exitX, downApexY, downBaseY, box.headHalf, true);
       break;
     }
     case Maneuver::Arrive: {
       // Destination flag: a pole with a small flag at the top.
-      const int poleHalf = g.arrowThick / 5 < 2 ? 2 : g.arrowThick / 5;
-      const int flagTopY = T + g.iconH * 18 / 100;
-      fillRectLog(frameBuffer, g, g.cx - poleHalf, flagTopY, 2 * poleHalf + 1, B - flagTopY, true);
-      fillRectLog(frameBuffer, g, g.cx + poleHalf + 1, flagTopY, g.boxW * 30 / 100, thick, true);
+      const int poleHalf = box.arrowThick / 5 < 2 ? 2 : box.arrowThick / 5;
+      const int flagTopY = T + box.iconH * 18 / 100;
+      fillRectLog(frameBuffer, g, box.cx - poleHalf, flagTopY, 2 * poleHalf + 1, B - flagTopY, true);
+      fillRectLog(frameBuffer, g, box.cx + poleHalf + 1, flagTopY, box.boxW() * 30 / 100, thick, true);
       break;
     }
     default:
       break;
   }
+}
+
+// Legacy navigating band icon: the whole legacy maneuver band is the icon's
+// container, exactly as the historical Layout-derived geometry was computed.
+void drawManeuverIcon(uint8_t* frameBuffer, const Layout& g, Maneuver maneuver) {
+  drawManeuverIconAt(frameBuffer, g, makeIconBox(g, g.border, g.maneuverH), maneuver);
 }
 
 // ---------------------------------------------------------------------------
@@ -579,7 +628,8 @@ void drawOuterBorder(uint8_t* frameBuffer, const Layout& g) {
 // maneuver icon on the left. Text is fitted so it never collides with the
 // icon strokes; street names are prefix-truncated at the icon edge.
 void drawNavigatingBand(uint8_t* frameBuffer, const Layout& g, const NavState& state) {
-  const int iconRight = maneuverIconRightEdge(g, state.maneuver);
+  const IconBox box = makeIconBox(g, g.border, g.maneuverH);
+  const int iconRight = maneuverIconRightEdge(box, state.maneuver);
   const int textLeftLimit = iconRight + 2;
   const int availPx = g.xRight - textLeftLimit;
 
@@ -940,6 +990,51 @@ class MapRouteCanvas final : public RouteCanvas {
   bool styled_;
 };
 
+// ---------------------------------------------------------------------------
+// Fixed instruction band (drawManeuverBand) content helpers. All rows are
+// right-aligned inside the reserved band and fitted to the width left of the
+// maneuver icon; a row that would not fit is skipped, never clipped mid-glyph,
+// so no stroke can leave the reserved band rectangle.
+// ---------------------------------------------------------------------------
+
+// Largest scale at or below `preferred` whose advance width fits `maxWidth`;
+// 0 when even scale 1 does not fit.
+int fitBitmapScale(int masterWidth, int preferred, int maxWidth) {
+  int scale = preferred;
+  while (scale > 1 && masterWidth * scale > maxWidth) {
+    --scale;
+  }
+  return masterWidth * scale <= maxWidth ? scale : 0;
+}
+
+// Returns the first (largest) ladder font whose run fits `maxWidth`. When even
+// the smallest font is too wide, the bounded copy `out` is prefix-truncated to
+// fit the smallest font, so an over-long caller string can never cross the
+// band's right edge. Always NUL-terminates `out` within `outCap`.
+const NavFont* fitNotoLadder(const NavFont* const* ladder, size_t ladderCount, const char* text, int maxWidth,
+                             char* out, size_t outCap) {
+  size_t len = 0;
+  while (len + 1 < outCap && text[len] != '\0') {
+    out[len] = text[len];
+    ++len;
+  }
+  out[len] = '\0';
+  for (size_t i = 0; i < ladderCount; ++i) {
+    if (normalTextWidth(*ladder[i], out) <= maxWidth) {
+      return ladder[i];
+    }
+  }
+  const NavFont& smallest = *ladder[ladderCount - 1];
+  while (len > 0 && normalTextWidth(smallest, out) > maxWidth) {
+    out[--len] = '\0';
+  }
+  return &smallest;
+}
+
+const NavFont* const kBandDistanceLadder[] = {&navFont34, &navFont26, &navFont22, &navFont18, &navFont14};
+const NavFont* const kBandActionLadder[] = {&navFont26, &navFont22, &navFont18, &navFont14};
+const NavFont* const kBandStreetLadder[] = {&navFont18, &navFont14};
+
 }  // namespace
 
 uint16_t NavScreenRenderer::remainingMinutes(uint16_t estimatedMinutes, uint32_t remainingMeters,
@@ -1006,7 +1101,8 @@ void NavScreenRenderer::drawMessage(uint8_t* frameBuffer, uint16_t widthPx, uint
 bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx, RouteByteSource& source,
                                      const RouteIndex& index, WalkMapLayer* background, const CurrentPosition* position,
                                      const char* statusText, const char* routeDistanceTitle, GrayMapLayer* gray,
-                                     NavGrayPlane plane, const NavMapText* mapText) {
+                                     NavGrayPlane plane, const NavMapText* mapText,
+                                     const NavManeuverPresentation* maneuver, RouteProximity* outProximity) {
   if (!frameBuffer || widthPx < 160 || heightPx < 120) return false;
   Layout g = makeLayout(widthPx, heightPx);
   g.plane = plane;
@@ -1028,7 +1124,17 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
     drawNormalText(frameBuffer, g, (g.LW - normalTextWidth(navFont26, name)) / 2, 24, name, navFont26, true);
   else
     drawText(frameBuffer, g, 20, 72, name, 3, true);
-  const int mapY = gray ? 64 : 120, mapHeight = g.LH - mapY - (gray ? 144 : 100);
+  // A non-null maneuver presentation on a route that declares maneuvers
+  // reserves the fixed instruction band: the map top moves below the band and
+  // the map rectangle loses exactly the band height, so the band can never
+  // overlay map or footer content. The caller paints the band after this pass
+  // returns the proximity it already computed. A null presentation, or a
+  // presentation on a route without maneuvers, keeps the historical map-only
+  // layout byte-for-byte.
+  const int headerTop = gray ? NavScreenRenderer::kOverviewHeaderGrayPx : NavScreenRenderer::kOverviewHeaderPlainPx;
+  const int bandReserved = maneuver != nullptr && index.maneuverCount > 0;
+  const int mapY = headerTop + (bandReserved ? maneuverBandHeight(g) : 0);
+  const int mapHeight = g.LH - mapY - (gray ? 144 : 100);
   if (mapHeight <= 0) return false;
   MapRouteCanvas canvas(frameBuffer, g, 16, mapY, g.LW - 32, mapHeight, 5, gray != nullptr);
   const Rect mapRect{0, 0, g.LW - 32, mapHeight};
@@ -1038,6 +1144,14 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
   if (!viewport.isValid() || RouteMapRenderer::draw(canvas, source, index, viewport, position, background, &proximity,
                                                     gray) != RenderStatus::Ok)
     return false;
+  if (outProximity != nullptr) {
+    *outProximity = proximity;
+  }
+  if (maneuver != nullptr && index.maneuverCount > 0 && gray && plane != NavGrayPlane::Base) {
+    // Keep the reserved auxiliary planes visibly synchronized with the Base
+    // instruction pass even when the tone quantizer rejects all route ink.
+    fillRectLog(frameBuffer, g, 16, mapY, g.LW - 32, 1, true);
+  }
   if (position) {
     // Scale and north stay legible on a white panel over dense geometry.
     const int scaleWidth = viewport.pixelsForMeters(100), sx = g.LW - 32 - scaleWidth, sy = mapY + mapHeight - 16;
@@ -1118,6 +1232,106 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
   drawText(frameBuffer, g, 20, g.LH - 80, metrics, 3, true);
   drawText(frameBuffer, g, 20, g.LH - 40, statusText ? statusText : "GPS NOG NIET ACTIEF", 3, true);
   return true;
+}
+
+void NavScreenRenderer::drawManeuverBand(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx,
+                                         const NavManeuverPresentation& presentation, NavGrayPlane plane, bool gray) {
+  if (frameBuffer == nullptr || widthPx == 0 || heightPx == 0) {
+    return;
+  }
+  // The band rectangle is exactly the one drawOverview reserved: its top is
+  // the header height of the active overview mode (gray header on Base and
+  // both auxiliary gray planes) and its height the fixed maneuverBandHeight
+  // fraction, so Base/LSB/MSB passes always agree. The reservation follows
+  // the caller's `gray` overview mode, which is therefore kept untouched.
+  Layout g = makeLayout(widthPx, heightPx);
+  g.plane = plane;
+  const int bandTop = gray ? NavScreenRenderer::kOverviewHeaderGrayPx : NavScreenRenderer::kOverviewHeaderPlainPx;
+  // The gray map renderer intentionally emits different tone content per
+  // plane.  The maneuver band is UI text, however, and must remain visible
+  // in every submitted plane; use the bounded one-bit path for the auxiliary
+  // planes while keeping the native proportional gray font on Base.
+  const bool grayText = gray && plane == NavGrayPlane::Base;
+  const int bandH = maneuverBandHeight(g);
+  const int contentBottom = bandTop + bandH - (bandH / 16 < 2 ? 2 : bandH / 16);
+  const IconBox box = makeIconBox(g, bandTop, bandH);
+  const int textLeft = maneuverIconRightEdge(box, presentation.maneuver) + 2;
+  const int availW = g.xRight - textLeft;
+
+  // Maneuver symbol on the left, spanning the band height.
+  drawManeuverIconAt(frameBuffer, g, box, presentation.maneuver);
+
+  // Text column on the right, top-aligned: rounded distance first, then the
+  // localized action label, then the optional bounded street name.
+  char distanceLine[24];
+  formatDistanceMeters(distanceLine, presentation.distanceMeters);
+  int y = bandTop + (bandH / 16 < 2 ? 2 : bandH / 16);
+
+  if (grayText) {
+    // Proportional Noto ladder (native pixels, no scaling).
+    char text[45];
+    const NavFont* distanceFont = fitNotoLadder(kBandDistanceLadder,
+                                                sizeof(kBandDistanceLadder) / sizeof(kBandDistanceLadder[0]),
+                                                distanceLine, availW, text, sizeof(text));
+    if (distanceFont != nullptr && y + distanceFont->height <= contentBottom) {
+      drawNormalText(frameBuffer, g, g.xRight - normalTextWidth(*distanceFont, text), y, text, *distanceFont, true);
+      y += distanceFont->height + (distanceFont->height / 3 < 2 ? 2 : distanceFont->height / 3);
+    }
+    if (presentation.action != nullptr && presentation.action[0] != '\0') {
+      const NavFont* actionFont =
+          fitNotoLadder(kBandActionLadder, sizeof(kBandActionLadder) / sizeof(kBandActionLadder[0]),
+                        presentation.action, availW, text, sizeof(text));
+      if (actionFont != nullptr && y + actionFont->height <= contentBottom) {
+        drawNormalText(frameBuffer, g, g.xRight - normalTextWidth(*actionFont, text), y, text, *actionFont);
+        y += actionFont->height + (actionFont->height / 3 < 2 ? 2 : actionFont->height / 3);
+      }
+    }
+    if (presentation.street != nullptr && presentation.street[0] != '\0') {
+      const NavFont* streetFont =
+          fitNotoLadder(kBandStreetLadder, sizeof(kBandStreetLadder) / sizeof(kBandStreetLadder[0]),
+                        presentation.street, availW, text, sizeof(text));
+      if (streetFont != nullptr && y + streetFont->height <= contentBottom) {
+        drawNormalText(frameBuffer, g, g.xRight - normalTextWidth(*streetFont, text), y, text, *streetFont);
+      }
+    }
+    return;
+  }
+
+  // Legacy tiny bitmap ladder: scale the distance, action and street lines.
+  const int distanceMaster = textMasterWidth(distanceLine);
+  int scale = fitBitmapScale(distanceMaster, g.largeScale, availW);
+  if (scale > 0 && y + 7 * scale <= contentBottom) {
+    drawText(frameBuffer, g, g.xRight - distanceMaster * scale, y, distanceLine, scale, true);
+    y += 7 * scale + (7 * scale / 3 < 2 ? 2 : 7 * scale / 3);
+  }
+  if (presentation.action != nullptr && presentation.action[0] != '\0') {
+    const int actionMaster = textMasterWidth(presentation.action);
+    scale = fitBitmapScale(actionMaster, g.midScale, availW);
+    if (scale > 0 && y + 7 * scale <= contentBottom) {
+      drawText(frameBuffer, g, g.xRight - actionMaster * scale, y, presentation.action, scale, true);
+      y += 7 * scale + (7 * scale / 3 < 2 ? 2 : 7 * scale / 3);
+    }
+  }
+  if (presentation.street != nullptr && presentation.street[0] != '\0') {
+    // Bound the street like the legacy navigating band: prefix-truncate at the
+    // icon edge so a long optional name can never reach the arrow or border.
+    char streetBuf[NavState::kStreetCapacity];
+    int streetMaster = 0;
+    int streetChars = 0;
+    scale = g.statusScale;
+    for (const char* p = presentation.street; *p != '\0'; ++p) {
+      const int nextMaster = streetMaster + glyphWidth(*p) + (streetChars == 0 ? 0 : 1);
+      if (nextMaster * scale > availW) {
+        break;
+      }
+      streetMaster = nextMaster;
+      streetBuf[streetChars++] = *p;
+    }
+    streetBuf[streetChars] = '\0';
+    if (streetChars > 0 && y + 7 * scale <= contentBottom) {
+      drawText(frameBuffer, g, g.xRight - streetMaster * scale, y, streetBuf, scale, true);
+    }
+  }
 }
 
 void NavScreenRenderer::draw(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx, const NavState& state) {
