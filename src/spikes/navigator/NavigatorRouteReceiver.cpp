@@ -1,5 +1,6 @@
 #if defined(CROSSINK_NAVIGATOR) && defined(ARDUINO)
 #include "NavigatorRouteReceiver.h"
+#include "LiveFrameMailbox.h"
 #include <Arduino.h>
 #include <BLEAdvertising.h>
 #include <BLECharacteristic.h>
@@ -16,10 +17,10 @@ constexpr char kStatus[] = "8c9f9d12-7c6d-4c8e-a2cb-49586da45d10";
 BLEServer* server = nullptr;
 BLECharacteristic* status = nullptr;
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
-uint8_t queued[512], processing[512];
-uint16_t queuedLength = 0;
+uint8_t processing[LiveFrameMailbox::kCapacity];
+LiveFrameMailbox mailbox;
 uint32_t epoch = 0;
-bool connected = false, disconnected = false, overflow = false;
+bool connected = false, disconnected = false;
 bool open = false;
 uint32_t lastActivity = 0, acceptedAt = 0;
 bool accepted = false;
@@ -42,8 +43,7 @@ class ServerCallbacks final : public BLEServerCallbacks {
     portENTER_CRITICAL(&mux);
     connected = false;
     disconnected = true;
-    queuedLength = 0;
-    overflow = false;
+    mailbox.reset();
     ++epoch;
     portEXIT_CRITICAL(&mux);
   }
@@ -53,12 +53,7 @@ class WriteCallbacks final : public BLECharacteristicCallbacks {
     const size_t length = characteristic->getLength();
     const uint8_t* data = characteristic->getData();
     portENTER_CRITICAL(&mux);
-    if (!data || !length || length > sizeof(queued) || queuedLength) {
-      overflow = true;
-    } else {
-      std::memcpy(queued, data, length);
-      queuedLength = length;
-    }
+    mailbox.push(data, length);
     portEXIT_CRITICAL(&mux);
   }
 } writeCallbacks;
@@ -112,11 +107,8 @@ bool pollRouteReceiver(NavigationRouteSession& session, RouteTransferStatus& res
   portENTER_CRITICAL(&mux);
   wasDisconnected = disconnected;
   disconnected = false;
-  bad = overflow;
-  overflow = false;
-  length = queuedLength;
-  if (length) std::memcpy(processing, queued, length);
-  queuedLength = 0;
+  bad = mailbox.takeOverflow();
+  length = static_cast<uint16_t>(mailbox.take(processing, sizeof(processing)));
   generation = epoch;
   link = connected;
   portEXIT_CRITICAL(&mux);

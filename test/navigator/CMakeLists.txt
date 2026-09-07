@@ -67,6 +67,21 @@ target_link_libraries(NavigationStartupTest PRIVATE
 )
 gtest_discover_tests(NavigationStartupTest)
 
+# The BLE callback can receive several live fixes while e-paper refresh blocks
+# the main loop. Keep the newest normal fix without weakening strict handling
+# for control-frame collisions or malformed/oversized input.
+add_executable(LiveFrameMailboxTest
+  LiveFrameMailboxTest.cpp
+)
+target_include_directories(LiveFrameMailboxTest PRIVATE
+  ${REPO_ROOT}/src/spikes/navigator
+)
+target_link_libraries(LiveFrameMailboxTest PRIVATE
+  crosspoint_test_common
+  GTest::gtest_main
+)
+gtest_discover_tests(LiveFrameMailboxTest)
+
 # Refresh scheduling for the live walk (fixed cadences, movement throttle,
 # manual/forced refresh and immediate viewport-change Full refresh). Plain
 # assert-style suite kept as its own executable like the policy unit it tests.

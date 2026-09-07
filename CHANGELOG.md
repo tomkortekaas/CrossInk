@@ -66,6 +66,11 @@
 
 ### Fixed
 
+- X3 walking navigation keeps receiving live GPS while a slow e-ink refresh is
+  in progress. If several normal fixes arrive before the display finishes, the
+  newest now replaces the older pending fix instead of ending the navigation
+  session and leaving both map views stuck on "Wacht op GPS".
+
 - Dashboard tile icons are drawn the right way up. Every icon appeared rotated a quarter turn, because the drawing routine expects artwork stored pre-rotated while the dashboard's icons are stored the natural way round.
 - Dashboard tile text sits inside its tile. Values and labels were each placed a full line too low, so they overlapped each other, drifted past the bottom edge, and left a gap under the tile's icon. Agenda headings and the rules between agenda rows were misplaced for the same reason.
 - Dashboard packages that carry no widgets are no longer rejected by the storage layer, which previously applied the agenda template's minimum size to every template.
