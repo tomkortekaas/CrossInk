@@ -22,6 +22,9 @@ void LiveNavigationSession::disconnect() {
   active_ = false;
   hasFix_ = false;
   forceRefreshPending_ = false;
+  // No negotiated FIX capability may outlive its session: the next START
+  // re-negotiates its own version from scratch.
+  version_ = 0;
   // Fail closed to the legacy cadence: no mode may outlive the session that
   // negotiated it, so the next START always begins from Economical.
   mode_ = WalkingRefreshMode::Economical;
@@ -33,6 +36,10 @@ bool LiveNavigationSession::position(uint32_t now, LivePosition& out, bool linkA
   (void)now;
   if (!active_ || !hasFix_ || !linkActive) return false;
   out = {i32(lastFrame_ + 7), i32(lastFrame_ + 11), u16(lastFrame_ + 15), (lastFrame_[19] & 0x01) != 0};
+  if (version_ == 3) {
+    out.hasRouteProgress = true;
+    out.distanceFromStartMeters = u32(lastFrame_ + 20);
+  }
   return true;
 }
 bool LiveNavigationSession::takeForceRefresh() {
@@ -56,21 +63,31 @@ LiveNavigationStatus LiveNavigationSession::receive(const uint8_t* b, size_t n, 
   expire(now, true);
   if (b[0] == 8) {
     // LIVE_START accepts exactly legacy v1 (version 1, 10 bytes) as an
-    // Economical session, or v2 (version 2, 11 bytes) whose byte 10 is a
-    // known refresh mode. Validate the whole frame before touching any state
-    // so a rejected START never partially activates or changes a session.
+    // Economical session, or v2/v3 (versions 2 and 3, 11 bytes) whose byte 10
+    // is a known refresh mode. Version 3 additionally negotiates 24-byte
+    // progress-bearing FIX frames. Validate the whole frame before touching
+    // any state so a rejected START never partially activates or changes a
+    // session.
+    uint8_t version = 0;
     WalkingRefreshMode mode = WalkingRefreshMode::Economical;
     if (n == 10) {
       if (b[1] != 1) return invalid;
+      version = 1;
     } else if (n == 11) {
-      if (b[1] != 2 || b[10] > static_cast<uint8_t>(WalkingRefreshMode::Economical)) return invalid;
+      if ((b[1] != 2 && b[1] != 3) || b[10] > static_cast<uint8_t>(WalkingRefreshMode::Economical))
+        return invalid;
+      version = b[1];
       mode = static_cast<WalkingRefreshMode>(b[10]);
     } else {
       return invalid;
     }
     if (!route || u32(b + 2) != route || busy) return invalid;
     if (active_) {
-      if (id == sessionId_ && route == routeId_) return {LiveNavigationCode::Ready, id, 0};
+      // START replay is idempotent only when route, session and negotiated
+      // version all agree; a different-version replay must not silently
+      // upgrade or downgrade the live session.
+      if (id == sessionId_ && route == routeId_ && version == version_)
+        return {LiveNavigationCode::Ready, id, 0};
       return invalid;
     }
     // A stopped/expired session cannot be revived by replaying its START.
@@ -79,6 +96,7 @@ LiveNavigationStatus LiveNavigationSession::receive(const uint8_t* b, size_t n, 
     routeId_ = route;
     active_ = true;
     hasFix_ = false;
+    version_ = version;  // commit the negotiated FIX capability atomically
     mode_ = mode;  // commit the negotiated mode atomically with activation
     lastActivity_ = now;
     return {LiveNavigationCode::Ready, id, 0};
@@ -91,7 +109,12 @@ LiveNavigationStatus LiveNavigationSession::receive(const uint8_t* b, size_t n, 
     disconnect();
     return {LiveNavigationCode::Stopped, id, 0};
   }
-  if (b[0] != 9 || n != 20 || !active_ || id != sessionId_ || busy) return invalid;
+  if (b[0] != 9 || !active_ || id != sessionId_ || busy) return invalid;
+  // The negotiated version fixes the FIX length exactly: v1/v2 sessions carry
+  // 20 bytes and a v3 session carries 24 (distanceFromStartMeters appended).
+  // A length/version mismatch is Invalid and never mutates the last fix.
+  const size_t fixLength = version_ == 3 ? 24 : 20;
+  if (n != fixLength) return invalid;
   if (route != routeId_) {
     disconnect();
     return invalid;
@@ -104,12 +127,15 @@ LiveNavigationStatus LiveNavigationSession::receive(const uint8_t* b, size_t n, 
   if (hasFix_) {
     const uint16_t advance = static_cast<uint16_t>(sequence - u16(lastFrame_ + 5));
     if (!advance) {
-      if (std::memcmp(b, lastFrame_, 20) == 0) return {LiveNavigationCode::FixAccepted, id, sequence};
+      // Duplicate comparison covers the whole negotiated frame, so a replay
+      // whose progress differs is still rejected.
+      if (std::memcmp(b, lastFrame_, fixLength) == 0)
+        return {LiveNavigationCode::FixAccepted, id, sequence};
       return invalid;
     }
     if (advance >= 32768) return invalid;
   }
-  std::memcpy(lastFrame_, b, 20);
+  std::memcpy(lastFrame_, b, fixLength);
   hasFix_ = true;
   forceRefreshPending_ = (b[19] & 0x02) != 0;
   lastActivity_ = now;

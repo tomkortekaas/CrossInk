@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 
@@ -20,6 +21,15 @@ std::array<uint8_t, 20> fix(uint16_t sequence, int32_t latitudeE7) {
   frame[13] = 235;
   frame[14] = 2;
   frame[15] = 5;
+  return frame;
+}
+
+std::array<uint8_t, 24> fixV3(uint16_t sequence, int32_t latitudeE7, uint32_t distanceFromStartMeters) {
+  const auto base = fix(sequence, latitudeE7);
+  std::array<uint8_t, 24> frame{};
+  std::copy(base.begin(), base.end(), frame.begin());
+  for (int byte = 0; byte < 4; ++byte)
+    frame[20 + byte] = static_cast<uint8_t>(distanceFromStartMeters >> (8 * byte));
   return frame;
 }
 
@@ -72,6 +82,70 @@ TEST(LiveFrameMailboxTest, FixFromAnotherSessionCannotReplacePendingFix) {
   navigator::LiveFrameMailbox mailbox;
   const auto current = fix(20, 523700000);
   auto otherSession = fix(21, 523700100);
+  otherSession[1] = 8;
+
+  EXPECT_TRUE(mailbox.push(current.data(), current.size()));
+  EXPECT_FALSE(mailbox.push(otherSession.data(), otherSession.size()));
+  EXPECT_TRUE(mailbox.overflowed());
+}
+
+TEST(LiveFrameMailboxTest, V3FixCoalescesWhenFromSameSession) {
+  navigator::LiveFrameMailbox mailbox;
+  const auto first = fixV3(41, 523700000, 1000);
+  const auto newest = fixV3(42, 523700123, 2400);
+
+  EXPECT_TRUE(mailbox.push(first.data(), first.size()));
+  EXPECT_TRUE(mailbox.push(newest.data(), newest.size()));
+  EXPECT_FALSE(mailbox.overflowed());
+
+  std::array<uint8_t, 512> received{};
+  const size_t length = mailbox.take(received.data(), received.size());
+  ASSERT_EQ(length, newest.size());
+  EXPECT_EQ(received[5], 42);
+  EXPECT_EQ(received[6], 0);
+  // The full 24-byte frame survives: coordinates and progress are the newest.
+  EXPECT_EQ(received[10], newest[10]);
+  for (int byte = 20; byte < 24; ++byte) EXPECT_EQ(received[byte], newest[byte]);
+}
+
+TEST(LiveFrameMailboxTest, NewerV3ProgressReplacesOlderValue) {
+  navigator::LiveFrameMailbox mailbox;
+  const auto older = fixV3(41, 523700000, 1000);
+  const auto newer = fixV3(42, 523700000, 9999);
+
+  EXPECT_TRUE(mailbox.push(older.data(), older.size()));
+  EXPECT_TRUE(mailbox.push(newer.data(), newer.size()));
+  EXPECT_FALSE(mailbox.overflowed());
+
+  std::array<uint8_t, 512> received{};
+  const size_t length = mailbox.take(received.data(), received.size());
+  ASSERT_EQ(length, newer.size());
+  EXPECT_EQ(received[5], 42);
+  uint32_t progress = 0;
+  for (int byte = 0; byte < 4; ++byte)
+    progress |= static_cast<uint32_t>(received[20 + byte]) << (8 * byte);
+  EXPECT_EQ(progress, 9999U);
+}
+
+TEST(LiveFrameMailboxTest, MalformedV3FixCannotReplacePendingFix) {
+  navigator::LiveFrameMailbox mailbox;
+  const auto valid = fixV3(11, 523700000, 1200);
+  auto malformed = fixV3(12, 523700100, 1300);
+  malformed[15] = 0;  // accuracy must be 1..50 metres
+
+  EXPECT_TRUE(mailbox.push(valid.data(), valid.size()));
+  EXPECT_FALSE(mailbox.push(malformed.data(), malformed.size()));
+  EXPECT_TRUE(mailbox.overflowed());
+
+  std::array<uint8_t, 512> received{};
+  ASSERT_EQ(mailbox.take(received.data(), received.size()), valid.size());
+  EXPECT_EQ(received[5], 11);
+}
+
+TEST(LiveFrameMailboxTest, V3FixFromAnotherSessionCannotReplacePendingFix) {
+  navigator::LiveFrameMailbox mailbox;
+  const auto current = fixV3(20, 523700000, 500);
+  auto otherSession = fixV3(21, 523700100, 600);
   otherSession[1] = 8;
 
   EXPECT_TRUE(mailbox.push(current.data(), current.size()));

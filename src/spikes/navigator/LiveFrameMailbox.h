@@ -7,12 +7,15 @@
 namespace navigator {
 
 // One bounded hand-off buffer between the BLE callback and the navigator loop.
-// The caller provides synchronization. Normal 20-byte LIVE_FIX frames may
-// coalesce while e-paper rendering blocks the loop: only the newest fix is
-// useful, and dropping the older pending fix must not terminate the session.
+// The caller provides synchronization. Normal 20-byte (v1/v2) and 24-byte
+// (v3 progress) LIVE_FIX frames may coalesce while e-paper rendering blocks
+// the loop: only the newest fix is useful, and dropping the older pending fix
+// must not terminate the session.
 class LiveFrameMailbox {
  public:
   static constexpr size_t kCapacity = 512;
+  static constexpr size_t kFixLegacyLength = 20;
+  static constexpr size_t kFixV3Length = 24;
 
   bool push(const uint8_t* data, size_t length) {
     if (data == nullptr || length == 0 || length > kCapacity) {
@@ -67,7 +70,10 @@ class LiveFrameMailbox {
   }
 
   static bool isValidFix(const uint8_t* data, size_t length) {
-    return length == 20 && data[0] == 0x09 && u32(data + 1) != 0 && i32(data + 7) >= -900000000 &&
+    // Both negotiated FIX lengths share the same validation over bytes 0..19;
+    // the extra v3 progress u32 has no structural constraint of its own.
+    if (length != kFixLegacyLength && length != kFixV3Length) return false;
+    return data[0] == 0x09 && u32(data + 1) != 0 && i32(data + 7) >= -900000000 &&
            i32(data + 7) <= 900000000 && i32(data + 11) >= -1800000000 && i32(data + 11) <= 1800000000 &&
            u16(data + 15) >= 1 && u16(data + 15) <= 50 && u16(data + 17) <= 15000 && data[19] <= 3;
   }

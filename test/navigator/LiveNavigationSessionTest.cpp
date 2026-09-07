@@ -36,6 +36,21 @@ std::vector<uint8_t> fix(uint16_t seq = 0, uint32_t session = 9) {
   put(b, 15, 5, 2);
   return b;
 }
+std::vector<uint8_t> startV3(uint32_t route = 7, uint32_t session = 9, uint8_t mode = 2) {
+  std::vector<uint8_t> b(11);
+  b[0] = 8;
+  b[1] = 3;
+  put(b, 2, route);
+  put(b, 6, session);
+  b[10] = mode;
+  return b;
+}
+std::vector<uint8_t> fixV3(uint16_t seq = 0, uint32_t session = 9, uint32_t progress = 0) {
+  std::vector<uint8_t> b = fix(seq, session);
+  b.resize(24);
+  put(b, 20, progress);
+  return b;
+}
 int main() {
   LiveNavigationSession s;
   LivePosition p;
@@ -166,7 +181,7 @@ int main() {
   assert(strict.receive(v1WithMode.data(), v1WithMode.size(), 7, false, 100).code ==
          LiveNavigationCode::Invalid);
   auto unknownVersion = startV2(7, 43, 1);
-  unknownVersion[1] = 3;  // protocol version 3 is unknown
+  unknownVersion[1] = 4;  // protocol version 4 is unknown (3 is live progress)
   assert(strict.receive(unknownVersion.data(), unknownVersion.size(), 7, false, 100).code ==
          LiveNavigationCode::Invalid);
   auto tooLong = startV2(7, 44, 1);
@@ -209,4 +224,117 @@ int main() {
   stale.expire(100 + 90000);
   assert(!stale.active());
   assert(stale.refreshMode() == WalkingRefreshMode::Economical);
+  // Task 4 - live protocol v3: START v3 (11 bytes, version byte 3) negotiates
+  // 24-byte progress-bearing FIX frames; the refresh-mode byte keeps the v2
+  // meaning. Legacy v1/v2 sessions still demand exactly 20-byte FIX frames and
+  // reject the 24-byte layout, while a v3 session rejects the 20-byte layout.
+  // Replay comparison covers the whole negotiated frame including the progress
+  // u32, and every exit path clears both the fix and the v3 capability.
+  auto send3 = [&](LiveNavigationSession& s, const std::vector<uint8_t>& b, uint32_t now = 100,
+                   uint32_t route = 7) { return s.receive(b.data(), b.size(), route, false, now); };
+  // START v3 acceptance; the mode byte is honored exactly as in v2.
+  LiveNavigationSession v3;
+  auto s3 = startV3(7, 90, 1);
+  assert(send3(v3, s3, 100).code == LiveNavigationCode::Ready);
+  assert(v3.active());
+  assert(v3.refreshMode() == WalkingRefreshMode::Fast);
+  assert(!v3.position(100, p));
+  // A v3 START naming an unknown refresh mode is rejected without activating.
+  LiveNavigationSession v3Strict;
+  auto s3BadMode = startV3(7, 91, 3);
+  assert(send3(v3Strict, s3BadMode, 100).code == LiveNavigationCode::Invalid);
+  assert(!v3Strict.active());
+  // v3 sessions require exactly 24-byte FIX frames.
+  auto v3LegacyFix = fix(1, 90);  // 20-byte frame
+  assert(send3(v3, v3LegacyFix, 101).code == LiveNavigationCode::Invalid);
+  auto v3FixA = fixV3(1, 90, 12345);
+  assert(send3(v3, v3FixA, 102).code == LiveNavigationCode::FixAccepted);
+  assert(v3.position(102, p));
+  assert(p.latitudeE7 == 523700000 && p.longitudeE7 == 49000000);
+  assert(p.accuracyMeters == 5);
+  assert(p.hasRouteProgress && p.distanceFromStartMeters == 12345);
+  // Progress parses as an unsigned u32 even at the top of its range.
+  LiveNavigationSession v3Max;
+  auto s3Max = startV3(7, 92, 0);
+  assert(send3(v3Max, s3Max, 100).code == LiveNavigationCode::Ready);
+  auto v3MaxFix = fixV3(1, 92, 0xffffffffu);
+  assert(send3(v3Max, v3MaxFix, 101).code == LiveNavigationCode::FixAccepted);
+  assert(v3Max.position(101, p));
+  assert(p.hasRouteProgress && p.distanceFromStartMeters == 0xffffffffu);
+  // Replay comparison covers progress: the identical frame replays cleanly,
+  // while a same-sequence frame with different progress is Invalid.
+  assert(send3(v3, v3FixA, 103).code == LiveNavigationCode::FixAccepted);
+  auto v3FixADifferentProgress = v3FixA;
+  put(v3FixADifferentProgress, 20, 12346);
+  assert(send3(v3, v3FixADifferentProgress, 104).code == LiveNavigationCode::Invalid);
+  // A force-refresh bit still re-arms only on a freshly accepted FIX.
+  auto v3Force = fixV3(2, 90, 12400);
+  v3Force[19] = 2;
+  assert(send3(v3, v3Force, 105).code == LiveNavigationCode::FixAccepted);
+  assert(v3.takeForceRefresh());
+  assert(!v3.takeForceRefresh());
+  // START replay is idempotent only for the negotiated version: replaying the
+  // same v3 START returns Ready, but a same-session v2 START cannot downgrade
+  // the live session.
+  assert(send3(v3, s3, 106).code == LiveNavigationCode::Ready);
+  auto v3Downgrade = startV2(7, 90, 1);
+  assert(send3(v3, v3Downgrade, 107).code == LiveNavigationCode::Invalid);
+  assert(v3.active());
+  // Legacy v1/v2 sessions reject the 24-byte FIX layout and never expose
+  // progress to position().
+  LiveNavigationSession v1s;
+  auto s1b = start(7, 93);
+  assert(send3(v1s, s1b, 100).code == LiveNavigationCode::Ready);
+  auto v1Fix24 = fixV3(1, 93, 777);
+  assert(send3(v1s, v1Fix24, 101).code == LiveNavigationCode::Invalid);
+  auto v1Fix20 = fix(1, 93);
+  assert(send3(v1s, v1Fix20, 102).code == LiveNavigationCode::FixAccepted);
+  assert(v1s.position(102, p));
+  assert(!p.hasRouteProgress && p.distanceFromStartMeters == 0);
+  LiveNavigationSession v2s;
+  auto s2b = startV2(7, 94, 2);
+  assert(send3(v2s, s2b, 100).code == LiveNavigationCode::Ready);
+  auto v2Fix24 = fixV3(1, 94, 888);
+  assert(send3(v2s, v2Fix24, 101).code == LiveNavigationCode::Invalid);
+  auto v2Fix20 = fix(1, 94);
+  assert(send3(v2s, v2Fix20, 102).code == LiveNavigationCode::FixAccepted);
+  assert(v2s.position(102, p));
+  assert(!p.hasRouteProgress && p.distanceFromStartMeters == 0);
+  // STOP clears progress and the v3 capability: a later legacy session on the
+  // same object accepts 20-byte FIX frames again without progress.
+  LiveNavigationSession stopV3;
+  auto s3Stop = startV3(7, 95, 0);
+  assert(send3(stopV3, s3Stop, 100).code == LiveNavigationCode::Ready);
+  auto v3StopFix = fixV3(1, 95, 500);
+  assert(send3(stopV3, v3StopFix, 101).code == LiveNavigationCode::FixAccepted);
+  assert(stopV3.position(101, p) && p.hasRouteProgress);
+  std::vector<uint8_t> v3Stop{11, 95, 0, 0, 0};
+  assert(send3(stopV3, v3Stop, 102).code == LiveNavigationCode::Stopped);
+  assert(!stopV3.position(102, p));
+  auto s1AfterStop = start(7, 96);  // new session id on the same object
+  assert(send3(stopV3, s1AfterStop, 103).code == LiveNavigationCode::Ready);
+  auto v1AfterStopFix = fix(1, 96);
+  assert(send3(stopV3, v1AfterStopFix, 104).code == LiveNavigationCode::FixAccepted);
+  assert(stopV3.position(104, p));
+  assert(!p.hasRouteProgress && p.distanceFromStartMeters == 0);
+  // disconnect() clears progress and capability the same way.
+  LiveNavigationSession disconnectV3;
+  auto s3Disc = startV3(7, 97, 1);
+  assert(send3(disconnectV3, s3Disc, 100).code == LiveNavigationCode::Ready);
+  auto v3DiscFix = fixV3(1, 97, 900);
+  assert(send3(disconnectV3, v3DiscFix, 101).code == LiveNavigationCode::FixAccepted);
+  assert(disconnectV3.position(101, p) && p.hasRouteProgress);
+  disconnectV3.disconnect();
+  assert(!disconnectV3.active());
+  assert(!disconnectV3.position(101, p));
+  // A route mismatch disconnects the session, so progress cannot outlive it.
+  LiveNavigationSession mismatchV3;
+  auto s3Mismatch = startV3(7, 98, 0);
+  assert(send3(mismatchV3, s3Mismatch, 100).code == LiveNavigationCode::Ready);
+  auto v3MismatchFix = fixV3(1, 98, 600);
+  assert(send3(mismatchV3, v3MismatchFix, 101).code == LiveNavigationCode::FixAccepted);
+  assert(mismatchV3.position(101, p) && p.hasRouteProgress);
+  assert(send3(mismatchV3, v3MismatchFix, 102, 8).code == LiveNavigationCode::Invalid);
+  assert(!mismatchV3.active());
+  assert(!mismatchV3.position(102, p));
 }
