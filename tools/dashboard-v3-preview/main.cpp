@@ -102,7 +102,7 @@ DashboardV3Package mockupPackage() {
     const char* label;
     int16_t basisPoints;
   };
-  const MarketFixture markets[] = {{"AEX", 80}, {"Bitcoin", -120}, {"All-World ETF", 30}};
+  const MarketFixture markets[] = {{"Portefeuille", 68}, {"All-World", 42}, {"AEX", 31}};
   package.marketCount = static_cast<uint8_t>(std::size(markets));
   for (size_t index = 0; index < std::size(markets); ++index) {
     setField(package.markets[index].label, package.markets[index].labelLength, markets[index].label);
@@ -126,6 +126,21 @@ DashboardV3Package mockupPackage() {
   }
   package.unreadTotal = 24;
   package.quoteId = 1;
+  return package;
+}
+
+// One market row: the panel must not draw a heading over an empty list.
+DashboardV3Package soloMarketPackage() {
+  DashboardV3Package package = mockupPackage();
+  package.marketCount = 1;
+  return package;
+}
+
+// The leading figure missing: the block keeps its height so the sections below
+// it do not jump when a quote drops out.
+DashboardV3Package missingLeadMarketPackage() {
+  DashboardV3Package package = mockupPackage();
+  package.markets[0].changeBasisPoints = INT16_MIN;
   return package;
 }
 
@@ -278,6 +293,8 @@ int main(const int argc, char** argv) {
       {"empty", emptyPackage(), 1153},
       {"maximum", maximumPackage(), 1153},
       {"before-sunrise", mockupPackage(), 300},  // 05:00
+      {"solo-market", soloMarketPackage(), 1153},
+      {"missing-lead-market", missingLeadMarketPackage(), 1153},
   };
 
   int status = 0;
