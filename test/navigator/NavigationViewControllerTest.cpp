@@ -114,7 +114,7 @@ TEST(NavigationViewControllerTest, OverviewKeepsRouteFitEvenWhenFixIsAvailable) 
   // "Overview" is the whole route: a fresh fix never silently recentres the
   // map in this view (GPS zoom is the explicit centred mode).
   const RouteIndex route = sampleRoute();
-  const CurrentPosition fix{kFix, 5, 0};
+  const CurrentPosition fix{kFix, 5, 0, false, 0};
   NavigationViewController controller;  // Overview
   const auto selection = controller.selectViewport(route, kMapRect, &fix);
   EXPECT_FALSE(selection.waitingForGps);
@@ -130,7 +130,7 @@ TEST(NavigationViewControllerTest, OverviewKeepsRouteFitEvenWhenFixIsAvailable) 
 
 TEST(NavigationViewControllerTest, GpsZoomCentresValidFixNorthUp250MetersWithinFivePercent) {
   const RouteIndex route = sampleRoute();
-  const CurrentPosition fix{kFix, 5, 0};
+  const CurrentPosition fix{kFix, 5, 0, false, 0};
   NavigationViewController controller;
   controller.toggle();  // GPS zoom
   ASSERT_EQ(controller.view(), NavigationView::GpsZoom);

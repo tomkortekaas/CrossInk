@@ -66,6 +66,11 @@
 
 ### Fixed
 
+- X3 walking navigation now trusts the phone's own distance-along-route
+  progress for the remaining-distance footer and the arrival check when a live
+  fix is trusted, instead of only the map-measured along-route estimate, so
+  the walk reads as finished as soon as the phone has reached the end.
+
 - X3 walking navigation keeps receiving live GPS while a slow e-ink refresh is
   in progress. If several normal fixes arrive before the display finishes, the
   newest now replaces the older pending fix instead of ending the navigation

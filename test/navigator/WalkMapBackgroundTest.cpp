@@ -99,7 +99,7 @@ int main(int argc, char **argv) {
   std::vector<uint8_t> live(plain.size()), explicitNull(plain.size()), labelled(plain.size());
   assert(NavScreenRenderer::drawOverview(explicitNull.data(), 792, 528, route, index, nullptr, nullptr, nullptr));
   assert(explicitNull == plain);
-  CurrentPosition position{{index.originLatitudeE7, index.originLongitudeE7}, 5, 0};
+  CurrentPosition position{{index.originLatitudeE7, index.originLongitudeE7}, 5, 0, false, 0};
   assert(NavScreenRenderer::drawOverview(live.data(), 792, 528, route, index, nullptr, &position));
   assert(live != plain);
   // Logical center (264, 406) maps to physical (406, 263).
@@ -117,7 +117,7 @@ int main(int argc, char **argv) {
   }
   RouteProximity proximity;
   auto away = RouteViewport::centered({index.originLatitudeE7 + 1000000, index.originLongitudeE7}, Rect{0,0,480,600}, 400);
-  CurrentPosition far{{index.originLatitudeE7 + 1000000,index.originLongitudeE7},5,0};
+  CurrentPosition far{{index.originLatitudeE7 + 1000000,index.originLongitudeE7},5,0,false,0};
   assert(RouteMapRenderer::draw(canvas,route,index,away,&far,nullptr,&proximity)==RenderStatus::Ok);
   assert(proximity.valid && proximity.distanceMeters > 1000);
   data.b[60] ^= 1;

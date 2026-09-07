@@ -99,7 +99,10 @@ class NavScreenRenderer {
   // chosen only when a fix is present, its straight-line distance to the
   // route is within the off-route guard used by the footer estimate
   // (max(40 m, 2x accuracy)) and the route declares a positive total;
-  // otherwise the established total metrics win.
+  // otherwise the established total metrics win. Once trusted, a live v3
+  // fix's phone-tracked distance-from-start is authoritative over the
+  // geometric along-route estimate: remaining is the declared total minus
+  // what has been walked (clamped to zero past the total).
   static NavFooterMetrics chooseFooterMetrics(const CurrentPosition* position, const RouteProximity& proximity,
                                               const RouteIndex& route);
   // Decides whether a live fix has reliably reached the route end, for the
@@ -109,8 +112,11 @@ class NavScreenRenderer {
   // used to trust the along-route projection (max(40 m, 2x accuracy)), its
   // accuracy is at most kMaxArrivalAccuracyMeters, the route declares a
   // positive total and the along-route distance still to walk is within a
-  // conservative band of max(kMinArrivalRemainingMeters, 1x accuracy). Pure
-  // integer decision: no heap, no floating point, no I18n.
+  // conservative band of max(kMinArrivalRemainingMeters, 1x accuracy). The
+  // distance still to walk is the trusted phone-tracked progress remaining
+  // when the fix carries it (see chooseFooterMetrics), otherwise the
+  // geometric along-route estimate. Pure integer decision: no heap, no
+  // floating point, no I18n.
   static bool hasReachedRouteEnd(const CurrentPosition* position, const RouteProximity& proximity,
                                  const RouteIndex& route);
   // Minutes left for `remainingMeters` of `totalMeters`, proportional to

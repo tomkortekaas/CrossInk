@@ -1045,6 +1045,24 @@ const NavFont* const kBandDistanceLadder[] = {&navFont34, &navFont26, &navFont22
 const NavFont* const kBandActionLadder[] = {&navFont26, &navFont22, &navFont18, &navFont14};
 const NavFont* const kBandStreetLadder[] = {&navFont18, &navFont14};
 
+// Authoritative meters still to walk, consulted only after the caller's trust
+// gates have accepted the fix (non-null, valid proximity, positive declared
+// total, within the off-route guard). A live v3 fix carries phone-tracked
+// distance from the route start; when trusted it overrides the pixel-
+// quantized geometric along-route estimate, so remaining is the declared
+// total minus what has been walked (progress past the total clamps to 0 --
+// min() keeps walked <= total, so the subtraction cannot underflow). Legacy
+// fixes without the progress flag keep the geometric estimate, clamped to the
+// declared total. Pure integer math: no heap, no recursion, no exceptions.
+uint32_t authoritativeRemainingMeters(const CurrentPosition* position, const RouteProximity& proximity,
+                                      const RouteIndex& route) {
+  if (position != nullptr && position->hasRouteProgress) {
+    const uint32_t walked = std::min(position->distanceFromStartMeters, route.totalDistanceMeters);
+    return route.totalDistanceMeters - walked;
+  }
+  return std::min(proximity.remainingDistanceMeters, route.totalDistanceMeters);
+}
+
 }  // namespace
 
 uint16_t NavScreenRenderer::remainingMinutes(uint16_t estimatedMinutes, uint32_t remainingMeters,
@@ -1067,7 +1085,7 @@ NavFooterMetrics NavScreenRenderer::chooseFooterMetrics(const CurrentPosition* p
   if (position == nullptr || !proximity.valid || route.totalDistanceMeters == 0) return metrics;
   if (proximity.distanceMeters > std::max<uint32_t>(40, 2u * position->accuracyMeters)) return metrics;
   metrics.mode = NavMetricMode::Remaining;
-  metrics.distanceMeters = std::min(proximity.remainingDistanceMeters, route.totalDistanceMeters);
+  metrics.distanceMeters = authoritativeRemainingMeters(position, proximity, route);
   metrics.minutes = remainingMinutes(route.estimatedMinutes, metrics.distanceMeters, route.totalDistanceMeters);
   return metrics;
 }
@@ -1090,7 +1108,7 @@ bool NavScreenRenderer::hasReachedRouteEnd(const CurrentPosition* position, cons
   // A looping route whose endpoint passes geographically near an earlier fix
   // still reports its full remaining distance here and never declares.
   const uint32_t arrivalBand = std::max<uint32_t>(kMinArrivalRemainingMeters, position->accuracyMeters);
-  return proximity.remainingDistanceMeters <= arrivalBand;
+  return authoritativeRemainingMeters(position, proximity, route) <= arrivalBand;
 }
 
 void NavScreenRenderer::drawMessage(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx, const char* title,

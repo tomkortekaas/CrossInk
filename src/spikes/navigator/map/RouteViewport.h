@@ -58,14 +58,19 @@ static_assert(sizeof(Rect) == 16, "Rect must stay compact");
 
 // A supplied current position. `accuracyMeters` sizes the position ring at
 // the viewport scale; `bearingDegrees` is carried for the follow-up live
-// session task and is not rendered in the foundation phase.
+// session task and is not rendered in the foundation phase. A live protocol
+// v3 fix additionally carries phone-tracked progress from the route start:
+// when `hasRouteProgress` is set, `distanceFromStartMeters` is authoritative
+// over the renderer's geometric along-route estimate for remaining/arrival.
 struct CurrentPosition {
   GeoPoint point;
   uint16_t accuracyMeters = 0;
   uint16_t bearingDegrees = 0;
+  bool hasRouteProgress = false;
+  uint32_t distanceFromStartMeters = 0;
 };
 
-static_assert(sizeof(CurrentPosition) <= 12, "CurrentPosition must stay compact");
+static_assert(sizeof(CurrentPosition) <= 20, "CurrentPosition must stay compact");
 
 class RouteViewport {
  public:

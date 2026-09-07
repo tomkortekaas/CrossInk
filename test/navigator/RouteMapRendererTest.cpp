@@ -418,7 +418,7 @@ ProximityOutcome drawWithFix(const Bytes& bytes, const RouteIndex& index, const 
   }
   RecordingCanvas canvas(mapRect.width, mapRect.height);
   TrackingSource source(bytes);
-  const CurrentPosition position{fix, accuracyMeters, 0};
+  const CurrentPosition position{fix, accuracyMeters, 0, false, 0};
   outcome.status = RouteMapRenderer::draw(canvas, source, index, viewport, &position, nullptr, &outcome.proximity);
   return outcome;
 }
@@ -586,7 +586,7 @@ TEST(RouteMapRendererTest, CurrentPositionMarkerDrawnLastRingThenDiscDominantRou
 
   // Position sits exactly at the viewport center (on the route's midpoint).
   const ScreenPoint centerProj = viewport.project(route.points[3]);
-  const CurrentPosition position{route.points[3], 30, 137};
+  const CurrentPosition position{route.points[3], 30, 137, false, 0};
   RecordingCanvas canvas(mapRect.width, mapRect.height);
   TrackingSource source(route.bytes);
   const RenderStatus status = RouteMapRenderer::draw(canvas, source, route.index, viewport, &position);
@@ -644,7 +644,7 @@ TEST(RouteMapRendererTest, PositionMarkerAccuracyScalesRingAndClipsToMapRect) {
   // Marker on p2 (~200 m north): visible near the top edge. Accuracy 400 m
   // wants a ~284 px ring at this scale, far larger than the distance from the
   // center to the top border, so the renderer must clip the radius.
-  const CurrentPosition nearTop{points[2], 400, 0};
+  const CurrentPosition nearTop{points[2], 400, 0, false, 0};
   RecordingCanvas canvas(mapRect.width, mapRect.height);
   const ScreenPoint p2 = viewport.project(points[2]);
   ASSERT_EQ(drawBytes(canvas, bytes, index, viewport, &nearTop), RenderStatus::Ok);
@@ -657,7 +657,7 @@ TEST(RouteMapRendererTest, PositionMarkerAccuracyScalesRingAndClipsToMapRect) {
   EXPECT_EQ(canvas.circles()[1].radius, RouteMapRenderer::kMarkerDiscRadiusPx);
 
   // Marker fully outside the map (p0, ~721 m north) draws no marker at all.
-  const CurrentPosition outside{points[0], 400, 0};
+  const CurrentPosition outside{points[0], 400, 0, false, 0};
   RecordingCanvas outsideCanvas(mapRect.width, mapRect.height);
   ASSERT_EQ(drawBytes(outsideCanvas, bytes, index, viewport, &outside), RenderStatus::Ok);
   EXPECT_EQ(outsideCanvas.ringCount(), 0U);

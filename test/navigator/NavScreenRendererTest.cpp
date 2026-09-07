@@ -624,7 +624,7 @@ TEST(NavScreenRendererTest, FooterKeepsTotalsWithoutFixOrDeclaredTotal) {
   RouteIndex route;
   route.totalDistanceMeters = 4000;
   route.estimatedMinutes = 100;
-  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 5, 0};
+  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 5, 0, false, 0};
   RouteProximity near;
   near.valid = true;
   near.distanceMeters = 10;  // within max(40 m, 2 * 5 m accuracy)
@@ -650,7 +650,7 @@ TEST(NavScreenRendererTest, FooterSwapsToRemainingForCloseValidFix) {
   RouteIndex route;
   route.totalDistanceMeters = 4000;
   route.estimatedMinutes = 100;
-  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 5, 0};
+  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 5, 0, false, 0};
 
   RouteProximity near;
   near.valid = true;
@@ -696,7 +696,7 @@ TEST(NavScreenRendererTest, FooterFallsBackToTotalsWhenFixIsOffRoute) {
   RouteIndex route;
   route.totalDistanceMeters = 4000;
   route.estimatedMinutes = 100;
-  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 5, 0};
+  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 5, 0, false, 0};
 
   // Straight-line distance beyond max(40 m, 2x accuracy): the projection
   // along the route no longer describes where the walk is, so the footer
@@ -732,7 +732,7 @@ TEST(NavScreenRendererTest, ArrivalDeclaredOnlyForOnRouteFixAtTheEnd) {
 
   // On-route fix with good accuracy, remaining exactly on the arrival band
   // edge (max(10 m, 1x accuracy) = 10 m for a 10 m fix): arrived.
-  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 10, 0};
+  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 10, 0, false, 0};
   RouteProximity atEnd;
   atEnd.valid = true;
   atEnd.distanceMeters = 8;  // within max(40 m, 2x accuracy)
@@ -741,7 +741,7 @@ TEST(NavScreenRendererTest, ArrivalDeclaredOnlyForOnRouteFixAtTheEnd) {
 
   // Standing exactly on the end with a tight 5 m fix also arrives (floor
   // band = 10 m).
-  const CurrentPosition tight{GeoPoint{520'000'000, 40'000'000}, 5, 0};
+  const CurrentPosition tight{GeoPoint{520'000'000, 40'000'000}, 5, 0, false, 0};
   RouteProximity exact;
   exact.valid = true;
   exact.distanceMeters = 0;
@@ -755,7 +755,7 @@ TEST(NavScreenRendererTest, ArrivalRejectsFixJustOutsideTheBand) {
   route.estimatedMinutes = 60;
   // Arrival band is max(10 m, 1x accuracy) = 10 m for a 10 m fix; one meter
   // past it the walk is still approaching and must not read as arrived.
-  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 10, 0};
+  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 10, 0, false, 0};
   RouteProximity shortOfEnd;
   shortOfEnd.valid = true;
   shortOfEnd.distanceMeters = 5;
@@ -783,12 +783,12 @@ TEST(NavScreenRendererTest, ArrivalRejectsPoorAccuracyOffRouteAndNoFix) {
   // Poor accuracy: a 60 m fix cannot place the walk at the end even when the
   // reported remaining is tiny, because the true position may still be one
   // coarse step before it.
-  const CurrentPosition coarse{GeoPoint{520'000'000, 40'000'000}, 60, 0};
+  const CurrentPosition coarse{GeoPoint{520'000'000, 40'000'000}, 60, 0, false, 0};
   EXPECT_FALSE(NavScreenRenderer::hasReachedRouteEnd(&coarse, nearEnd, route));
 
   // Off-route: the fix is far enough from the route that its along-route
   // projection is untrusted, so a zero remaining must not trigger arrival.
-  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 5, 0};
+  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 5, 0, false, 0};
   RouteProximity offRoute;
   offRoute.valid = true;
   offRoute.distanceMeters = 500;
@@ -820,12 +820,137 @@ TEST(NavScreenRendererTest, ArrivalIgnoresLoopPassingNearItsOwnEndpoint) {
   // The route loops back next to its own endpoint early on: the fix sits
   // geographically on the line a few meters from that endpoint, but the
   // along-route distance still to walk is the whole closing loop.
-  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 5, 0};
+  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 5, 0, false, 0};
   RouteProximity loop;
   loop.valid = true;
   loop.distanceMeters = 3;
   loop.remainingDistanceMeters = 3900;
   EXPECT_FALSE(NavScreenRenderer::hasReachedRouteEnd(&position, loop, route));
+}
+
+// ---------------------------------------------------------------------------
+// Phone-tracked route progress (live v3 fix) overrides the geometric
+// along-route estimate for both the footer remaining pair and the arrival
+// check, but only after the same trust gates as the geometric estimate.
+// ---------------------------------------------------------------------------
+
+TEST(NavScreenRendererTest, TrustedProgressOverridesGeometricRemainingForFooterAndArrival) {
+  RouteIndex route;
+  route.totalDistanceMeters = 4200;
+  route.estimatedMinutes = 60;
+  // Geometric along-route estimate still reads 3900 m (pixel-quantized /
+  // coarse geometry); the phone says 4195 of 4200 m are walked.
+  RouteProximity near;
+  near.valid = true;
+  near.distanceMeters = 5;  // within max(40 m, 2 * 10 m accuracy)
+  near.remainingDistanceMeters = 3900;
+  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 10, 0, true, 4195};
+
+  const NavFooterMetrics metrics = NavScreenRenderer::chooseFooterMetrics(&position, near, route);
+  EXPECT_EQ(metrics.mode, NavMetricMode::Remaining);
+  EXPECT_EQ(metrics.distanceMeters, 5U);  // 4200 - 4195, not the geometric 3900
+  EXPECT_EQ(metrics.minutes, 0U);
+  EXPECT_TRUE(NavScreenRenderer::hasReachedRouteEnd(&position, near, route));
+}
+
+TEST(NavScreenRendererTest, TrustedProgressAtTheStartKeepsFullRemaining) {
+  RouteIndex route;
+  route.totalDistanceMeters = 4200;
+  route.estimatedMinutes = 60;
+  RouteProximity near;
+  near.valid = true;
+  near.distanceMeters = 5;
+  near.remainingDistanceMeters = 3900;
+  // Phone-tracked progress of zero meters walked means the whole route is
+  // still ahead, overriding the geometric estimate.
+  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 10, 0, true, 0};
+
+  const NavFooterMetrics metrics = NavScreenRenderer::chooseFooterMetrics(&position, near, route);
+  EXPECT_EQ(metrics.mode, NavMetricMode::Remaining);
+  EXPECT_EQ(metrics.distanceMeters, 4200U);
+  EXPECT_EQ(metrics.minutes, 60U);
+  EXPECT_FALSE(NavScreenRenderer::hasReachedRouteEnd(&position, near, route));
+}
+
+TEST(NavScreenRendererTest, TrustedProgressBeyondTheTotalClampsToZeroRemaining) {
+  RouteIndex route;
+  route.totalDistanceMeters = 4200;
+  route.estimatedMinutes = 60;
+  RouteProximity near;
+  near.valid = true;
+  near.distanceMeters = 5;
+  near.remainingDistanceMeters = 3900;
+  // Progress past the declared total (phone already beyond the end) reads as
+  // nothing left to walk instead of underflowing or keeping the geometric
+  // estimate.
+  const CurrentPosition position{GeoPoint{520'000'000, 40'000'000}, 10, 0, true, 999'999};
+
+  const NavFooterMetrics metrics = NavScreenRenderer::chooseFooterMetrics(&position, near, route);
+  EXPECT_EQ(metrics.mode, NavMetricMode::Remaining);
+  EXPECT_EQ(metrics.distanceMeters, 0U);
+  EXPECT_EQ(metrics.minutes, 0U);
+  EXPECT_TRUE(NavScreenRenderer::hasReachedRouteEnd(&position, near, route));
+}
+
+TEST(NavScreenRendererTest, UntrustedOrOffRouteFixIgnoresTrustedProgress) {
+  RouteIndex route;
+  route.totalDistanceMeters = 4200;
+  route.estimatedMinutes = 60;
+  const CurrentPosition progressed{GeoPoint{520'000'000, 40'000'000}, 10, 0, true, 4195};
+
+  // Off-route: even a progress value that would say "5 m left" must not reach
+  // the footer or the arrival status while the fix is outside the guard.
+  RouteProximity off;
+  off.valid = true;
+  off.distanceMeters = 500;
+  off.remainingDistanceMeters = 3900;
+  const NavFooterMetrics offRoute = NavScreenRenderer::chooseFooterMetrics(&progressed, off, route);
+  EXPECT_EQ(offRoute.mode, NavMetricMode::Total);
+  EXPECT_EQ(offRoute.distanceMeters, 4200U);
+  EXPECT_EQ(offRoute.minutes, 60U);
+  EXPECT_FALSE(NavScreenRenderer::hasReachedRouteEnd(&progressed, off, route));
+
+  // Invalid proximity (no closest route edge) also keeps the totals.
+  RouteProximity invalid;
+  invalid.valid = false;
+  invalid.distanceMeters = 5;
+  invalid.remainingDistanceMeters = 3900;
+  const NavFooterMetrics noProximity = NavScreenRenderer::chooseFooterMetrics(&progressed, invalid, route);
+  EXPECT_EQ(noProximity.mode, NavMetricMode::Total);
+  EXPECT_EQ(noProximity.distanceMeters, 4200U);
+  EXPECT_EQ(noProximity.minutes, 60U);
+  EXPECT_FALSE(NavScreenRenderer::hasReachedRouteEnd(&progressed, invalid, route));
+
+  // The arrival accuracy gate still applies before progress is consulted: a
+  // coarse fix cannot prove it is at the end. The footer, which has no such
+  // gate, still trusts the progress.
+  const CurrentPosition coarse{GeoPoint{520'000'000, 40'000'000}, 60, 0, true, 4195};
+  EXPECT_FALSE(NavScreenRenderer::hasReachedRouteEnd(&coarse, invalid, route));
+  RouteProximity near;
+  near.valid = true;
+  near.distanceMeters = 5;
+  near.remainingDistanceMeters = 3900;
+  EXPECT_EQ(NavScreenRenderer::chooseFooterMetrics(&coarse, near, route).distanceMeters, 5U);
+  EXPECT_FALSE(NavScreenRenderer::hasReachedRouteEnd(&coarse, near, route));
+}
+
+TEST(NavScreenRendererTest, LegacyFixWithoutProgressKeepsGeometricRemaining) {
+  RouteIndex route;
+  route.totalDistanceMeters = 4200;
+  route.estimatedMinutes = 60;
+  RouteProximity near;
+  near.valid = true;
+  near.distanceMeters = 5;
+  near.remainingDistanceMeters = 3900;
+  // Legacy v1/v2 fix: no progress flag, so the carried distance value is
+  // meaningless and the geometric along-route estimate stays authoritative.
+  const CurrentPosition legacy{GeoPoint{520'000'000, 40'000'000}, 10, 0, false, 4195};
+
+  const NavFooterMetrics metrics = NavScreenRenderer::chooseFooterMetrics(&legacy, near, route);
+  EXPECT_EQ(metrics.mode, NavMetricMode::Remaining);
+  EXPECT_EQ(metrics.distanceMeters, 3900U);
+  EXPECT_EQ(metrics.minutes, 56U);  // 3900 / 4200 * 60, rounded half-up
+  EXPECT_FALSE(NavScreenRenderer::hasReachedRouteEnd(&legacy, near, route));
 }
 
 TEST(NavScreenRendererTest, RemainingMinutesAreProportionalWithZeroAndOverflowBounds) {

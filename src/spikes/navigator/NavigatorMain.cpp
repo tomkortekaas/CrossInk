@@ -109,7 +109,8 @@ void showRouteFrame(navigator::NavigationRefresh refresh = navigator::Navigation
     backgroundMap.open(mapSource);
   }
   hasPosition = navigator::navigationPosition(millis(), fix);
-  navigator::CurrentPosition position{{fix.latitudeE7, fix.longitudeE7}, fix.accuracyMeters, 0};
+  navigator::CurrentPosition position{{fix.latitudeE7, fix.longitudeE7}, fix.accuracyMeters, 0,
+                                      fix.hasRouteProgress, fix.distanceFromStartMeters};
   const auto statusText = [&](bool waitingForGps) {
     if (waitingForGps) return tr(STR_NAV_WAITING_GPS);
     if (hasPosition) return (fix.offRoute ? tr(STR_NAV_OFF_ROUTE_SNAPSHOT) : tr(STR_NAV_POSITION_SNAPSHOT));
