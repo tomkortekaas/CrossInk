@@ -26,18 +26,20 @@ class LiveNavigationSession {
  public:
   LiveNavigationStatus receive(const uint8_t* bytes, size_t length, uint32_t activeRouteId, bool routeTransferring,
                                uint32_t now);
-  bool position(uint32_t now, LivePosition& out) const;
+  bool position(uint32_t now, LivePosition& out, bool linkActive = true) const;
   // Returns a force-refresh request once for each newly accepted FIX carrying
   // flags bit 1. Replayed FIX frames never re-arm it.
   bool takeForceRefresh();
   WalkingRefreshMode refreshMode() const { return mode_; }
   bool active() const { return active_; }
   void disconnect();
-  void expire(uint32_t now);
+  // The inactivity guard is only a disconnected-session fallback. A connected
+  // stationary walk may legitimately receive no new CLLocation callbacks.
+  void expire(uint32_t now, bool linkActive = false);
   uint32_t sessionId() const { return sessionId_; }
 
  private:
-  uint32_t routeId_ = 0, sessionId_ = 0, lastStoppedId_ = 0, lastActivity_ = 0, receivedAt_ = 0;
+  uint32_t routeId_ = 0, sessionId_ = 0, lastStoppedId_ = 0, lastActivity_ = 0;
   uint8_t lastFrame_[20]{};
   bool active_ = false, hasFix_ = false, forceRefreshPending_ = false;
   WalkingRefreshMode mode_ = WalkingRefreshMode::Economical;

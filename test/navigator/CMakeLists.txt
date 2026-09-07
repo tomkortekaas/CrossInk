@@ -82,6 +82,18 @@ target_link_libraries(LiveFrameMailboxTest PRIVATE
 )
 gtest_discover_tests(LiveFrameMailboxTest)
 
+add_executable(LiveNavigationSessionTest
+  LiveNavigationSessionTest.cpp
+  ${REPO_ROOT}/src/spikes/navigator/LiveNavigationSession.cpp
+)
+target_include_directories(LiveNavigationSessionTest PRIVATE
+  ${REPO_ROOT}/src/spikes/navigator
+)
+target_link_libraries(LiveNavigationSessionTest PRIVATE
+  crosspoint_test_common
+)
+add_test(NAME LiveNavigationSession COMMAND LiveNavigationSessionTest)
+
 # Refresh scheduling for the live walk (fixed cadences, movement throttle,
 # manual/forced refresh and immediate viewport-change Full refresh). Plain
 # assert-style suite kept as its own executable like the policy unit it tests.

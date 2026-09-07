@@ -26,11 +26,12 @@ void LiveNavigationSession::disconnect() {
   // negotiated it, so the next START always begins from Economical.
   mode_ = WalkingRefreshMode::Economical;
 }
-void LiveNavigationSession::expire(uint32_t now) {
-  if (active_ && uint32_t(now - lastActivity_) >= 90000) disconnect();
+void LiveNavigationSession::expire(uint32_t now, bool linkActive) {
+  if (active_ && !linkActive && uint32_t(now - lastActivity_) >= 90000) disconnect();
 }
-bool LiveNavigationSession::position(uint32_t now, LivePosition& out) const {
-  if (!active_ || !hasFix_ || uint64_t(uint32_t(now - receivedAt_)) + u16(lastFrame_ + 17) > 30000) return false;
+bool LiveNavigationSession::position(uint32_t now, LivePosition& out, bool linkActive) const {
+  (void)now;
+  if (!active_ || !hasFix_ || !linkActive) return false;
   out = {i32(lastFrame_ + 7), i32(lastFrame_ + 11), u16(lastFrame_ + 15), (lastFrame_[19] & 0x01) != 0};
   return true;
 }
@@ -52,7 +53,7 @@ LiveNavigationStatus LiveNavigationSession::receive(const uint8_t* b, size_t n, 
   if (b && n >= 7 && b[0] == 9) sequence = u16(b + 5);
   const LiveNavigationStatus invalid{LiveNavigationCode::Invalid, id, sequence};
   if (!b || !n || !id) return invalid;
-  expire(now);
+  expire(now, true);
   if (b[0] == 8) {
     // LIVE_START accepts exactly legacy v1 (version 1, 10 bytes) as an
     // Economical session, or v2 (version 2, 11 bytes) whose byte 10 is a
@@ -111,7 +112,6 @@ LiveNavigationStatus LiveNavigationSession::receive(const uint8_t* b, size_t n, 
   std::memcpy(lastFrame_, b, 20);
   hasFix_ = true;
   forceRefreshPending_ = (b[19] & 0x02) != 0;
-  receivedAt_ = now;
   lastActivity_ = now;
   return {LiveNavigationCode::FixAccepted, id, sequence};
 }

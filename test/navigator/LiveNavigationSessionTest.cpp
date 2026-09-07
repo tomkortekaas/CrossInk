@@ -55,8 +55,13 @@ int main() {
   assert(send(f, 200).code == LiveNavigationCode::FixAccepted);
   assert(s.position(200, p));
   assert(p.latitudeE7 == 523700000);
+  assert(!s.position(200, p, false));
+  assert(s.position(200, p, true));
   assert(send(f, 5000).code == LiveNavigationCode::FixAccepted);
-  assert(!s.position(30201, p));  // replay does not renew freshness
+  // A stationary walk may not produce another CLLocation callback. Retain the
+  // accepted fix for the connected live session instead of losing GPS after
+  // the X3's former 30-second freshness window.
+  assert(s.position(60000, p));
   auto altered = f;
   altered[7]++;
   assert(send(altered, 5001).code == LiveNavigationCode::Invalid);
@@ -73,7 +78,7 @@ int main() {
   put(old, 17, 15000, 2);
   assert(send(old, 6000).code == LiveNavigationCode::FixAccepted);
   assert(s.position(21000, p));
-  assert(!s.position(21001, p));
+  assert(s.position(80000, p));
   std::vector<uint8_t> stop{11, 9, 0, 0, 0};
   assert(send(stop, 22000).code == LiveNavigationCode::Stopped);
   assert(!s.position(100, p));
@@ -89,7 +94,10 @@ int main() {
   auto wrap = fix(0, 12);
   assert(send(wrap, 0xfffffff0u).code == LiveNavigationCode::FixAccepted);
   assert(s.position(20, p));
-  s.expire(90000);
+  s.expire(90000, true);
+  assert(s.active());
+  assert(s.position(90000, p));
+  s.expire(90000, false);
   assert(!s.active());
   // Live FIX flags byte: bit 0 = off-route, bit 1 = force refresh. Values 0..3
   // are accepted and survive position(); any other bit is rejected.

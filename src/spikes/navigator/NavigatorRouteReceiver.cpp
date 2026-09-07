@@ -96,7 +96,12 @@ void stopRouteReceiver() {
 
 bool routeReceiverOpen() { return open; }
 bool navigationSessionActive() { return live.active(); }
-bool navigationPosition(uint32_t now, LivePosition& out) { return live.position(now, out); }
+bool navigationPosition(uint32_t now, LivePosition& out) {
+  portENTER_CRITICAL(&mux);
+  const bool link = connected;
+  portEXIT_CRITICAL(&mux);
+  return live.position(now, out, link);
+}
 bool takeNavigationForceRefresh() { return live.takeForceRefresh(); }
 WalkingRefreshMode navigationRefreshMode() { return live.refreshMode(); }
 
@@ -123,7 +128,7 @@ bool pollRouteReceiver(NavigationRouteSession& session, RouteTransferStatus& res
   if (!open) return false;
   const uint32_t now = millis();
   const bool wasLive = live.active();
-  live.expire(now);
+  live.expire(now, link);
   const bool liveFrame = length && (processing[0] == 0x08 || processing[0] == 0x09 || processing[0] == 0x0B);
   // A queued START can have arrived during the slow initial e-paper refresh.
   // Process it before applying the route COMMIT grace timeout.
