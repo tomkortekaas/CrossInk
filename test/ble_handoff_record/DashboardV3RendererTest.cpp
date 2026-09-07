@@ -1025,7 +1025,7 @@ TEST(DashboardV3Renderer, MarketChangeUsesATriangleInsteadOfASignedNumber) {
 // Row 0 is the panel's leading financial figure. The renderer does not know
 // what it means -- the phone decides which source fills the first slot -- it
 // only knows that the first row is the one worth reading from across the room.
-TEST(DashboardV3Renderer, LeadingMarketDrawsItsChangeAtTheValueRung) {
+TEST(DashboardV3Renderer, LeadingMarketDrawsItsChangeAtTheHeadingRung) {
   auto package = maximumContentPackage();
   copyText(package.markets[0].label, package.markets[0].labelLength, "Portefeuille");
   package.markets[0].changeBasisPoints = 68;
@@ -1034,8 +1034,9 @@ TEST(DashboardV3Renderer, LeadingMarketDrawsItsChangeAtTheValueRung) {
 
   const Operation* value = findTextOperation(canvas, "0,68%");
   ASSERT_NE(value, nullptr);
-  EXPECT_EQ(value->font, dashboard::v3::FontRole::Value)
-      << "the leading market outranks the rows below it";
+  EXPECT_EQ(value->font, dashboard::v3::FontRole::Heading)
+      << "the leading market outranks the rows below it, but the Value rung would "
+         "cost two of the five WhatsApp rows that fill the rest of this column";
   EXPECT_GE(value->bounds.x, 270) << "it stays in the status column";
 }
 
@@ -1087,7 +1088,7 @@ TEST(DashboardV3Renderer, ASingleMarketLeavesOutTheMarketsHeading) {
       << "a heading over nothing is noise";
 }
 
-TEST(DashboardV3Renderer, MissingLeadingMarketChangeDrawsADashAtTheValueRung) {
+TEST(DashboardV3Renderer, MissingLeadingMarketChangeDrawsADashAtTheHeadingRung) {
   auto package = maximumContentPackage();
   copyText(package.markets[0].label, package.markets[0].labelLength, "Portefeuille");
   package.markets[0].changeBasisPoints = INT16_MIN;
@@ -1096,7 +1097,7 @@ TEST(DashboardV3Renderer, MissingLeadingMarketChangeDrawsADashAtTheValueRung) {
 
   const Operation* dash = findTextOperation(canvas, "-");
   ASSERT_NE(dash, nullptr);
-  EXPECT_EQ(dash->font, dashboard::v3::FontRole::Value)
+  EXPECT_EQ(dash->font, dashboard::v3::FontRole::Heading)
       << "the block keeps its size when the source is missing, so the layout does not jump";
 }
 

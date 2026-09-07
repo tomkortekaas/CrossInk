@@ -686,19 +686,23 @@ void renderStatusColumn(DashboardV3Canvas& canvas, const Rect rect, const Dashbo
     label(canvas, textBox(left, y, width, FontRole::Micro), leadLabel, FontRole::Micro, true);
     y += ascenderFor(FontRole::Micro) + 4;
 
-    if (y + ascenderFor(FontRole::Value) <= bottom) {
+    // Heading rather than Value: the status column has no slack, so every pixel
+    // this block gains comes straight off the WhatsApp rows below it, which fill
+    // whatever is left. Measured on the preview: Value costs two of the five chat
+    // rows, Heading costs one and still reads as the largest figure in the column.
+    if (y + ascenderFor(FontRole::Heading) <= bottom) {
       if (lead.changeBasisPoints == INT16_MIN) {
-        label(canvas, textBox(left, y, width, FontRole::Value), "-", FontRole::Value, true);
+        label(canvas, textBox(left, y, width, FontRole::Heading), "-", FontRole::Heading, true);
       } else {
-        constexpr int leadMarkSize = 13;
-        const int leadMarkY = y + (ascenderFor(FontRole::Value) - leadMarkSize) / 2;
+        constexpr int leadMarkSize = 11;
+        const int leadMarkY = y + (ascenderFor(FontRole::Heading) - leadMarkSize) / 2;
         triangle(canvas, {left, leadMarkY, leadMarkSize, leadMarkSize}, lead.changeBasisPoints >= 0);
         char change[16];
         formatChange(lead.changeBasisPoints, change);
-        label(canvas, textBox(left + leadMarkSize + 8, y, width - leadMarkSize - 8, FontRole::Value), change,
-              FontRole::Value, true);
+        label(canvas, textBox(left + leadMarkSize + 8, y, width - leadMarkSize - 8, FontRole::Heading), change,
+              FontRole::Heading, true);
       }
-      y += ascenderFor(FontRole::Value) + 10;
+      y += ascenderFor(FontRole::Heading) + 10;
     }
 
     if (package.marketCount > 1 && y + ascenderFor(FontRole::Micro) < bottom) {
