@@ -1022,6 +1022,84 @@ TEST(DashboardV3Renderer, MarketChangeUsesATriangleInsteadOfASignedNumber) {
   EXPECT_FALSE(apexIsAtTop(*loss)) << "a falling market points down";
 }
 
+// Row 0 is the panel's leading financial figure. The renderer does not know
+// what it means -- the phone decides which source fills the first slot -- it
+// only knows that the first row is the one worth reading from across the room.
+TEST(DashboardV3Renderer, LeadingMarketDrawsItsChangeAtTheValueRung) {
+  auto package = maximumContentPackage();
+  copyText(package.markets[0].label, package.markets[0].labelLength, "Portefeuille");
+  package.markets[0].changeBasisPoints = 68;
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  const Operation* value = findTextOperation(canvas, "0,68%");
+  ASSERT_NE(value, nullptr);
+  EXPECT_EQ(value->font, dashboard::v3::FontRole::Value)
+      << "the leading market outranks the rows below it";
+  EXPECT_GE(value->bounds.x, 270) << "it stays in the status column";
+}
+
+// The caption rung is ALL-CAPS everywhere else on the panel, and this label
+// arrives as a Home Assistant friendly name.
+TEST(DashboardV3Renderer, LeadingMarketLabelBecomesAnUpperCaseCaption) {
+  auto package = maximumContentPackage();
+  copyText(package.markets[0].label, package.markets[0].labelLength, "Portefeuille");
+  package.markets[0].changeBasisPoints = 68;
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  const Operation* caption = findTextOperation(canvas, "PORTEFEUILLE");
+  ASSERT_NE(caption, nullptr) << "the label itself is the caption of the block";
+  EXPECT_EQ(caption->font, dashboard::v3::FontRole::Micro);
+  EXPECT_EQ(findTextOperation(canvas, "Portefeuille"), nullptr)
+      << "the mixed-case name does not also appear";
+}
+
+TEST(DashboardV3Renderer, RemainingMarketsKeepTheSmallRungUnderTheirOwnHeading) {
+  auto package = maximumContentPackage();
+  copyText(package.markets[0].label, package.markets[0].labelLength, "Portefeuille");
+  package.markets[0].changeBasisPoints = 68;
+  package.markets[1].changeBasisPoints = 42;
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  const Operation* heading = findTextOperation(canvas, "MARKTEN \xc2\xb7 DAG");
+  const Operation* lead = findTextOperation(canvas, "0,68%");
+  const Operation* row = findTextOperation(canvas, "0,42%");
+  ASSERT_NE(heading, nullptr);
+  ASSERT_NE(lead, nullptr);
+  ASSERT_NE(row, nullptr);
+  EXPECT_EQ(row->font, dashboard::v3::FontRole::Small) << "the index rows are unchanged";
+  EXPECT_GT(heading->bounds.y, lead->bounds.y) << "the heading sits below the leading block";
+  EXPECT_GT(row->bounds.y, heading->bounds.y);
+}
+
+TEST(DashboardV3Renderer, ASingleMarketLeavesOutTheMarketsHeading) {
+  auto package = maximumContentPackage();
+  copyText(package.markets[0].label, package.markets[0].labelLength, "Portefeuille");
+  package.markets[0].changeBasisPoints = 68;
+  package.marketCount = 1;
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  EXPECT_NE(findTextOperation(canvas, "0,68%"), nullptr);
+  EXPECT_EQ(findTextOperation(canvas, "MARKTEN \xc2\xb7 DAG"), nullptr)
+      << "a heading over nothing is noise";
+}
+
+TEST(DashboardV3Renderer, MissingLeadingMarketChangeDrawsADashAtTheValueRung) {
+  auto package = maximumContentPackage();
+  copyText(package.markets[0].label, package.markets[0].labelLength, "Portefeuille");
+  package.markets[0].changeBasisPoints = INT16_MIN;
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+
+  const Operation* dash = findTextOperation(canvas, "-");
+  ASSERT_NE(dash, nullptr);
+  EXPECT_EQ(dash->font, dashboard::v3::FontRole::Value)
+      << "the block keeps its size when the source is missing, so the layout does not jump";
+}
+
 // --- Agenda time geometry --------------------------------------------------
 //
 // The agenda time sits on the Micro rung, where the widest clock ("00:00")

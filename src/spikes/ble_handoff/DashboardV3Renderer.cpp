@@ -75,6 +75,13 @@ void formatPercent(const uint8_t value, char (&out)[8]) {
   }
 }
 
+/// A basis-point change as an unsigned percentage. The triangle beside it
+/// carries the direction, so a sign would say the same thing twice.
+void formatChange(const int16_t basisPoints, char (&out)[16]) {
+  const int value = basisPoints;
+  std::snprintf(out, sizeof(out), "%d,%02d%%", std::abs(value) / 100, std::abs(value) % 100);
+}
+
 template <size_t Size>
 void copyField(const std::array<uint8_t, Size>& source, const uint8_t length, char (&out)[Size + 1]) {
   const size_t boundedLength = std::min(static_cast<size_t>(length), Size);
@@ -658,32 +665,65 @@ void renderStatusColumn(DashboardV3Canvas& canvas, const Rect rect, const Dashbo
   }
   y += 8;
 
-  // Markets.
+  // Markets. Row 0 gets a block of its own: its label as the caption and its
+  // change at the Value rung, which is half again the height of the rows below.
+  //
+  // The renderer does not know what row 0 means. The phone decides which source
+  // fills the first slot; this code only knows the first row is the important
+  // one, so nothing here has to change when that source does.
   if (package.marketCount > 0 && y + ascenderFor(FontRole::Micro) < bottom) {
-    label(canvas, textBox(left, y, width, FontRole::Micro), "MARKTEN \xc2\xb7 DAG", FontRole::Micro, true);
-    y += ascenderFor(FontRole::Micro) + 6;
-    for (size_t index = 0; index < package.marketCount; ++index) {
-      if (y + ascenderFor(FontRole::Small) > bottom) break;
-      const MarketRow& row = package.markets[index];
-      char market[MAX_MARKET_LABEL_BYTES + 1];
-      copyField(row.label, row.labelLength, market);
-      label(canvas, textBox(left, y, width - 76, FontRole::Small), market, FontRole::Small);
-      if (row.changeBasisPoints == INT16_MIN) {
-        label(canvas, textBox(left + width - 76, y, 76, FontRole::Small), "-", FontRole::Small, true, true,
-              TextAlign::Right);
-      } else {
-        // The triangle carries the direction, so the number itself is unsigned:
-        // a "+" next to an up mark would say the same thing twice.
-        const int value = row.changeBasisPoints;
-        char change[16];
-        std::snprintf(change, sizeof(change), "%d,%02d%%", std::abs(value) / 100, std::abs(value) % 100);
-        label(canvas, textBox(left + width - 62, y, 62, FontRole::Small), change, FontRole::Small, true, true,
-              TextAlign::Right);
-        constexpr int markSize = 9;
-        const int markY = y + (ascenderFor(FontRole::Small) - markSize) / 2;
-        triangle(canvas, {left + width - 76, markY, markSize, markSize}, value >= 0);
+    const MarketRow& lead = package.markets[0];
+    char leadLabel[MAX_MARKET_LABEL_BYTES + 1];
+    copyField(lead.label, lead.labelLength, leadLabel);
+    // The caption rung is ALL-CAPS everywhere else on the panel, and this label
+    // arrives as a Home Assistant friendly name. Upper-casing belongs here with
+    // the panel's typography, not in the phone's configuration.
+    for (char* character = leadLabel; *character != '\0'; ++character) {
+      if (*character >= 'a' && *character <= 'z') {
+        *character = static_cast<char>(*character - 'a' + 'A');
       }
-      y += ascenderFor(FontRole::Small) + 5;
+    }
+    label(canvas, textBox(left, y, width, FontRole::Micro), leadLabel, FontRole::Micro, true);
+    y += ascenderFor(FontRole::Micro) + 4;
+
+    if (y + ascenderFor(FontRole::Value) <= bottom) {
+      if (lead.changeBasisPoints == INT16_MIN) {
+        label(canvas, textBox(left, y, width, FontRole::Value), "-", FontRole::Value, true);
+      } else {
+        constexpr int leadMarkSize = 13;
+        const int leadMarkY = y + (ascenderFor(FontRole::Value) - leadMarkSize) / 2;
+        triangle(canvas, {left, leadMarkY, leadMarkSize, leadMarkSize}, lead.changeBasisPoints >= 0);
+        char change[16];
+        formatChange(lead.changeBasisPoints, change);
+        label(canvas, textBox(left + leadMarkSize + 8, y, width - leadMarkSize - 8, FontRole::Value), change,
+              FontRole::Value, true);
+      }
+      y += ascenderFor(FontRole::Value) + 10;
+    }
+
+    if (package.marketCount > 1 && y + ascenderFor(FontRole::Micro) < bottom) {
+      label(canvas, textBox(left, y, width, FontRole::Micro), "MARKTEN \xc2\xb7 DAG", FontRole::Micro, true);
+      y += ascenderFor(FontRole::Micro) + 6;
+      for (size_t index = 1; index < package.marketCount; ++index) {
+        if (y + ascenderFor(FontRole::Small) > bottom) break;
+        const MarketRow& row = package.markets[index];
+        char market[MAX_MARKET_LABEL_BYTES + 1];
+        copyField(row.label, row.labelLength, market);
+        label(canvas, textBox(left, y, width - 76, FontRole::Small), market, FontRole::Small);
+        if (row.changeBasisPoints == INT16_MIN) {
+          label(canvas, textBox(left + width - 76, y, 76, FontRole::Small), "-", FontRole::Small, true, true,
+                TextAlign::Right);
+        } else {
+          char change[16];
+          formatChange(row.changeBasisPoints, change);
+          label(canvas, textBox(left + width - 62, y, 62, FontRole::Small), change, FontRole::Small, true, true,
+                TextAlign::Right);
+          constexpr int markSize = 9;
+          const int markY = y + (ascenderFor(FontRole::Small) - markSize) / 2;
+          triangle(canvas, {left + width - 76, markY, markSize, markSize}, row.changeBasisPoints >= 0);
+        }
+        y += ascenderFor(FontRole::Small) + 5;
+      }
     }
     y += 10;
   }
