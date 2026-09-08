@@ -57,7 +57,13 @@ Status decodeDashboardV3(const uint8_t* bytes, size_t size, DashboardV3Package& 
   if (header.templateId != TEMPLATE_DASHBOARD_V3) return Status::UnsupportedTemplate;
 
   Cursor cursor{bytes, SHARED_PREFIX_SIZE, size - CRC_SIZE};
-  DashboardV3Package candidate{};
+  // Static rather than a stack local: a decoded V3 package is 816 bytes, more
+  // than this task's stack can spare. Decoding stays two-phase - a rejected
+  // package must not overwrite the caller's - and the dashboard render path is
+  // single-threaded, so one workspace is enough. Host tests won't catch this:
+  // the stack is roomy there and it only bites on the C3.
+  static DashboardV3Package candidate;
+  candidate = {};
   candidate.packageId = header.packageId;
   candidate.generatedAt = header.generatedAt;
   candidate.validUntil = header.validUntil;
