@@ -147,12 +147,15 @@ TEST(DashboardV3Decode, RejectsNewerFormatVersionAsUnsupportedVersion) {
 TEST(DashboardV3Decode, AcceptsMessageIcon65AndRejectsIconIdAbove65) {
   auto bytes = minimalSwiftPackage();
   dashboard::v3::DashboardV3Package package{};
-  bytes[36] = 65;
+  // Driven off the constant rather than a literal, so growing the icon catalog
+  // moves the boundary this test probes instead of leaving it behind on 65.
+  constexpr uint8_t highestValid = dashboard::v3::MAX_CONDITION_ICON_ID;
+  bytes[36] = highestValid;
   writeU32(bytes, 78, dashboard::crc32(bytes.data(), 78));
   ASSERT_EQ(dashboard::v3::decodeDashboardV3(bytes.data(), bytes.size(), package), dashboard::Status::Ok);
-  EXPECT_EQ(package.weather.conditionIconId, 65);
+  EXPECT_EQ(package.weather.conditionIconId, highestValid);
 
-  bytes[36] = 66;
+  bytes[36] = highestValid + 1;
   writeU32(bytes, 78, dashboard::crc32(bytes.data(), 78));
   EXPECT_EQ(dashboard::v3::decodeDashboardV3(bytes.data(), bytes.size(), package), dashboard::Status::InvalidArgument);
 }

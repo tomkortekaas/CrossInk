@@ -29,6 +29,13 @@ constexpr size_t MAX_AGENDA_TITLE_BYTES = 32;
 constexpr size_t MAX_AGENDA_DETAIL_BYTES = 24;
 constexpr size_t MAX_MARKET_LABEL_BYTES = 12;
 constexpr size_t MAX_CHAT_NAME_BYTES = 16;
+// The highest weather icon id the catalog defines. Repeated here rather than
+// taken from dashboardIconTable.h because that header pulls in 181 KB of
+// generated bitmap data, and the decoder has no use for it: it validates the
+// id, it never draws it. The renderer's translation unit does include the
+// catalog and static_asserts the two against each other, so they cannot drift
+// apart without failing the build.
+constexpr uint8_t MAX_CONDITION_ICON_ID = 65;
 
 struct Weather {
   int8_t currentCelsius = INT8_MIN;

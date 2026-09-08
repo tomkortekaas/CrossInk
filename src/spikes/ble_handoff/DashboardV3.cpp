@@ -99,7 +99,7 @@ Status decodeDashboardV3(const uint8_t* bytes, size_t size, DashboardV3Package& 
       !cursor.read16(candidate.weather.sunsetTodayMinute) || !cursor.read16(candidate.weather.sunriseTomorrowMinute)) {
     return Status::InvalidLength;
   }
-  if (candidate.weather.conditionIconId > 65 ||
+  if (candidate.weather.conditionIconId > MAX_CONDITION_ICON_ID ||
       (candidate.weather.windDirection != UINT8_MAX && candidate.weather.windDirection >= 16) ||
       !validMinute(candidate.weather.sunriseTodayMinute) || !validMinute(candidate.weather.sunsetTodayMinute) ||
       !validMinute(candidate.weather.sunriseTomorrowMinute)) return Status::InvalidArgument;

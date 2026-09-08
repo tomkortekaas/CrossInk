@@ -838,6 +838,19 @@ void renderDashboardV3(DashboardV3Canvas& canvas, const DashboardV3Package& pack
 #include "components/icons/dashboardIconTable.h"
 #include "fontIds.h"
 
+// The decoder bounds conditionIconId against its own copy of this number,
+// because including the catalog there would drag 181 KB of bitmap data into a
+// translation unit that never draws an icon. This is the one place in the
+// firmware that sees both, so this is where the two are held together.
+//
+// Note this only fires on the device build. The host tests never define
+// CROSSINK_BLE_HANDOFF_READER, so this section is compiled out there, and they
+// cannot check it themselves either: dashboardIconTable.h needs Icon.h from the
+// freeink-sdk submodule, which a host checkout does not initialise. Building
+// the firmware is therefore the only gate on this pair.
+static_assert(dashboard::v3::MAX_CONDITION_ICON_ID == dashboard::DASHBOARD_ICON_COUNT,
+              "the V3 decoder's icon bound no longer matches the generated icon catalog");
+
 namespace dashboard::v3 {
 namespace {
 
