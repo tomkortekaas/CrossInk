@@ -6,6 +6,7 @@ add_executable(BleHandoffRecordTest
   DashboardWidgetGridTest.cpp
   DashboardWidgetGridV2Test.cpp
   DashboardV3Test.cpp
+  DashboardV3GoldenTest.cpp
   DashboardV3LayoutTest.cpp
   DashboardV3RendererTest.cpp
   DashboardDateFieldsTest.cpp

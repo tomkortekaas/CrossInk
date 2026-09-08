@@ -1,0 +1,87 @@
+{
+  "fixture": "dashboard_v3_package.bin",
+  "sha256": "5dcc0cb0691bee0cf8657fc7305b992af61a7366a51b06626ca4d3e6d81ff4fa",
+  "lengthBytes": 778,
+  "producedBy": {
+    "repository": "xteink-x3-dashboard-ios",
+    "definition": "Tests/DashboardCoreTests/V3GoldenPackage.swift",
+    "pinnedBy": "Tests/DashboardCoreTests/V3GoldenPackageTests.swift",
+    "regenerate": "X3_V3_FIXTURE_OUT=<path> swift test --filter V3GoldenPackageTests"
+  },
+  "note": "The pathological maximum: every optional present, every row list at its ceiling, every text field at its byte ceiling. Real packages are far smaller - DashboardV3Composer keeps a live one under the 512-byte target - but a fixture that exercises fewer fields cannot catch a change to the ones it skips.",
+  "format": {
+    "magic": "X3DP",
+    "schema": 2,
+    "templateId": 5,
+    "formatVersion": 2,
+    "contentOffset": 31,
+    "byteOrder": "little-endian",
+    "crc32": "trailing 4 bytes, over everything before them"
+  },
+  "package": {
+    "packageId": 16909060,
+    "generatedAt": 1757000000,
+    "validUntil": 1757003600,
+    "refreshIntervalMinutes": 15,
+    "wakeWindowStartHour": 7,
+    "wakeWindowEndHour": 22
+  },
+  "snapshot": {
+    "weather": {
+      "currentCelsius": 17,
+      "minimumCelsius": -3,
+      "maximumCelsius": 20,
+      "conditionIconId": 2,
+      "windKilometersPerHour": 8,
+      "windDirection": 12,
+      "sunriseTodayMinute": 395,
+      "sunsetTodayMinute": 1245,
+      "sunriseTomorrowMinute": 397
+    },
+    "rain": {
+      "intensities": [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3],
+      "startMinuteOfDay": 840,
+    "packing": "two buckets per byte, earlier bucket in the low nibble"
+    },
+    "heatingAllowed": true,
+    "traffic": {
+      "destination": "Werk............",
+      "travelMinutes": 39,
+      "nationalCongestionKilometers": 186,
+      "classification": "normal"
+    },
+    "agenda": [
+      { "dayOffset": 0, "minuteOfDay": 480, "title": "Afspraak 0......................", "detail": "Locatie 0..............." },
+      { "dayOffset": 1, "minuteOfDay": 540, "title": "Afspraak 1......................", "detail": "Locatie 1..............." },
+      { "dayOffset": 2, "minuteOfDay": 600, "title": "Afspraak 2......................", "detail": "Locatie 2..............." },
+      { "dayOffset": 3, "minuteOfDay": 660, "title": "Afspraak 3......................", "detail": "Locatie 3..............." },
+      { "dayOffset": 4, "minuteOfDay": 720, "title": "Afspraak 4......................", "detail": "Locatie 4..............." },
+      { "dayOffset": 5, "minuteOfDay": 780, "title": "Afspraak 5......................", "detail": "Locatie 5..............." },
+      { "dayOffset": 6, "minuteOfDay": 840, "title": "Afspraak 6......................", "detail": "Locatie 6..............." },
+      { "dayOffset": 7, "minuteOfDay": 900, "title": "Afspraak 7......................", "detail": "Locatie 7..............." }
+    ],
+    "status": {
+      "x3Battery": 30,
+      "vehicleBattery": 76,
+      "homeBattery": 83,
+      "steps": 7850,
+      "stepGoal": 10000
+    },
+    "markets": [
+      { "label": "Markt 0.....", "changeBasisPoints": 125 },
+      { "label": "Markt 1.....", "changeBasisPoints": -250 },
+      { "label": "Markt 2.....", "changeBasisPoints": 127 }
+    ],
+    "chats": [
+      { "name": "Chat 0..........", "unreadCount": 1, "lastMessageMinuteOfDay": 1000 },
+      { "name": "Chat 1..........", "unreadCount": 2, "lastMessageMinuteOfDay": 1001 },
+      { "name": "Chat 2..........", "unreadCount": 3, "lastMessageMinuteOfDay": 1002 },
+      { "name": "Chat 3..........", "unreadCount": 4, "lastMessageMinuteOfDay": 1003 },
+      { "name": "Chat 4..........", "unreadCount": 5, "lastMessageMinuteOfDay": 1004 },
+      { "name": "Chat 5..........", "unreadCount": 6, "lastMessageMinuteOfDay": 1005 },
+      { "name": "Chat 6..........", "unreadCount": 7, "lastMessageMinuteOfDay": 1006 }
+    ],
+    "unreadTotal": 24,
+    "quoteId": 1
+  }
+}
