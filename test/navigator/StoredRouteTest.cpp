@@ -703,6 +703,18 @@ TEST(StoredRouteTest, PrepareRestoresValidBackupBeforeNewTransfer) {
   EXPECT_EQ(route.selectedFile(), StoredRouteFile::Bin);
 }
 
+TEST(StoredRouteTest, InvalidStoreWithoutValidBackupAllowsTransfer) {
+  RecordingRouteFs fs;
+  navigator::StoredRoute route(fs);
+  // route.bin is present but corrupt and there is no route.bak: load() reports
+  // Invalid, and with nothing valid to protect the transfer must proceed so a
+  // corrupt store never strands the phone without a recovery path.
+  fs.seed(navigator::kRouteActiveBinPath, corruptByte(goldenPackage(), 89));
+  navigator::RouteIndex candidate{};
+  EXPECT_TRUE(route.prepareForTransfer(candidate));
+  expectNeverMutated(fs);
+}
+
 TEST(StoredRouteTest, FailedRecoveryNeverAllowsTransferOrDeletesValidBackup) {
   RecordingRouteFs fs;
   fs.allowRecovery = true;
@@ -716,14 +728,18 @@ TEST(StoredRouteTest, FailedRecoveryNeverAllowsTransferOrDeletesValidBackup) {
   EXPECT_EQ(route.selectedFile(), StoredRouteFile::Backup);
 }
 
-TEST(StoredRouteTest, UnreadableExistingStoreDoesNotPermitDestructivePreparation) {
+TEST(StoredRouteTest, UnreadableStoreWithNoValidCopyAllowsTransferButNeverMutates) {
   RecordingRouteFs fs;
   fs.allowRecovery = true;
   fs.seed(navigator::kRouteActiveBinPath, goldenPackage());
   fs.stallPath = navigator::kRouteActiveBinPath;
   navigator::StoredRoute route(fs);
   navigator::RouteIndex candidate{};
-  EXPECT_FALSE(route.prepareForTransfer(candidate));
+  // The bin cannot be read, so nothing validates: like a corrupted store this
+  // is Invalid, and with no validated backup there is nothing to protect - the
+  // transfer proceeds. prepareForTransfer must still never remove/move on this
+  // path, because there is no validated backup to promote.
+  EXPECT_TRUE(route.prepareForTransfer(candidate));
   expectNeverMutated(fs);
 }
 

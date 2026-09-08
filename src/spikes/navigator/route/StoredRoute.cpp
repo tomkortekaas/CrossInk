@@ -61,7 +61,13 @@ uint32_t StoredRoute::size() const {
 
 bool StoredRoute::prepareForTransfer(RouteIndex& candidate) {
   const auto result = load(candidate);
-  if (result == StoredRouteLoadResult::Invalid) return false;
+  // Invalid is not a reason to refuse: prepareForTransfer exists to promote a
+  // validated backup before a new transfer begins, and when nothing validates
+  // there is nothing left to protect. The transfer must proceed - RouteStore's
+  // begin()/publish() replace the files transactionally either way - otherwise
+  // a corrupted store would reject every START with RouteStorageFailed exactly
+  // when the phone most needs to push a fresh route. NotFound already falls
+  // through here; Invalid must too.
   if (result != StoredRouteLoadResult::LoadedBackup) return true;
   // Only remove an invalid bin AFTER a backup was successfully validated.
   // If rename fails, the known-good bytes remain at backup and writes stop.

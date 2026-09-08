@@ -553,6 +553,18 @@ TEST(NavigationRouteSessionTest, BackupRepairFailureRefusesTransfer) {
   EXPECT_TRUE(session.hasRoute());
 }
 
+TEST(NavigationRouteSessionTest, CorruptStoreWithoutBackupStillAcceptsStart) {
+  InMemoryRouteFs fs;
+  fs.seed(navigator::kRouteActiveBinPath, Bytes{1, 2, 3});
+  navigator::NavigationRouteSession session(fs);
+  EXPECT_FALSE(session.load());  // corrupt store, nothing valid to serve
+  auto frames = buildTransferFrames(goldenPackage(), 185);
+  // A corrupt store must not reject the START with RouteStorageFailed: there is
+  // nothing valid to protect, so the replacement transfer proceeds normally.
+  EXPECT_EQ(session.receive(frames.start.data(), frames.start.size()).code,
+            navigator::RouteTransferCode::RouteReady);
+}
+
 TEST(NavigationRouteSessionTest, InvalidStartLengthCannotTriggerStorageRecovery) {
   InMemoryRouteFs fs;
   const Bytes corrupt{1, 2, 3};
