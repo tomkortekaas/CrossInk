@@ -3,10 +3,12 @@
 //
 // Task 1 - strict TDD. The controller must:
 //   * default every session to Overview;
-//   * map released Up/Down to ToggleView, OK/Confirm to ManualRefresh and
-//     Back to ReturnToDashboard through one centralized pure function, with
-//     every other release mapping to None;
-//   * return to Overview after two toggles and never persist view state;
+//   * map released Up to GPS zoom and Down to Overview (deterministic: the
+//     physical controls always return to Overview), OK/Confirm to
+//     ManualRefresh and Back to ReturnToDashboard through one centralized
+//     pure function, with every other release mapping to None;
+//   * select each view idempotently (repeating the same button changes
+//     nothing) and never persist view state;
 //   * select the existing whole-route fit viewport for Overview (byte-
 //     compatible with the route-fit path) even when a fix is available;
 //   * select a north-up viewport centred on a valid fix whose horizontal
@@ -53,14 +55,17 @@ TEST(NavigationViewControllerTest, DefaultsToOverviewAtSessionStart) {
   NavigationViewController controller;
   EXPECT_EQ(controller.view(), NavigationView::Overview);
   NavigationViewController resetController;
-  resetController.toggle();
+  resetController.selectGpsZoom();
   resetController.reset();
   EXPECT_EQ(resetController.view(), NavigationView::Overview);
 }
 
-TEST(NavigationViewControllerTest, UpAndDownMapToToggleView) {
-  EXPECT_EQ(navigator::mapNavigatorButton(InputManager::BTN_UP), NavigatorAction::ToggleView);
-  EXPECT_EQ(navigator::mapNavigatorButton(InputManager::BTN_DOWN), NavigatorAction::ToggleView);
+TEST(NavigationViewControllerTest, UpSelectsGpsZoomAndDownSelectsOverview) {
+  // Deterministic controls: BTN_UP always requests GPS zoom and BTN_DOWN
+  // always requests Overview, so the walker can always return to the whole
+  // route with one press instead of toggling blind.
+  EXPECT_EQ(navigator::mapNavigatorButton(InputManager::BTN_UP), NavigatorAction::SelectGpsZoom);
+  EXPECT_EQ(navigator::mapNavigatorButton(InputManager::BTN_DOWN), NavigatorAction::SelectOverview);
 }
 
 TEST(NavigationViewControllerTest, ConfirmMapsToManualRefreshAndBackReturns) {
@@ -76,19 +81,48 @@ TEST(NavigationViewControllerTest, UnrelatedReleasesMapToNoAction) {
   }
 }
 
-TEST(NavigationViewControllerTest, TwoTogglesReturnToOverview) {
+TEST(NavigationViewControllerTest, RepeatedGpsZoomSelectionIsIdempotent) {
   NavigationViewController controller;
-  controller.toggle();
+  EXPECT_TRUE(controller.selectGpsZoom());
   EXPECT_EQ(controller.view(), NavigationView::GpsZoom);
-  controller.toggle();
+  EXPECT_FALSE(controller.selectGpsZoom()) << "already in GPS zoom must not report a change";
+  EXPECT_EQ(controller.view(), NavigationView::GpsZoom);
+}
+
+TEST(NavigationViewControllerTest, RepeatedOverviewSelectionIsIdempotent) {
+  NavigationViewController controller;  // Overview is the session default
+  EXPECT_FALSE(controller.selectOverview()) << "selecting the current view must not report a change";
   EXPECT_EQ(controller.view(), NavigationView::Overview);
 }
 
-TEST(NavigationViewControllerTest, ToggleViewActionNeverChangesSessionModeDirectly) {
-  // Toggling is the *controller's* job; the action mapping must stay pure so
-  // a later button remap can never accidentally mutate state.
-  EXPECT_EQ(navigator::mapNavigatorButton(InputManager::BTN_UP), NavigatorAction::ToggleView);
-  EXPECT_EQ(navigator::mapNavigatorButton(InputManager::BTN_DOWN), NavigatorAction::ToggleView);
+TEST(NavigationViewControllerTest, GrayBackgroundIsOnlyOpenedForGpsZoomWithValidFix) {
+  NavigationViewController controller;
+  EXPECT_FALSE(controller.shouldOpenGrayBackground(false));
+  EXPECT_FALSE(controller.shouldOpenGrayBackground(true));
+
+  ASSERT_TRUE(controller.selectGpsZoom());
+  EXPECT_FALSE(controller.shouldOpenGrayBackground(false));
+  EXPECT_TRUE(controller.shouldOpenGrayBackground(true));
+
+  ASSERT_TRUE(controller.selectOverview());
+  EXPECT_FALSE(controller.shouldOpenGrayBackground(true));
+}
+
+TEST(NavigationViewControllerTest, DownReturnsToOverviewAndUpReturnsToGpsZoom) {
+  NavigationViewController controller;
+  EXPECT_TRUE(controller.selectGpsZoom());
+  EXPECT_EQ(controller.view(), NavigationView::GpsZoom);
+  EXPECT_TRUE(controller.selectOverview());
+  EXPECT_EQ(controller.view(), NavigationView::Overview);
+  EXPECT_TRUE(controller.selectGpsZoom());
+  EXPECT_EQ(controller.view(), NavigationView::GpsZoom);
+}
+
+TEST(NavigationViewControllerTest, MappedActionsNeverChangeSessionModeDirectly) {
+  // Selecting a view is the *controller's* job; the action mapping must stay
+  // pure so a later button remap can never accidentally mutate state.
+  EXPECT_EQ(navigator::mapNavigatorButton(InputManager::BTN_UP), NavigatorAction::SelectGpsZoom);
+  EXPECT_EQ(navigator::mapNavigatorButton(InputManager::BTN_DOWN), NavigatorAction::SelectOverview);
   EXPECT_EQ(navigator::mapNavigatorButton(InputManager::BTN_CONFIRM), NavigatorAction::ManualRefresh);
 }
 
@@ -132,7 +166,7 @@ TEST(NavigationViewControllerTest, GpsZoomCentresValidFixNorthUp250MetersWithinF
   const RouteIndex route = sampleRoute();
   const CurrentPosition fix{kFix, 5, 0, false, 0};
   NavigationViewController controller;
-  controller.toggle();  // GPS zoom
+  controller.selectGpsZoom();  // GPS zoom
   ASSERT_EQ(controller.view(), NavigationView::GpsZoom);
 
   const auto selection = controller.selectViewport(route, kMapRect, &fix);
@@ -164,7 +198,7 @@ TEST(NavigationViewControllerTest, GpsZoomCentresValidFixNorthUp250MetersWithinF
 TEST(NavigationViewControllerTest, GpsZoomWithoutFixKeepsModeUsesOverviewFitAndFlagsWaiting) {
   const RouteIndex route = sampleRoute();
   NavigationViewController controller;
-  controller.toggle();  // GPS zoom requested before any valid fix
+  controller.selectGpsZoom();  // GPS zoom requested before any valid fix
   ASSERT_EQ(controller.view(), NavigationView::GpsZoom);
 
   const auto selection = controller.selectViewport(route, kMapRect, nullptr);

@@ -33,6 +33,13 @@
 //   * The GPX route is the widest pen on the canvas (kRouteLineWidthPx) and is
 //     drawn first, segment by segment, with each segment clipped independently
 //     and never joined to the next one.
+//   * When CurrentPosition carries trusted phone-tracked route progress
+//     (hasRouteProgress and a declared positive total), the drawn route is
+//     split at that progress in strict route order: the already-walked prefix
+//     becomes a thin dashed stroke (kRouteWalkedDashPx/kRouteWalkedGapPx) and
+//     the remaining route stays continuous with the dominant pen. The split
+//     is measured on the same streamed detailed geometry as the along-route
+//     remaining estimate; no synthetic joins are ever drawn or measured.
 //   * The current-position marker is drawn last (ring first, then the filled
 //     disc on top). The ring radius encodes accuracyMeters at the viewport
 //     scale, clamped to [kMarkerMinRingRadiusPx, kMarkerMaxRingRadiusPx] and
@@ -112,6 +119,15 @@ class RouteMapRenderer {
  public:
   // GPX route pen: the visually dominant stroke on the canvas.
   static constexpr int kRouteLineWidthPx = 3;
+  // Walked-route pen when a live fix carries trusted phone-tracked progress
+  // (CurrentPosition::hasRouteProgress): the already-walked prefix is drawn
+  // as a thin dashed stroke so the remaining route keeps the dominant
+  // kRouteLineWidthPx pen. Dash/gap lengths are map-local pixels, matching
+  // the background walking-path pattern so the walked prefix reads as
+  // subordinate rather than a second route.
+  static constexpr int kRouteWalkedWidthPx = 1;
+  static constexpr int kRouteWalkedDashPx = 6;
+  static constexpr int kRouteWalkedGapPx = 5;
   // Position marker: thin ring plus small filled disc, drawn over the route.
   static constexpr int kMarkerRingWidthPx = 2;
   static constexpr int kMarkerDiscRadiusPx = 7;

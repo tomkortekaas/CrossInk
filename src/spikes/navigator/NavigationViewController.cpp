@@ -11,8 +11,9 @@ namespace navigator {
 NavigatorAction mapNavigatorButton(uint8_t releasedButton) {
   switch (releasedButton) {
     case InputManager::BTN_UP:
+      return NavigatorAction::SelectGpsZoom;
     case InputManager::BTN_DOWN:
-      return NavigatorAction::ToggleView;
+      return NavigatorAction::SelectOverview;
     case InputManager::BTN_CONFIRM:
       return NavigatorAction::ManualRefresh;
     case InputManager::BTN_BACK:

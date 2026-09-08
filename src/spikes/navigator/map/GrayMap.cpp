@@ -96,8 +96,10 @@ WalkMapStatus GrayMap::draw(WalkMapByteSource& s, const RouteViewport& v, RouteC
   if ((r1 - r0 + 1) * (c1 - c0 + 1) > 9) return WalkMapStatus::BudgetExceeded;
   const auto rect = v.mapRect();
   uint8_t entry[12];
-  uint8_t labelCount = 0;
-  // Validate every visible tile before painting any of it. Labels share CRC.
+  // Validate every visible tile before painting any of it. A tile payload's
+  // CRC covers its raster rows and any label bytes that follow them, so
+  // integrity is checked even though the calm map never reads or paints the
+  // labels themselves (the vector detail layer owns the label rendering).
   for (int r = r0; r <= r1; ++r)
     for (int c = c0; c <= c1; ++c) {
       if (!read(s, 48 + (r * cols + c) * 12, entry, 12)) return WalkMapStatus::ReadFailed;
@@ -140,37 +142,7 @@ WalkMapStatus GrayMap::draw(WalkMapByteSource& s, const RouteViewport& v, RouteC
         }
         if (right > run) canvas.toneSpan(run, y, right - run, prior);
       }
-      for (uint32_t i = 0; i < u32(entry + 4); ++i) {
-        uint8_t raw[48];
-        if (!read(s, u32(entry) + tileBytes + i * 48, raw, 48)) return WalkMapStatus::ReadFailed;
-        GeoPoint point{i32(raw), i32(raw + 4)};
-        bool ended = false;
-        for (int j = 8; j < 48; ++j) {
-          if (raw[j] == 0)
-            ended = true;
-          else if (ended || raw[j] < 32 || raw[j] > 126)
-            return WalkMapStatus::InvalidData;
-        }
-        if (!ended || raw[8] == 0 || point.latitudeE7 < south + r * 100000 ||
-            point.latitudeE7 > south + (r + 1) * 100000 || point.longitudeE7 < west + c * 100000 ||
-            point.longitudeE7 > west + (c + 1) * 100000)
-          return WalkMapStatus::InvalidData;
-        const auto p = v.project(point);
-        if (p.x < rect.x || p.x >= rect.x + rect.width || p.y < rect.y || p.y >= rect.y + rect.height) continue;
-        bool duplicate = false;
-        for (uint8_t j = 0; j < labelCount; ++j)
-          if (std::strcmp(labels_[j].text, reinterpret_cast<char*>(raw + 8)) == 0) duplicate = true;
-        if (!duplicate && labelCount < 32) {
-          auto& label = labels_[labelCount++];
-          label.point = point;
-          std::memcpy(label.text, raw + 8, 40);
-        }
-      }
     }
-  for (uint8_t i = 0; i < labelCount; ++i) {
-    auto p = v.project(labels_[i].point);
-    canvas.label(p.x, p.y, labels_[i].text);
-  }
   return WalkMapStatus::Ok;
 }
 }  // namespace navigator

@@ -151,7 +151,8 @@ int maneuverBandHeight(const Layout& g) { return g.LH * NavScreenRenderer::kMane
 int overviewMapHeight(const Layout& g, bool gray, bool bandReserved) {
   const int headerTop = gray ? NavScreenRenderer::kOverviewHeaderGrayPx : NavScreenRenderer::kOverviewHeaderPlainPx;
   const int mapY = headerTop + (bandReserved ? maneuverBandHeight(g) : 0);
-  return g.LH - mapY - (gray ? 144 : 100);
+  const int footerPx = gray ? NavScreenRenderer::kOverviewFooterGrayPx : NavScreenRenderer::kOverviewFooterPlainPx;
+  return g.LH - mapY - footerPx;
 }
 
 // ---------------------------------------------------------------------------
@@ -902,14 +903,21 @@ class MapRouteCanvas final : public RouteCanvas {
     if (y < 0 || y >= mapH_ || width <= 0) return;
     const int left = std::max(0, x), right = std::min(mapW_, x + width);
     if (right <= left) return;
-    // Native light gray looks substantially darker on the panel than in the
-    // desktop preview. Mix it with white in stable 2x2 blocks so buildings and
-    // green areas recede. Dark-gray water keeps its solid tone.
-    if (tone == 2) {
+    // The two intermediate tones both read heavier on the physical panel than
+    // in the desktop preview. Mix each with white in stable 2x2 blocks so the
+    // light-gray green/open land and the dark-gray water recede together:
+    // water keeps the darker of the two tone cells, so the two large-area
+    // classes stay distinguishable, while black roads/tracks and the cased
+    // route remain the strongest ink on the calm four-gray panel. White
+    // (tone 3) and black (tone 0) keep their solid mapping.
+    if (tone == 1 || tone == 2) {
       for (int start = left; start < right;) {
-        const bool lightPixel = ((start >> 1) + (y >> 1)) % 2 == 0;
+        const bool toneCell = ((start >> 1) + (y >> 1)) % 2 == 0;
         const int end = std::min(right, (start & ~1) + 2);
-        const bool black = lightPixel ? g_.plane != NavGrayPlane::Msb : g_.plane != NavGrayPlane::Base;
+        // Even cells carry the tone (dark gray = Base ink only; light gray =
+        // the existing MSB-nudge level), odd cells carry white.
+        const bool black = toneCell ? (tone == 1 ? g_.plane == NavGrayPlane::Base : g_.plane != NavGrayPlane::Msb)
+                                    : g_.plane != NavGrayPlane::Base;
         fillRect(frameBuffer_, g_.physW, g_.physH, mapY_ + y, g_.physH - (mapX_ + end), 1, end - start, black);
         start = end;
       }
@@ -948,7 +956,10 @@ class MapRouteCanvas final : public RouteCanvas {
   }
 
   void label(int x, int y, const char* text) override {
-    if (!text || placedCount_ >= 12) return;
+    // The compact overview (four-gray calm raster or its white route-only
+    // fallback) never paints map labels: name payloads stay readable only on
+    // the plain vector layer, where this canvas is unstyled.
+    if (styled_ || !text || placedCount_ >= 12) return;
     char visible[45]{};
     std::strncpy(visible, text, sizeof(visible) - 1);
     while ((styled_ ? normalTextWidth(navFont18, visible) : textMasterWidth(visible) * 2) > mapW_ - 24 && visible[0])
@@ -1131,14 +1142,21 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
                                      const char* statusText, const char* routeDistanceTitle, GrayMapLayer* gray,
                                      NavGrayPlane plane, const NavMapText* mapText,
                                      const NavManeuverPresentation* maneuver, RouteProximity* outProximity,
-                                     const RouteViewport* viewport) {
+                                     const RouteViewport* viewport, bool compactChrome) {
   if (!frameBuffer || widthPx < 160 || heightPx < 120) return false;
   Layout g = makeLayout(widthPx, heightPx);
   g.plane = plane;
+  // The compact (four-gray) chrome is used whenever a gray layer is supplied
+  // *or* the caller explicitly requests it (compactChrome). NavigatorMain
+  // always draws the compact chrome for both navigation views and passes the
+  // gray layer only when the calm raster is actually usable; without a gray
+  // layer a compact frame is a clean white route-only map (never the legacy
+  // plain-vector "ROUTE OP X3" overview).
+  const bool compact = gray != nullptr || compactChrome;
   std::memset(frameBuffer, plane == NavGrayPlane::Base ? kWhite : kBlack,
               static_cast<size_t>((widthPx + 7) / 8) * heightPx);
   drawOuterBorder(frameBuffer, g);
-  if (!gray) drawText(frameBuffer, g, 20, 24, "ROUTE OP X3", 4, true);
+  if (!compact) drawText(frameBuffer, g, 20, 24, "ROUTE OP X3", 4, true);
   char name[65]{};
   const uint32_t count = std::min<uint32_t>(index.routeNameLength, sizeof(name) - 1);
   if (count && source.read(index.routeNameOffset, reinterpret_cast<uint8_t*>(name), count) != count) return false;
@@ -1147,10 +1165,13 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
   for (uint32_t i = 0; i < count; ++i) {
     if (static_cast<unsigned char>(name[i]) < 32) name[i] = ' ';
   }
-  while ((gray ? normalTextWidth(navFont26, name) : textMasterWidth(name) * 3) > g.LW - 40 && name[0])
+  // Four-gray overview: one compact centered route-name line (navFont18)
+  // inside the reduced kOverviewHeaderGrayPx chrome. The plain overview keeps
+  // its historical larger header treatment.
+  while ((compact ? normalTextWidth(navFont18, name) : textMasterWidth(name) * 3) > g.LW - 40 && name[0])
     name[std::strlen(name) - 1] = '\0';
-  if (gray)
-    drawNormalText(frameBuffer, g, (g.LW - normalTextWidth(navFont26, name)) / 2, 24, name, navFont26, true);
+  if (compact)
+    drawNormalText(frameBuffer, g, (g.LW - normalTextWidth(navFont18, name)) / 2, 12, name, navFont18);
   else
     drawText(frameBuffer, g, 20, 72, name, 3, true);
   // A non-null maneuver presentation on a route that declares maneuvers
@@ -1160,13 +1181,13 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
   // returns the proximity it already computed. A null presentation, or a
   // presentation on a route without maneuvers, keeps the historical map-only
   // layout byte-for-byte.
-  const int headerTop = gray ? NavScreenRenderer::kOverviewHeaderGrayPx : NavScreenRenderer::kOverviewHeaderPlainPx;
+  const int headerTop = compact ? NavScreenRenderer::kOverviewHeaderGrayPx : NavScreenRenderer::kOverviewHeaderPlainPx;
   const int bandReserved = maneuver != nullptr && index.maneuverCount > 0;
   const int mapY = headerTop + (bandReserved ? maneuverBandHeight(g) : 0);
-  const Rect mapRect = NavScreenRenderer::overviewMapRect(widthPx, heightPx, gray != nullptr, bandReserved != 0);
+  const Rect mapRect = NavScreenRenderer::overviewMapRect(widthPx, heightPx, compact, bandReserved != 0);
   const int mapHeight = mapRect.height;
   if (mapHeight <= 0) return false;
-  MapRouteCanvas canvas(frameBuffer, g, 16, mapY, g.LW - 32, mapHeight, 5, gray != nullptr);
+  MapRouteCanvas canvas(frameBuffer, g, 16, mapY, g.LW - 32, mapHeight, 5, compact);
   // The orchestrator may inject the viewport it already selected for the
   // current view (one object reused by the Base/LSB/MSB planes of a frame).
   // A null or invalid viewport keeps the historical per-call choice: centre a
@@ -1197,55 +1218,60 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
     fillRectLog(frameBuffer, g, sx, sy, scaleWidth, 2, true);
     fillRectLog(frameBuffer, g, sx, sy - 5, 2, 7, true);
     fillRectLog(frameBuffer, g, sx + scaleWidth - 2, sy - 5, 2, 7, true);
-    if (gray)
+    if (compact)
       drawNormalText(frameBuffer, g, sx, sy - 22, "100 m", navFont18);
     else
       drawText(frameBuffer, g, sx, sy - 22, "100 M", 2, true);
     fillRectLog(frameBuffer, g, g.LW - 48, mapY + 4, 28, 36, false);
-    if (gray)
+    if (compact)
       drawNormalText(frameBuffer, g, g.LW - 43, mapY + 6, "N", navFont18);
     else
       drawText(frameBuffer, g, g.LW - 43, mapY + 6, "N", 2, true);
     fillHeadVLog(frameBuffer, g, g.LW - 36, mapY + 22, mapY + 34, 6, true);
   }
-  if (gray) {
-    if (gray->status == WalkMapStatus::Ok)
-      drawNormalText(frameBuffer, g, 18, g.LH - 138, "(c) OpenStreetMap contributors", navFont14);
-    fillRectLog(frameBuffer, g, 16, g.LH - 116, g.LW - 32, 1, true);
-    fillRectLog(frameBuffer, g, g.LW / 2, g.LH - 106, 1, 62, true);
-    // A live fix that is close enough to the route swaps the two metric
-    // columns from the whole-route totals to the distance and minutes still
-    // to walk; a fix that is absent or off-route keeps the totals (and the
-    // off-route footer estimate below keeps its existing behavior).
+  if (compact) {
+    // Compact single-row footer chrome (kOverviewFooterGrayPx): the small
+    // attribution line above one summary row that holds the distance, minutes
+    // and the caller's compact GPS status, all on a shared navFont18 line so
+    // the map area is maximized. A live fix that is close enough to the route
+    // swaps the two metric values from the whole-route totals to the distance
+    // and minutes still to walk (chooseFooterMetrics); an absent or off-route
+    // fix keeps the totals. No two-column captions or big value columns.
     const NavFooterMetrics footerMetrics = chooseFooterMetrics(position, proximity, index);
-    const bool remainingMetrics = footerMetrics.mode == NavMetricMode::Remaining;
-    drawNormalText(frameBuffer, g, 22, g.LH - 103,
-                   mapText ? (remainingMetrics ? mapText->remainingRoute : mapText->totalRoute) : nullptr, navFont14);
-    drawNormalText(frameBuffer, g, g.LW / 2 + 18, g.LH - 103,
-                   mapText ? (remainingMetrics ? mapText->remainingDuration : mapText->duration) : nullptr, navFont14);
     char value[32];
     formatDistanceMeters(value, footerMetrics.distanceMeters);
-    drawNormalText(frameBuffer, g, 22, g.LH - 80, value, navFont34, true);
-    const int n = writeUint(value, footerMetrics.minutes);
-    std::memcpy(value + n, " MIN", 5);
-    drawNormalText(frameBuffer, g, g.LW / 2 + 18, g.LH - 80, value, navFont34, true);
-    if (position && routeDistanceTitle && proximity.valid &&
-        proximity.distanceMeters > std::max<uint32_t>(40, 2u * position->accuracyMeters)) {
-      char estimate[48];
-      const size_t prefix = std::min<size_t>(std::strlen(routeDistanceTitle), 18);
-      std::memcpy(estimate, routeDistanceTitle, prefix);
-      estimate[prefix] = ' ';
-      formatDistanceMeters(estimate + prefix + 1, ((proximity.distanceMeters + 5) / 10) * 10);
-      drawNormalText(frameBuffer, g, 22, g.LH - 43, estimate, navFont18);
-    }
-    // A live fix that has reliably reached the route end swaps the bottom
-    // footer status for the localized arrival message. A missing, off-route or
+    char minutes[16];
+    int n = writeUint(minutes, footerMetrics.minutes);
+    std::memcpy(minutes + n, " MIN", 5);
+    // A live fix that has reliably reached the route end swaps the trailing
+    // GPS status for the localized arrival message. A missing, off-route or
     // still-walking fix keeps the caller's status text exactly as before.
     const char* footerStatus = statusText;
     if (hasReachedRouteEnd(position, proximity, index) && mapText && mapText->arrivedStatus) {
       footerStatus = mapText->arrivedStatus;
     }
-    drawNormalText(frameBuffer, g, 22, g.LH - 21, footerStatus, navFont14);
+    const int summaryY = g.LH - 22;
+    int x = 22;
+    drawNormalText(frameBuffer, g, x, summaryY, value, navFont18);
+    x += normalTextWidth(navFont18, value) + 24;
+    drawNormalText(frameBuffer, g, x, summaryY, minutes, navFont18);
+    x += normalTextWidth(navFont18, minutes) + 24;
+    if (footerStatus != nullptr && footerStatus[0] != '\0') {
+      char status[64];
+      size_t len = 0;
+      while (len + 1 < sizeof(status) && footerStatus[len] != '\0') {
+        status[len] = footerStatus[len];
+        ++len;
+      }
+      status[len] = '\0';
+      while (len > 0 && x + normalTextWidth(navFont18, status) > g.LW - 16) {
+        status[--len] = '\0';
+      }
+      drawNormalText(frameBuffer, g, x, summaryY, status, navFont18);
+    }
+    if (gray != nullptr && gray->status == WalkMapStatus::Ok) {
+      drawNormalText(frameBuffer, g, 18, g.LH - 50, "(c) OpenStreetMap contributors", navFont14);
+    }
     return true;
   }
   if ((gray && gray->status == WalkMapStatus::Ok) ||

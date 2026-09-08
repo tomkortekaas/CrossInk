@@ -25,12 +25,9 @@ freeink::FreeInkDisplay display(8, 10, 21, 4, 5, 6);
 InputManager input;
 navigator::RouteSdFileSystem routeFs;
 navigator::NavigationRouteSession routes(routeFs);  // ~20 KiB, never task-stack local
-navigator::WalkMapSdSource mapSource;
 navigator::WalkMapSdSource graySource;
-navigator::GrayMap grayMap;  // bounded label cache, no tile/frame allocation
+navigator::GrayMap grayMap;  // bounded 48-byte header state; no raster/label allocation
 navigator::GrayMapLayer grayLayer{&graySource, &grayMap};
-navigator::WalkMap backgroundMap;  // <=64 bytes; no retained province index
-navigator::WalkMapLayer mapLayer{&mapSource, &backgroundMap};
 navigator::NavigationRefreshPolicy refreshPolicy;
 navigator::NavigationViewController viewController;  // session view mode (Overview default)
 navigator::NavigationStartup startup;                // calm entry submission gate
@@ -58,16 +55,17 @@ void message(const char* title, const char* detail) {
 bool showRouteLoadingLayout() {
   const uint16_t width = display.getDisplayWidth();
   const uint16_t height = display.getDisplayHeight();
-  const navigator::NavMapText mapText{tr(STR_NAV_TOTAL_ROUTE), tr(STR_NAV_DURATION), tr(STR_NAV_REMAINING_ROUTE),
-                                      tr(STR_NAV_REMAINING_DURATION), tr(STR_NAV_ARRIVED_STATUS)};
-  // Maps are opened after this frame, so it uses the plain overview layout
-  // (the completed frame at entry has no live fix yet and uses it too).
-  const navigator::Rect mapRect = navigator::NavScreenRenderer::overviewMapRect(width, height, false);
+  const navigator::NavMapText mapText{tr(STR_NAV_ARRIVED_STATUS)};
+  // Maps are opened after this frame, so the route is drawn over the clean
+  // white route-only map under the same compact chrome the completed
+  // Overview frame always uses - the loading frame is the final navigation
+  // layout, never a legacy plain-vector screen.
+  const navigator::Rect mapRect = navigator::NavScreenRenderer::overviewMapRect(width, height, true);
   const auto selection = viewController.selectViewport(routes.index(), mapRect, nullptr);
   const bool drawn = navigator::NavScreenRenderer::drawOverview(
       display.getFrameBuffer(), width, height, routes.source(), routes.index(), nullptr, nullptr,
       tr(STR_NAV_LOADING_ROUTE), tr(STR_NAV_ROUTE_APPROX), nullptr, navigator::NavGrayPlane::Base, &mapText, nullptr,
-      nullptr, &selection.viewport);
+      nullptr, &selection.viewport, true);
   if (drawn) {
     display.displayBuffer(freeink::FreeInkDisplay::FULL_REFRESH);
     return true;
@@ -77,12 +75,15 @@ bool showRouteLoadingLayout() {
 }
 
 // Draws one complete route frame for the current navigation view and submits
-// it with `refresh`. It first reads the latest valid fix and opens the best
-// available background map without any intermediate display submission, so a
-// route replacement or refresh replaces the visible frame in one pass. One
-// viewport selection is made per submitted frame and the same object feeds
-// the Base, LSB and MSB planes, so the grayscale planes cannot disagree
-// geometrically. Terminal storage/route/map failures keep their explicit
+// it with `refresh`. Both navigation views (Overview and GPS zoom) always use
+// the compact four-gray chrome; a live fix only adds the position marker and
+// the calm gray raster is opened for the route area regardless of GPS, so no
+// missing/expired fix ever demotes the frame to the legacy plain-vector
+// overview. A whole-route Overview whose gray coverage is absent or over the
+// map's tile budget keeps the compact chrome over a clean white route-only
+// map. One viewport selection is made per submitted frame and the same object
+// feeds the Base, LSB and MSB planes, so the grayscale planes cannot disagree
+// geometrically. Terminal storage/route failures keep their explicit
 // full-screen errors.
 void showRouteFrame(navigator::NavigationRefresh refresh = navigator::NavigationRefresh::Full) {
   const uint16_t width = display.getDisplayWidth();
@@ -98,16 +99,14 @@ void showRouteFrame(navigator::NavigationRefresh refresh = navigator::Navigation
   const uint32_t started = millis();
   navigator::LivePosition fix{};
   bool hasPosition = navigator::navigationPosition(millis(), fix);
-  const bool grayReady = hasPosition && display.supportsStripGrayscale() &&
-                         graySource.beginRead(cancelMapRead, "/Navigation/Maps/gray.x3gm") &&
-                         grayMap.open(graySource) == navigator::WalkMapStatus::Ok;
-  bool detailReady = grayReady;
-  if (!grayReady && hasPosition && mapSource.beginRead(cancelMapRead, "/Navigation/Maps/detail.walkmap"))
-    detailReady = backgroundMap.open(mapSource) == navigator::WalkMapStatus::Ok;
-  if (!detailReady && !backRequested) {
-    mapSource.beginRead(cancelMapRead);
-    backgroundMap.open(mapSource);
-  }
+  // Keep session entry immediate: the whole-route Overview is the compact
+  // white route-only map and never scans the large gray-map index. Open the
+  // calm raster only for GPS zoom once a valid centre is available.
+  const bool grayReady =
+      viewController.shouldOpenGrayBackground(hasPosition) && display.supportsStripGrayscale() && !backRequested &&
+      graySource.beginRead(cancelMapRead, "/Navigation/Maps/gray.x3gm") &&
+      grayMap.open(graySource) == navigator::WalkMapStatus::Ok;
+  // Slow SD reads can age a fix out; re-read it before composing the frame.
   hasPosition = navigator::navigationPosition(millis(), fix);
   navigator::CurrentPosition position{{fix.latitudeE7, fix.longitudeE7}, fix.accuracyMeters, 0,
                                       fix.hasRouteProgress, fix.distanceFromStartMeters};
@@ -116,33 +115,28 @@ void showRouteFrame(navigator::NavigationRefresh refresh = navigator::Navigation
     if (hasPosition) return (fix.offRoute ? tr(STR_NAV_OFF_ROUTE_SNAPSHOT) : tr(STR_NAV_POSITION_SNAPSHOT));
     return (navigator::navigationSessionActive() ? tr(STR_NAV_WAITING_GPS) : tr(STR_NAV_GPS_INACTIVE));
   };
-  const navigator::NavMapText mapText{tr(STR_NAV_TOTAL_ROUTE), tr(STR_NAV_DURATION), tr(STR_NAV_REMAINING_ROUTE),
-                                      tr(STR_NAV_REMAINING_DURATION), tr(STR_NAV_ARRIVED_STATUS)};
-  const auto selectFor = [&](bool grayMode, const navigator::CurrentPosition* fixPosition) {
+  const navigator::NavMapText mapText{tr(STR_NAV_ARRIVED_STATUS)};
+  // Both views share the compact chrome, so the map rectangle is always the
+  // compact one.
+  const auto selectFor = [&](const navigator::CurrentPosition* fixPosition) {
     return viewController.selectViewport(
-        routes.index(), navigator::NavScreenRenderer::overviewMapRect(width, height, grayMode), fixPosition);
+        routes.index(), navigator::NavScreenRenderer::overviewMapRect(width, height, true), fixPosition);
   };
   bool useGray = grayReady;
-  navigator::NavigationViewportSelection selection = selectFor(useGray, hasPosition ? &position : nullptr);
+  navigator::NavigationViewportSelection selection = selectFor(hasPosition ? &position : nullptr);
   bool drawn = navigator::NavScreenRenderer::drawOverview(
-      display.getFrameBuffer(), width, height, routes.source(), routes.index(), &mapLayer,
+      display.getFrameBuffer(), width, height, routes.source(), routes.index(), nullptr,
       hasPosition ? &position : nullptr, statusText(selection.waitingForGps), tr(STR_NAV_ROUTE_APPROX),
-      useGray ? &grayLayer : nullptr, navigator::NavGrayPlane::Base, &mapText, nullptr, nullptr, &selection.viewport);
-  if (useGray && grayLayer.status != navigator::WalkMapStatus::Ok && !backRequested) {
-    // Unsupported coverage or damaged gray tile: use the existing vector map.
-    LOG_INF("NAV", "gray fallback status=%u", static_cast<unsigned>(grayLayer.status));
+      useGray ? &grayLayer : nullptr, navigator::NavGrayPlane::Base, &mapText, nullptr, nullptr, &selection.viewport,
+      true);
+  if (drawn && useGray && grayLayer.status != navigator::WalkMapStatus::Ok && !backRequested) {
+    // Coverage absent/damaged, or the whole-route view spans more than the
+    // map's tile budget. RouteMapRenderer cleared the map to white before
+    // drawing the route, so this Base frame already is the compact white
+    // route-only fallback - it is never repainted in the legacy plain-vector
+    // style.
+    LOG_INF("NAV", "gray coverage fallback status=%u", static_cast<unsigned>(grayLayer.status));
     useGray = false;
-    graySource.endRead();
-    if (!mapSource.beginRead(cancelMapRead, "/Navigation/Maps/detail.walkmap") ||
-        backgroundMap.open(mapSource) != navigator::WalkMapStatus::Ok) {
-      mapSource.beginRead(cancelMapRead);
-      backgroundMap.open(mapSource);
-    }
-    selection = selectFor(false, hasPosition ? &position : nullptr);
-    drawn = navigator::NavScreenRenderer::drawOverview(
-        display.getFrameBuffer(), width, height, routes.source(), routes.index(), &mapLayer,
-        hasPosition ? &position : nullptr, statusText(selection.waitingForGps), tr(STR_NAV_ROUTE_APPROX), nullptr,
-        navigator::NavGrayPlane::Base, nullptr, nullptr, nullptr, &selection.viewport);
   }
   if (drawn && useGray && !backRequested) {
     // SDK's calibrated differential gray base, then two masks. Reuse the one
@@ -150,9 +144,9 @@ void showRouteFrame(navigator::NavigationRefresh refresh = navigator::Navigation
     display.displayGrayscaleBase(freeink::FreeInkDisplay::HALF_REFRESH);
     for (auto plane : {navigator::NavGrayPlane::Lsb, navigator::NavGrayPlane::Msb}) {
       drawn = navigator::NavScreenRenderer::drawOverview(
-          display.getFrameBuffer(), width, height, routes.source(), routes.index(), nullptr, &position,
-          statusText(selection.waitingForGps), tr(STR_NAV_ROUTE_APPROX), &grayLayer, plane, &mapText, nullptr, nullptr,
-          &selection.viewport);
+          display.getFrameBuffer(), width, height, routes.source(), routes.index(), nullptr,
+          hasPosition ? &position : nullptr, statusText(selection.waitingForGps), tr(STR_NAV_ROUTE_APPROX),
+          &grayLayer, plane, &mapText, nullptr, nullptr, &selection.viewport, true);
       if (!drawn || grayLayer.status != navigator::WalkMapStatus::Ok || backRequested) {
         drawn = false;
         break;
@@ -166,25 +160,24 @@ void showRouteFrame(navigator::NavigationRefresh refresh = navigator::Navigation
       // Never display a partially loaded plane. A normal BW refresh also
       // restores controller RAM after an interrupted gray-mask upload.
       useGray = false;
-      selection = selectFor(false, &position);
+      selection = selectFor(hasPosition ? &position : nullptr);
       drawn = navigator::NavScreenRenderer::drawOverview(
-          display.getFrameBuffer(), width, height, routes.source(), routes.index(), nullptr, &position,
-          statusText(selection.waitingForGps), tr(STR_NAV_ROUTE_APPROX), nullptr, navigator::NavGrayPlane::Base,
-          nullptr, nullptr, nullptr, &selection.viewport);
+          display.getFrameBuffer(), width, height, routes.source(), routes.index(), nullptr,
+          hasPosition ? &position : nullptr, statusText(selection.waitingForGps), tr(STR_NAV_ROUTE_APPROX), nullptr,
+          navigator::NavGrayPlane::Base, &mapText, nullptr, nullptr, &selection.viewport, true);
     }
   }
-  // Slow SD reads can age a fix out. Never publish it as a current position.
-  // Fall back without the background to avoid another long regional read.
+  // Slow SD reads can age a fix out. Never publish it as a current position:
+  // redraw the compact white route-only frame without the marker.
   if (hasPosition && !navigator::navigationPosition(millis(), fix) && !backRequested) {
     hasPosition = false;
     useGray = false;
-    selection = selectFor(false, nullptr);
+    selection = selectFor(nullptr);
     drawn = navigator::NavScreenRenderer::drawOverview(
         display.getFrameBuffer(), width, height, routes.source(), routes.index(), nullptr, nullptr,
-        statusText(selection.waitingForGps), tr(STR_NAV_ROUTE_APPROX), nullptr, navigator::NavGrayPlane::Base, nullptr,
-        nullptr, nullptr, &selection.viewport);
+        statusText(selection.waitingForGps), tr(STR_NAV_ROUTE_APPROX), nullptr, navigator::NavGrayPlane::Base,
+        &mapText, nullptr, nullptr, &selection.viewport, true);
   }
-  mapSource.endRead();
   graySource.endRead();
   LOG_INF("NAV", "map load ms=%u cancelled=%d", millis() - started, backRequested);
   if (backRequested) return;
@@ -192,7 +185,7 @@ void showRouteFrame(navigator::NavigationRefresh refresh = navigator::Navigation
     message("KAART NIET LEESBAAR", "STUUR ROUTE OPNIEUW");
     return;
   }
-  LOG_INF("NAV", "map status=%u edges=%u", static_cast<unsigned>(mapLayer.status), mapLayer.edgeCount);
+  LOG_INF("NAV", "gray status=%u", static_cast<unsigned>(grayLayer.status));
   if (useGray)
     display.displayGrayBuffer();
   else
@@ -281,9 +274,15 @@ void loop() {
   for (const uint8_t button : navButtons) {
     if (!input.wasReleased(button)) continue;
     switch (navigator::mapNavigatorButton(button)) {
-      case navigator::NavigatorAction::ToggleView:
-        viewController.toggle();
-        viewChanged = true;
+      // Deterministic controls: Up selects GPS zoom and Down selects
+      // Overview. Both selections are idempotent, so a repeated press of the
+      // view you are already on reports no change and draws no new frame -
+      // and Down can always bring the whole route back.
+      case navigator::NavigatorAction::SelectGpsZoom:
+        viewChanged = viewController.selectGpsZoom() || viewChanged;
+        break;
+      case navigator::NavigatorAction::SelectOverview:
+        viewChanged = viewController.selectOverview() || viewChanged;
         break;
       case navigator::NavigatorAction::ManualRefresh:
         manualRefresh = true;
@@ -321,10 +320,10 @@ void loop() {
       message("OPSLAAN MISLUKT", "CONTROLEER SD KAART");
     // No per-chunk screen refresh. Validation errors are reported to the phone.
   }
-  // Centralized released-button mapping (see mapNavigatorButton): Up/Down
-  // toggle Overview/GPS zoom, OK refreshes the current view, and Back (above)
-  // returns to the dashboard. The mapping is pure and host-tested, so a later
-  // physical-button remap touches only that component.
+  // Centralized released-button mapping (see mapNavigatorButton): Up selects
+  // GPS zoom, Down selects Overview, OK refreshes the current view, and Back
+  // (above) returns to the dashboard. The mapping is pure and host-tested,
+  // so a later physical-button remap touches only that component.
   // OK always refreshes the current navigation frame. Receiver recovery is
   // intentionally not coupled to this semantic action.
   navigator::LivePosition automaticPosition{};

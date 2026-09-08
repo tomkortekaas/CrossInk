@@ -928,3 +928,308 @@ TEST(RouteMapRendererTest, RemainingDistanceWithoutMeasurableGeometryKeepsDeclar
   EXPECT_TRUE(outcome.proximity.valid);
   EXPECT_EQ(outcome.proximity.remainingDistanceMeters, 4000U);
 }
+
+// ---------------------------------------------------------------------------
+// Phone-tracked route progress (live v3 fix): split the drawn route at the
+// trusted distance-from-start so the already-walked prefix becomes a thin
+// dashed stroke and the remaining route keeps the dominant pen, in strict
+// route order (never the nearest-edge ambiguity). Progress 0, a mid-route
+// split, progress past the total, multiple segments and legacy fixes without
+// the progress flag must all stay deterministic and bounded.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Straight 4-edge north-south route with a declared total. All coordinates
+// are exact multiples of 100 E7 so the E5 wire quantization is lossless and
+// every measured edge accounts for totalMeters / 4 of the declared total.
+struct FourEdgeProgressRoute {
+  Bytes bytes;
+  RouteIndex index;
+  std::vector<GeoPoint> points;  // 5 points, 4 equal ~1.1 km edges
+};
+
+FourEdgeProgressRoute makeFourEdgeProgressRoute(uint32_t totalMeters) {
+  FourEdgeProgressRoute route;
+  const int32_t baseLat = 520'000'000;
+  const int32_t baseLon = 40'000'000;
+  for (int i = 0; i < 5; ++i) {
+    route.points.push_back(GeoPoint{baseLat + i * 100'000, baseLon});
+  }
+  route.bytes = encodeRoute(route.points, {0}, totalMeters, 100);
+  EXPECT_EQ(decode(route.bytes, route.index), DecodeStatus::Ok);
+  return route;
+}
+
+// Local two-segment route: segment 0 runs two equal edges, segment 1 restarts
+// at an absolute anchor 550 m further south (a recorded GPX gap) and runs two
+// more equal edges. Declared total 4000 m, so each of the four measured edges
+// accounts for 1000 m and the gap between the segments is never measured.
+struct TwoSegmentProgressRoute {
+  Bytes bytes;
+  RouteIndex index;
+  std::vector<GeoPoint> points;  // A0..A2 then B0..B2
+};
+
+TwoSegmentProgressRoute makeTwoSegmentProgressRoute() {
+  TwoSegmentProgressRoute route;
+  const int32_t baseLat = 520'000'000;
+  const int32_t baseLon = 40'000'000;
+  route.points = {
+      GeoPoint{baseLat, baseLon},                // A0
+      GeoPoint{baseLat + 100'000, baseLon},      // A1
+      GeoPoint{baseLat + 200'000, baseLon},      // A2 (end of segment 0)
+      GeoPoint{baseLat + 250'000, baseLon},      // B0 (absolute anchor)
+      GeoPoint{baseLat + 350'000, baseLon},      // B1
+      GeoPoint{baseLat + 450'000, baseLon},      // B2 (end of route)
+  };
+  route.bytes = encodeRoute(route.points, {0, 3}, 4000, 100);
+  EXPECT_EQ(decode(route.bytes, route.index), DecodeStatus::Ok);
+  EXPECT_EQ(route.index.segmentCount, 2U);
+  return route;
+}
+
+// Draws a route through the production renderer with an explicit position and
+// returns the canvas, tracking source and viewport for primitive assertions.
+struct SplitDrawResult {
+  RenderStatus status = RenderStatus::InvalidViewport;
+  RecordingCanvas canvas{1, 1};
+  TrackingSource source{Bytes{}};
+  RouteViewport viewport;
+  RouteProximity proximity;
+};
+
+SplitDrawResult drawProgress(const Bytes& bytes, const RouteIndex& index, const CurrentPosition& position,
+                             bool measureProximity = false) {
+  SplitDrawResult result;
+  const Rect mapRect{0, 0, 600, 600};
+  const GeoPoint origin{index.originLatitudeE7, index.originLongitudeE7};
+  result.viewport = RouteViewport::centered(origin, mapRect, 10000, 8);
+  if (!result.viewport.isValid()) {
+    return result;
+  }
+  result.canvas = RecordingCanvas(mapRect.width, mapRect.height);
+  result.source = TrackingSource(bytes);
+  result.status = RouteMapRenderer::draw(result.canvas, result.source, index, result.viewport, &position, nullptr,
+                                         measureProximity ? &result.proximity : nullptr);
+  return result;
+}
+
+void splitLines(const SplitDrawResult& result, std::vector<RecordingCanvas::Line>& dominant,
+                std::vector<RecordingCanvas::Line>& walked) {
+  for (const auto& line : result.canvas.lines()) {
+    if (line.width == RouteMapRenderer::kRouteLineWidthPx) {
+      dominant.push_back(line);
+    } else {
+      walked.push_back(line);
+    }
+  }
+}
+
+}  // namespace
+
+TEST(RouteMapRendererTest, TrustedProgressZeroKeepsWholeRouteDominantAndMarkerLast) {
+  const auto route = makeFourEdgeProgressRoute(4000);
+  // Progress 0 means nothing has been walked yet: the whole route keeps the
+  // dominant pen exactly as a legacy fix would draw it.
+  const CurrentPosition position{route.points[0], 5, 0, true, 0};
+  const SplitDrawResult result = drawProgress(route.bytes, route.index, position);
+  ASSERT_EQ(result.status, RenderStatus::Ok);
+  ASSERT_EQ(result.canvas.lineCount(), 4U);
+  for (const auto& line : result.canvas.lines()) {
+    EXPECT_EQ(line.width, RouteMapRenderer::kRouteLineWidthPx) << "progress 0 must not dash the route";
+  }
+  // The marker is still drawn last, over the whole route.
+  const auto& kinds = result.canvas.kinds();
+  ASSERT_EQ(kinds.size(), 7U);  // clear + 4 route lines + ring + disc
+  EXPECT_EQ(kinds.back(), RecordingCanvas::Kind::Disc);
+  EXPECT_EQ(kinds[kinds.size() - 2], RecordingCanvas::Kind::Ring);
+}
+
+TEST(RouteMapRendererTest, TrustedProgressAtVertexSplitsWalkedDashesFromDominantRemaining) {
+  const auto route = makeFourEdgeProgressRoute(4000);
+  // Progress 2000 m of 4000 m: the split lands exactly on the p2 vertex, so
+  // edges p0->p1 and p1->p2 are walked (dashes) and p2->p3 + p3->p4 remain
+  // dominant and start exactly at the projected vertex.
+  const CurrentPosition position{route.points[2], 5, 0, true, 2000};
+  const SplitDrawResult result = drawProgress(route.bytes, route.index, position);
+  ASSERT_EQ(result.status, RenderStatus::Ok);
+
+  std::vector<RecordingCanvas::Line> dominant;
+  std::vector<RecordingCanvas::Line> walked;
+  splitLines(result, dominant, walked);
+  ASSERT_EQ(dominant.size(), 2U) << "only the two remaining edges keep the dominant pen";
+  ASSERT_FALSE(walked.empty()) << "the walked prefix must be drawn as dashes";
+
+  const auto proj = [&](size_t i) { return result.viewport.project(route.points[i]); };
+  // The first dominant edge is exactly the remaining edge starting at p2.
+  EXPECT_EQ(dominant[0].x0, proj(2).x);
+  EXPECT_EQ(dominant[0].y0, proj(2).y);
+  EXPECT_EQ(dominant[0].x1, proj(3).x);
+  EXPECT_EQ(dominant[0].y1, proj(3).y);
+  EXPECT_EQ(dominant[1].x0, proj(3).x);
+  EXPECT_EQ(dominant[1].y0, proj(3).y);
+  EXPECT_EQ(dominant[1].x1, proj(4).x);
+  EXPECT_EQ(dominant[1].y1, proj(4).y);
+
+  // Every walked dash lies on the vertical route between p0 and p2.
+  const int x = proj(0).x;
+  const int y0 = proj(0).y;
+  const int y2 = proj(2).y;
+  for (const auto& line : walked) {
+    EXPECT_EQ(line.width, RouteMapRenderer::kRouteWalkedWidthPx) << "walked dashes use the thin subordinate stroke";
+    EXPECT_EQ(line.x0, x);
+    EXPECT_EQ(line.x1, x);
+    EXPECT_GE(line.y0, std::min(y0, y2));
+    EXPECT_LE(line.y0, std::max(y0, y2));
+    EXPECT_GE(line.y1, std::min(y0, y2));
+    EXPECT_LE(line.y1, std::max(y0, y2));
+  }
+
+  // Route order: every dashed stroke precedes every dominant stroke.
+  const auto& kinds = result.canvas.kinds();
+  size_t firstDominant = kinds.size();
+  size_t lastWalked = 0;
+  for (size_t i = 1; i < kinds.size(); ++i) {
+    if (kinds[i] == RecordingCanvas::Kind::Line) {
+      if (result.canvas.lines()[i - 1].width == RouteMapRenderer::kRouteWalkedWidthPx) lastWalked = i;
+      if (result.canvas.lines()[i - 1].width == RouteMapRenderer::kRouteLineWidthPx && firstDominant == kinds.size())
+        firstDominant = i;
+    }
+  }
+  EXPECT_LT(lastWalked, firstDominant) << "walked dashes must precede the dominant remaining route";
+  // Marker stays last.
+  EXPECT_EQ(kinds.back(), RecordingCanvas::Kind::Disc);
+}
+
+TEST(RouteMapRendererTest, TrustedProgressInsideEdgeSplitsThatSingleEdge) {
+  const auto route = makeFourEdgeProgressRoute(4000);
+  // Progress 1250 m: the split lies one quarter into the p1->p2 edge (edge 1
+  // spans measured [1000, 2000]). Exactly one edge is split: its walked
+  // quarter is dashed and its dominant remainder starts at the split point,
+  // followed by the two fully remaining edges (3 dominant lines total).
+  const CurrentPosition position{GeoPoint{520'125'000, 40'000'000}, 5, 0, true, 1250};
+  const SplitDrawResult result = drawProgress(route.bytes, route.index, position);
+  ASSERT_EQ(result.status, RenderStatus::Ok);
+
+  std::vector<RecordingCanvas::Line> dominant;
+  std::vector<RecordingCanvas::Line> walked;
+  splitLines(result, dominant, walked);
+  ASSERT_EQ(dominant.size(), 3U) << "split edge tail + two fully remaining edges";
+  ASSERT_FALSE(walked.empty());
+
+  const auto proj = [&](size_t i) { return result.viewport.project(route.points[i]); };
+  const ScreenPoint split = result.viewport.project(GeoPoint{520'125'000, 40'000'000});
+  EXPECT_NEAR(dominant[0].x0, split.x, 1) << "dominant remainder starts at the split point";
+  EXPECT_NEAR(dominant[0].y0, split.y, 1);
+  EXPECT_EQ(dominant[0].x1, proj(2).x) << "split edge remainder ends at the original vertex";
+  EXPECT_EQ(dominant[0].y1, proj(2).y);
+  EXPECT_EQ(dominant[1].x0, proj(2).x);
+  EXPECT_EQ(dominant[1].y0, proj(2).y);
+  EXPECT_EQ(dominant[2].x0, proj(3).x);
+  EXPECT_EQ(dominant[2].y0, proj(3).y);
+}
+
+TEST(RouteMapRendererTest, TrustedProgressAtOrBeyondTotalDashesTheWholeRoute) {
+  const auto route = makeFourEdgeProgressRoute(4000);
+  for (uint32_t walkedMeters : {4000U, 999'999U}) {
+    SCOPED_TRACE("walked=" + std::to_string(walkedMeters));
+    const CurrentPosition position{route.points[4], 5, 0, true, walkedMeters};
+    const SplitDrawResult result = drawProgress(route.bytes, route.index, position);
+    ASSERT_EQ(result.status, RenderStatus::Ok);
+    std::vector<RecordingCanvas::Line> dominant;
+    std::vector<RecordingCanvas::Line> walked;
+    splitLines(result, dominant, walked);
+    EXPECT_TRUE(dominant.empty()) << "nothing remains to walk once progress reaches the total";
+    EXPECT_FALSE(walked.empty()) << "the fully walked route is drawn as the subordinate dashes";
+  }
+}
+
+TEST(RouteMapRendererTest, LegacyFixWithoutTrustedProgressKeepsSingleDominantPass) {
+  const auto route = makeFourEdgeProgressRoute(4000);
+  // A legacy v1/v2 fix carries no progress flag: the carried distance value is
+  // meaningless and the whole route keeps the current single-pass dominant
+  // rendering (identical to a fix without any progress fields).
+  const CurrentPosition legacy{route.points[2], 5, 0, false, 2000};
+  const SplitDrawResult result = drawProgress(route.bytes, route.index, legacy);
+  ASSERT_EQ(result.status, RenderStatus::Ok);
+  ASSERT_EQ(result.canvas.lineCount(), 4U);
+  for (const auto& line : result.canvas.lines()) {
+    EXPECT_EQ(line.width, RouteMapRenderer::kRouteLineWidthPx);
+  }
+}
+
+TEST(RouteMapRendererTest, TrustedProgressSplitsAcrossSegmentsInRouteOrderWithoutJoining) {
+  const auto route = makeTwoSegmentProgressRoute();
+  // Progress 2500 m of 4000 m: segment 0's two edges are fully walked, then
+  // the split lands halfway into segment 1's first edge (B0->B1). The
+  // A2->B0 recording gap is never measured or joined.
+  const CurrentPosition position{GeoPoint{520'300'000, 40'000'000}, 5, 0, true, 2500};
+  const SplitDrawResult result = drawProgress(route.bytes, route.index, position);
+  ASSERT_EQ(result.status, RenderStatus::Ok);
+
+  std::vector<RecordingCanvas::Line> dominant;
+  std::vector<RecordingCanvas::Line> walked;
+  splitLines(result, dominant, walked);
+  ASSERT_EQ(dominant.size(), 2U) << "a synthetic A2->B0 join would add a third dominant edge";
+  ASSERT_FALSE(walked.empty());
+
+  const auto proj = [&](size_t i) { return result.viewport.project(route.points[i]); };
+  const ScreenPoint split = result.viewport.project(GeoPoint{520'300'000, 40'000'000});
+  EXPECT_NEAR(dominant[0].x0, split.x, 1);
+  EXPECT_NEAR(dominant[0].y0, split.y, 1);
+  EXPECT_EQ(dominant[0].x1, proj(4).x);
+  EXPECT_EQ(dominant[0].y1, proj(4).y);
+  EXPECT_EQ(dominant[1].x0, proj(4).x);
+  EXPECT_EQ(dominant[1].y0, proj(4).y);
+  EXPECT_EQ(dominant[1].x1, proj(5).x);
+  EXPECT_EQ(dominant[1].y1, proj(5).y);
+}
+
+TEST(RouteMapRendererTest, TrustedProgressShortReadFailsBeforeAnySplitLineIsDrawn) {
+  const auto route = makeFourEdgeProgressRoute(4000);
+  // Truncate inside the geometry: the required measure pass cannot sum the
+  // whole route, so the split draw must return ShortRead without pretending a
+  // partial walked prefix is authoritative.
+  Bytes truncated(route.bytes.begin(), route.bytes.begin() + 44);
+  const CurrentPosition position{route.points[2], 5, 0, true, 2000};
+  const Rect mapRect{0, 0, 600, 600};
+  const RouteViewport viewport = RouteViewport::centered(route.points[0], mapRect, 10000, 8);
+  ASSERT_TRUE(viewport.isValid());
+  RecordingCanvas canvas(mapRect.width, mapRect.height);
+  TrackingSource source(truncated);
+  const RenderStatus status = RouteMapRenderer::draw(canvas, source, route.index, viewport, &position);
+  EXPECT_EQ(status, RenderStatus::ShortRead);
+  EXPECT_EQ(canvas.clearCount(), 1U);
+  EXPECT_EQ(canvas.lineCount(), 0U) << "no walked dashes may be drawn from a half-measured route";
+}
+
+TEST(RouteMapRendererTest, TrustedProgressStreamsGeometryTwiceWithBoundedReads) {
+  // A long single-segment route forces the split path to stream the detailed
+  // geometry twice (one measure pass, one draw pass), each through <= 1,024
+  // byte reads. Progress 0 keeps every edge dominant while still proving the
+  // second pass happened.
+  std::vector<GeoPoint> points;
+  points.reserve(1501);
+  for (int i = 0; i <= 1500; ++i) {
+    points.push_back(GeoPoint{523'676'000 + i * 1000, 49'041'000 + i * 1000});
+  }
+  const Bytes bytes = encodeRoute(points, {0}, 4000, 100);
+  RouteIndex index;
+  ASSERT_EQ(decode(bytes, index), DecodeStatus::Ok);
+
+  const Rect mapRect{0, 0, 300, 400};
+  const RouteViewport viewport = RouteViewport::centered(points.back(), mapRect, 200, 8);
+  ASSERT_TRUE(viewport.isValid());
+  const CurrentPosition position{points.back(), 5, 0, true, 0};
+  RecordingCanvas canvas(mapRect.width, mapRect.height);
+  TrackingSource source(bytes);
+  const RenderStatus status = RouteMapRenderer::draw(canvas, source, index, viewport, &position);
+  ASSERT_EQ(status, RenderStatus::Ok);
+
+  // 1500 deltas * 4 bytes = 6000 bytes of geometry: >= 6 reads per pass, so
+  // two passes need at least 12 reads, each individually <= 1,024 bytes.
+  EXPECT_GE(source.readCalls, 12U) << "the split path must stream geometry twice";
+  EXPECT_LE(source.maxRequested, navigator::kRoutePackageV1WorkBufferBytes);
+  EXPECT_GT(canvas.lineCount(), 0U);
+}

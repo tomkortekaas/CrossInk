@@ -4,7 +4,9 @@
 namespace navigator {
 class RouteCanvas;
 // X3GM v1. Immutable source for open/draw lifetime. One 128-byte row on stack,
-// no raster allocation. The bounded labels live in the global map instance.
+// no raster allocation. The calm four-gray background deliberately never
+// paints tile labels (they crowd the panel); label payloads in the tile files
+// are covered by the tile CRC but are not read or drawn by the gray map.
 class GrayMap {
  public:
   WalkMapStatus open(WalkMapByteSource&);
@@ -13,10 +15,6 @@ class GrayMap {
 
  private:
   uint8_t header_[48]{};
-  struct Label {
-    GeoPoint point;
-    char text[40];
-  } labels_[32]{};
   bool valid_ = false;
 };
 struct GrayMapLayer {

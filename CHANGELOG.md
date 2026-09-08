@@ -49,6 +49,17 @@
 
 ### Changed
 
+- The X3 walking navigator's grayscale route overview is calmer and gives the
+  map more room: the oversized route-name header is now a single compact
+  centered line, and the two-column distance/time footer with captions is a
+  single compact row that reads distance, minutes and the current GPS status
+  at a glance (the plain vector layout is unchanged). During a live walk the
+  route is drawn with the already-walked part as a thin dashed line and only
+  the part still ahead in the dominant route colour, split by the phone's own
+  progress reporting. The offline gray map no longer draws individual building
+  footprints, so water and green/open land stay distinguishable in the calm
+  four-tone look.
+
 - Navigator supports an optional detailed walking map with street names, building outlines, water hatching, road/path styles, a larger position marker, north/scale and approximate straight-line direction to the GPX route. The previous regional map remains available as fallback.
 
 - Navigator can show the latest received GPS position at a 400-meter walking scale on OK, with explicit GPS status and a route-overview fallback when no fresh position is available.

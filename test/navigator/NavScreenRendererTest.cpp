@@ -971,6 +971,55 @@ TEST(NavScreenRendererTest, RemainingMinutesAreProportionalWithZeroAndOverflowBo
 }
 
 // ---------------------------------------------------------------------------
+// Four-gray overview chrome: one compact centered header line (navFont18) and
+// one compact single-row footer (distance, minutes, GPS status) so the map
+// area is maximized. The plain one-bit legacy layout keeps its own chrome.
+// ---------------------------------------------------------------------------
+
+TEST(NavScreenRendererTest, GrayOverviewChromeIsCompactAndMapRectFollowsIt) {
+  // The gray header is a single compact route-name line: its reserved height
+  // stays small and well below the plain-vector header's historical chrome.
+  EXPECT_LE(NavScreenRenderer::kOverviewHeaderGrayPx, 48)
+      << "the gray header must stay a single compact route-name line";
+  EXPECT_LT(NavScreenRenderer::kOverviewHeaderGrayPx, NavScreenRenderer::kOverviewHeaderPlainPx);
+  // The gray footer is one compact summary row plus attribution, much shorter
+  // than the plain-vector footer chrome.
+  EXPECT_GT(NavScreenRenderer::kOverviewFooterGrayPx, 0);
+  EXPECT_LT(NavScreenRenderer::kOverviewFooterGrayPx, NavScreenRenderer::kOverviewFooterPlainPx);
+
+  // The X3 overview map rectangle follows exactly the compact chrome (header
+  // + optional maneuver band + footer), so a viewport built from
+  // overviewMapRect stays pixel-aligned with what drawOverview actually
+  // draws.
+  const int lh = 792;
+  const int bandH = lh * NavScreenRenderer::kManeuverBandHeightPercent / 100;
+  const int noBandMapHeight =
+      lh - NavScreenRenderer::kOverviewHeaderGrayPx - NavScreenRenderer::kOverviewFooterGrayPx;
+  EXPECT_EQ(NavScreenRenderer::overviewMapRect(792, 528, true, false).height, noBandMapHeight);
+  EXPECT_EQ(NavScreenRenderer::overviewMapRect(792, 528, true, true).height, noBandMapHeight - bandH);
+
+  // The plain one-bit legacy overview keeps its historical chrome untouched.
+  EXPECT_EQ(NavScreenRenderer::overviewMapRect(792, 528, false, false).height,
+            lh - NavScreenRenderer::kOverviewHeaderPlainPx - NavScreenRenderer::kOverviewFooterPlainPx);
+
+  // Compared with the oversized 64 px header + 144 px footer, the compact gray
+  // chrome hands the map back a meaningful amount of vertical space (the old
+  // gray map on the X3 was 792 - 64 - 144 = 584 px tall).
+  EXPECT_GT(noBandMapHeight, 640) << "the compact chrome must maximize the gray map area";
+}
+
+TEST(NavScreenRendererTest, NavMapTextCarriesOnlyTheAlreadyLocalizedArrivalStatus) {
+  // The compact four-gray footer no longer has two-column captions; the caller
+  // still supplies the localized arrival status that replaces the GPS status
+  // once the route end is reached.
+  static_assert(sizeof(navigator::NavMapText) == sizeof(const char*),
+                "NavMapText is just the arrival status pointer");
+  navigator::NavMapText text;
+  EXPECT_EQ(text.arrivedStatus, nullptr);
+  text.arrivedStatus = "BESTEMMING BEREIKT";
+}
+
+// ---------------------------------------------------------------------------
 // Task 8: fixed maneuver instruction band (NavManeuverPresentation and
 // drawManeuverBand).
 //

@@ -36,12 +36,51 @@ struct Canvas : RouteCanvas {
   void line(int, int, int, int, int) override {}
   void disc(int, int, int) override {}
   void ring(int, int, int, int) override {}
+  int labelCalls = 0;
+  void label(int, int, const char*) override { ++labelCalls; }
   void toneSpan(int x, int y, int w, uint8_t tone) override {
     assert(x >= 0 && y >= 0 && x + w <= 120 && y < 160 && w > 0 && tone < 4);
     tones[tone] += w;
     ++calls;
   }
 };
+// Builds a single-tile X3GM fixture whose raster is `fill` (0x55 = solid
+// dark-gray/water tone 1, 0x1b = all four tones) and, when `withLabel` is
+// set, carries one valid 48-byte label anchored at the tile centre.
+Source makeFixture(uint8_t fill, bool withLabel) {
+  Source s;
+  const uint32_t labels = withLabel ? 1u : 0u;
+  const uint32_t payload = 512 * 832 / 4 + labels * 48;
+  s.b.resize(60 + payload, fill);
+  std::fill(s.b.begin(), s.b.begin() + 60, 0);
+  std::memcpy(s.b.data(), "X3GM", 4);
+  put(s, 4, 1, 2);
+  put(s, 6, 48, 2);
+  put(s, 8, s.b.size());
+  put(s, 12, 520000000);
+  put(s, 16, 40000000);
+  put(s, 20, 100000);
+  put(s, 24, 1, 2);
+  put(s, 26, 1, 2);
+  put(s, 28, 512, 2);
+  put(s, 30, 832, 2);
+  put(s, 32, 48);
+  put(s, 36, 60);
+  put(s, 48, 60);  // cell payload offset
+  put(s, 52, labels);
+  if (withLabel) {
+    const uint32_t at = 60 + 512 * 832 / 4;
+    std::memset(s.b.data() + at, 0, 48);  // label bytes must be NUL padded
+    put(s, at, 520050000);
+    put(s, at + 4, 40050000);
+    const char text[] = "TEST";
+    std::memcpy(s.b.data() + at + 8, text, sizeof(text));
+  }
+  put(s, 56, crc(s.b.data() + 60, payload));
+  put(s, 40, crc(s.b.data() + 48, 12));
+  put(s, 44, crc(s.b.data(), 44));
+  return s;
+}
 int main() {
   Source s;
   s.b.resize(60 + 512 * 832 / 4, 0x1b);
@@ -88,4 +127,18 @@ int main() {
   assert(map.draw(s, outside, canvas) != WalkMapStatus::Ok);
   s.b.resize(70);
   assert(map.open(s) != WalkMapStatus::Ok);
+
+  // The calm four-gray background never paints map labels: a tile that
+  // carries a label payload must still draw its raster without a single
+  // canvas.label call (labels belong to the vector detail layer, where they
+  // stay readable; on the calm gray background they crowd the panel).
+  GrayMap labelledMap;
+  Canvas labelledCanvas;
+  Source labelled = makeFixture(0x55, true);
+  assert(labelledMap.open(labelled) == WalkMapStatus::Ok);
+  assert(labelledMap.draw(labelled, view, labelledCanvas) == WalkMapStatus::Ok);
+  assert(labelledCanvas.labelCalls == 0);
+  // The water-toned raster itself still reaches the canvas unchanged.
+  assert(labelledCanvas.tones[1] > 0);
+  assert(labelledCanvas.tones[1] + labelledCanvas.tones[3] == 120 * 160);
 }

@@ -29,18 +29,12 @@ struct GrayMapLayer;
 enum class NavGrayPlane : uint8_t { Base, Lsb, Msb };
 struct RouteProximity;  // defined in map/RouteMapRenderer.h
 
-// The localized caption strings of the four-gray overview footer, provided by
-// the caller as already-localized strings. When a live fix is close enough to
-// the route to trust along-route progress, the remaining pair replaces the
-// total pair above the two value columns. Once the fix has reliably reached
-// the route end (hasReachedRouteEnd), the footer's bottom status line is
-// replaced by `arrivedStatus`.
+// The already-localized arrival status of the compact four-gray overview
+// footer, provided by the caller. Once a live fix has reliably reached the
+// route end (hasReachedRouteEnd), the single summary row's compact GPS status
+// is replaced by `arrivedStatus`.
 struct NavMapText {
-  const char* totalRoute;         // whole-route distance caption
-  const char* duration;           // whole-route estimated time caption
-  const char* remainingRoute;     // distance-still-to-go caption
-  const char* remainingDuration;  // time-still-to-go caption
-  const char* arrivedStatus;      // footer status when the route end is reached
+  const char* arrivedStatus = nullptr;  // localized status when the route end is reached
 };
 
 // Caller-built content of the fixed maneuver instruction band shown above the
@@ -63,7 +57,7 @@ struct NavManeuverPresentation {
 // stack storage beside the selector; no heap, no strings, no SDK linkage.
 static_assert(sizeof(NavManeuverPresentation) <= 24, "maneuver presentation must stay small");
 
-// Which metric pair the gray footer shows for a fix.
+// Which metric values the compact gray footer summary shows for a fix.
 enum class NavMetricMode : uint8_t {
   Total = 0,  // whole-route distance and estimated duration
   Remaining,  // distance and minutes still to walk from the fix
@@ -71,8 +65,8 @@ enum class NavMetricMode : uint8_t {
 
 struct NavFooterMetrics {
   NavMetricMode mode = NavMetricMode::Total;
-  uint32_t distanceMeters = 0;  // value under the left caption
-  uint16_t minutes = 0;         // value under the right caption
+  uint32_t distanceMeters = 0;  // distance value of the compact gray summary
+  uint16_t minutes = 0;         // minutes value of the compact gray summary
 };
 
 class NavScreenRenderer {
@@ -82,9 +76,17 @@ class NavScreenRenderer {
   // The band sits between the route-name header and the map: its top is the
   // header height of the active overview mode and its height is a fixed
   // fraction of the logical panel height.
-  static constexpr int kOverviewHeaderGrayPx = 64;    // header above the four-gray map
+  // The four-gray overview uses a single compact centered route-name line
+  // (navFont18), so its header chrome is much shorter than the plain-vector
+  // overview's historical header.
+  static constexpr int kOverviewHeaderGrayPx = 40;    // header above the four-gray map
   static constexpr int kOverviewHeaderPlainPx = 120;  // header above the plain vector map
   static constexpr int kManeuverBandHeightPercent = 22;
+  // Fixed footer chrome below the four-gray map: one compact single-row
+  // summary (distance, minutes, compact GPS status) plus the small
+  // attribution line. The plain-vector overview keeps its own taller footer.
+  static constexpr int kOverviewFooterGrayPx = 56;
+  static constexpr int kOverviewFooterPlainPx = 100;
 
   // A live fix may confirm arrival only while it is at most this accurate; a
   // coarser fix cannot tell "standing at the end" from "still one
@@ -148,13 +150,22 @@ class NavScreenRenderer {
   // at the 400 m walking span, otherwise fit the whole route. An injected
   // viewport must be built on the map rectangle reported by overviewMapRect()
   // for this panel/overview mode.
+  //
+  // `compactChrome` selects the compact (four-gray) header/footer chrome
+  // independently of `gray`: the four-gray chrome is used whenever `gray` is
+  // non-null OR `compactChrome` is true, so an orchestrator that always wants
+  // the compact overview (Overview without GPS, or a whole-route view whose
+  // calm gray raster is unavailable/over its tile budget) can draw it without
+  // a usable gray layer. Without a gray layer and without a background the
+  // map stays clean white and route-only - never the legacy plain-vector
+  // "ROUTE OP X3" screen. The plain overview (both flags off) is unchanged.
   static bool drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uint16_t heightPx, RouteByteSource& source,
                            const RouteIndex& index, WalkMapLayer* background = nullptr,
                            const CurrentPosition* position = nullptr, const char* statusText = nullptr,
                            const char* routeDistanceTitle = nullptr, GrayMapLayer* gray = nullptr,
                            NavGrayPlane plane = NavGrayPlane::Base, const NavMapText* mapText = nullptr,
                            const NavManeuverPresentation* maneuver = nullptr, RouteProximity* outProximity = nullptr,
-                           const RouteViewport* viewport = nullptr);
+                           const RouteViewport* viewport = nullptr, bool compactChrome = false);
   // The logical overview map rectangle drawOverview uses for a physical panel
   // of `widthPx` x `heightPx` in the gray (`gray`) or plain overview mode,
   // optionally shortened by a reserved maneuver band (`bandReserved`).

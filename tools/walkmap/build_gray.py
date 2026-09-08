@@ -4,6 +4,11 @@
 Tiles are geographic (not Web Mercator), 512x832 at 0.01 degree: about
 1.3 metres per source pixel in Noord-Holland. Labels remain vector anchors.
 The device reads one 128-byte raster row at a time; no tile allocation.
+The four tones are white (background), light gray (green / open land), dark
+gray (water) and black (road/track corridors and the route). Individual
+building footprints are deliberately excluded from the raster: at a calm
+four-tone rendering they read as noise, and removing them keeps the map
+quiet while water and green/open land stay distinguishable.
 """
 import argparse, math, os, pickle, sqlite3, struct, tempfile, zlib
 from pathlib import Path
@@ -25,6 +30,26 @@ def draw_area(image,rings,tone):
     for ring in rings[1:]:draw.polygon(ring,fill=0)
     image.paste(tone,(0,0),mask)
 
+def classify(tags):
+    """Pick the gray raster layer for one OSM area polygon, or None to skip it.
+
+    Pure tag decision (no geometry), so the converter tests can drive it
+    directly. Returns 1 for water (the dark tone), 0 for green/open land (the
+    light tone) and None for everything else. Building footprints always
+    return None: the calm four-tone gray map never rasterizes buildings, even
+    when a footprint also carries a water/green/leisure tag.
+    """
+    if tags.get('building', 'no') != 'no':
+        return None
+    water = (tags.get('natural') == 'water' or tags.get('waterway') == 'riverbank'
+             or tags.get('landuse') in {'reservoir', 'basin'})
+    if water:
+        return 1
+    green = (tags.get('landuse') in {'forest', 'grass', 'meadow', 'recreation_ground'}
+             or tags.get('natural') in {'wood', 'scrub', 'grassland'}
+             or tags.get('leisure') in {'park', 'garden'})
+    return 0 if green else None
+
 def build(source,base,detail,output):
     import osmium
     output=Path(output)
@@ -42,11 +67,8 @@ def build(source,base,detail,output):
             def area(self,area):
                 nonlocal count
                 tags=dict(area.tags)
-                water=tags.get('natural')=='water' or tags.get('waterway')=='riverbank' or tags.get('landuse') in {'reservoir','basin'}
-                building=tags.get('building','no')!='no'
-                green=tags.get('landuse') in {'forest','grass','meadow','recreation_ground'} or tags.get('natural') in {'wood','scrub','grassland'} or tags.get('leisure') in {'park','garden'}
-                if not(water or building or green):return
-                layer=2 if building else (1 if water else 0)
+                layer=classify(tags)
+                if layer is None:return
                 for outer in area.outer_rings():
                     rings=[[(round(n.lon*1e7),round(n.lat*1e7)) for n in ring] for ring in [outer,*area.inner_rings(outer)]]
                     if len(rings[0])<3:continue

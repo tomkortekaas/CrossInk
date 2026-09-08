@@ -928,6 +928,64 @@ Bytes encodeGrayMap(int32_t southE7, int32_t westE7, uint16_t rows, uint16_t col
   return bytes;
 }
 
+// X3GM v1 encoder with real raster payload tiles, for renderer-behaviour
+// tests that need tone content or label payloads (encodeGrayMap above only
+// produces empty all-white cells). `paint` fills every raster byte of each
+// populated cell (0x55 = solid water/dark-gray tone 1, 0xFF = white). The
+// populated cells cover rows [r0, r1] x columns [c0, c1]; when `labelAt` is
+// non-null the first populated cell also carries one valid 48-byte label
+// anchored at that E7 point.
+Bytes encodeGrayMapData(int32_t southE7, int32_t westE7, uint16_t rows, uint16_t cols, int r0, int c0, int r1,
+                        int c1, uint8_t paint, const GeoPoint* labelAt = nullptr) {
+  constexpr uint32_t kTileBytes = 512u * 832u / 4u;
+  const uint32_t cells = uint32_t(rows) * uint32_t(cols);
+  const uint32_t populated = uint32_t(r1 - r0 + 1) * uint32_t(c1 - c0 + 1);
+  const uint32_t labelCount = labelAt ? 1u : 0u;
+  const uint32_t payloadPerCell = kTileBytes + labelCount * 48;
+  const uint32_t data = 48 + cells * 12;
+  Bytes bytes(data + populated * payloadPerCell, 0);
+  bytes[0] = 'X';
+  bytes[1] = '3';
+  bytes[2] = 'G';
+  bytes[3] = 'M';
+  putU16(bytes, 4, 1);   // version
+  putU16(bytes, 6, 48);  // header size
+  putU32(bytes, 8, static_cast<uint32_t>(bytes.size()));
+  putI32(bytes, 12, southE7);
+  putI32(bytes, 16, westE7);
+  putU32(bytes, 20, 100000);  // cell resolution (0.01 degree)
+  putU16(bytes, 24, rows);
+  putU16(bytes, 26, cols);
+  putU16(bytes, 28, 512);
+  putU16(bytes, 30, 832);
+  putU32(bytes, 32, 48);  // label header offset (fixed)
+  putU32(bytes, 36, data);
+  uint32_t next = data;
+  for (int r = r0; r <= r1; ++r) {
+    for (int c = c0; c <= c1; ++c) {
+      const uint32_t cellIndex = uint32_t(r) * cols + uint32_t(c);
+      std::fill(bytes.begin() + next, bytes.begin() + next + kTileBytes, paint);
+      if (labelAt != nullptr) {
+        const uint32_t at = next + kTileBytes;
+        putI32(bytes, at, labelAt->latitudeE7);
+        putI32(bytes, at + 4, labelAt->longitudeE7);
+        const char text[] = "TEST";
+        std::memcpy(bytes.data() + at + 8, text, sizeof(text));
+      }
+      putU32(bytes, 48 + cellIndex * 12, next);
+      putU32(bytes, 48 + cellIndex * 12 + 4, labelCount);
+      const Bytes payload(bytes.begin() + next, bytes.begin() + next + payloadPerCell);
+      putU32(bytes, 48 + cellIndex * 12 + 8, crc32Of(payload));
+      next += payloadPerCell;
+    }
+  }
+  const Bytes entries(bytes.begin() + 48, bytes.begin() + data);
+  putU32(bytes, 40, crc32Of(entries));
+  const Bytes head(bytes.begin(), bytes.begin() + 44);
+  putU32(bytes, 44, crc32Of(head));
+  return bytes;
+}
+
 // Route-package sources and regional map sources are deliberately independent
 // interfaces (the regional maps may be much larger). The gray overview tests
 // need an in-memory WalkMapByteSource over the synthetic X3GM fixture.
@@ -1115,7 +1173,7 @@ TEST(NavigatorRouteScreenTest, OverviewReservesFixedBandAboveMapWithoutTouchingF
 
   // The plain-vector overview chrome below its map (rows LH-100 and below)
   // stays byte-identical: the band never touches attribution or status text.
-  const int chromeTop = 792 - 100;
+  const int chromeTop = 792 - NavScreenRenderer::kOverviewFooterPlainPx;
   expectChromeIdenticalBelow(withBand, mapOnly, chromeTop);
 
   // The fixed band is reserved above the map: band ink lives in the reserved
@@ -1155,7 +1213,7 @@ TEST(NavigatorRouteScreenTest, GrayOverviewBandReservedAndConfinedInEveryPlane) 
                                             navigator::NavGrayPlane::Msb};
   const int bandTop = overviewHeaderTop(true);
   const int bandH = overviewBandHeight(792);
-  const int chromeTop = 792 - 144;
+  const int chromeTop = 792 - NavScreenRenderer::kOverviewFooterGrayPx;
   for (const navigator::NavGrayPlane plane : planes) {
     SCOPED_TRACE("plane=" + std::to_string(static_cast<int>(plane)));
 
@@ -1198,6 +1256,280 @@ TEST(NavigatorRouteScreenTest, GrayOverviewBandReservedAndConfinedInEveryPlane) 
     EXPECT_GT(bandInk, 400) << "band content missing in plane " << static_cast<int>(plane);
     EXPECT_GT(mapInk, 100) << "gray map missing below the band in plane " << static_cast<int>(plane);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Task: compact four-gray overview chrome.
+//
+// The four-gray overview replaces the oversized route-name header and the
+// two-column value/caption footer with one compact centered header line and
+// one compact single-row summary (distance, minutes, compact GPS status), so
+// the map area is maximized. Attribution stays; the plain layout is untouched.
+// ---------------------------------------------------------------------------
+
+TEST(NavigatorRouteScreenTest, GrayOverviewCompactChromePaintsSingleRowFooterAndMaximizedMap) {
+  const auto route = TurnRoute::make(5000);
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  // A synthetic all-white X3GM grid makes the gray footer/attribution path
+  // reachable without SD fixtures.
+  const Bytes grayBytes = encodeGrayMap(523'400'000, 48'800'000, 6, 6);
+  VectorWalkMapByteSource graySource(grayBytes);
+  navigator::GrayMap grayMap;
+  ASSERT_EQ(grayMap.open(graySource), navigator::WalkMapStatus::Ok);
+  navigator::GrayMapLayer grayLayer;
+  grayLayer.source = &graySource;
+  grayLayer.map = &grayMap;
+
+  CurrentPosition position;
+  position.point = route.points[0];
+  position.accuracyMeters = 5;
+  const navigator::NavMapText mapText{nullptr};
+
+  Frame frame(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(frame.pixels(), 792, 528, source, index, nullptr, &position, "GPS OK",
+                                              nullptr, &grayLayer, navigator::NavGrayPlane::Base, &mapText));
+  EXPECT_EQ(grayLayer.status, navigator::WalkMapStatus::Ok);
+  expectGuardsUntouched(frame);
+
+  // Compact chrome geometry: the map runs from the small gray header top down
+  // to the compact gray footer chrome (LH - kOverviewFooterGrayPx).
+  const int mapY = NavScreenRenderer::kOverviewHeaderGrayPx;
+  const int chromeTop = 792 - NavScreenRenderer::kOverviewFooterGrayPx;
+  const int lh = 792;
+
+  // Attribution line preserved in the footer chrome, above the summary row.
+  EXPECT_GT(countLogicalBlack(frame, 16, chromeTop + 2, 512, lh - 40), 8) << "gray attribution missing";
+
+  // One compact single-row summary (distance, minutes, GPS status) near the
+  // bottom of the same chrome.
+  EXPECT_GT(countLogicalBlack(frame, 16, lh - 40, 512, lh - 2), 40) << "compact footer summary row missing";
+
+  // The map itself still renders between the compact header and the compact
+  // footer, and the chrome top now sits below the historical 144 px footer so
+  // the map region is materially taller.
+  EXPECT_GT(countLogicalBlack(frame, 16, mapY + 4, 512, chromeTop), 100) << "route map missing";
+  EXPECT_GT(chromeTop, lh - 120) << "gray footer chrome did not shrink for the compact single-row layout";
+}
+
+// ---------------------------------------------------------------------------
+// Correction: subordinate water and no labels on the calm four-gray map.
+//
+// On the physical four-gray panel the dark-gray water raster dominates the
+// calm overview. The renderer must lighten the water tone with the same
+// stable white-mix it already applies to green/open land, and it must never
+// paint the tile label payloads that the vector detail layer would label -
+// labels stay readable there, but on the calm gray background they crowd the
+// panel. Both properties are renderer-behaviour level: they are asserted on
+// the exact Base-plane pixels drawOverview submits.
+// ---------------------------------------------------------------------------
+
+TEST(NavigatorRouteScreenTest, GrayWaterToneIsSubordinateInsteadOfSolidDarkOnBase) {
+  const auto route = LocalRoute::make();
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  // A full-coverage X3GM grid whose raster is solid water (tone 1, 0x55):
+  // the whole visible map area is dark-gray water with only the GPX route on
+  // top, so the Base-plane ink fraction measures exactly how the water tone
+  // is mapped.
+  const Bytes waterBytes = encodeGrayMapData(523'400'000, 48'800'000, 6, 6, 0, 0, 5, 5, 0x55);
+  VectorWalkMapByteSource waterSource(waterBytes);
+  navigator::GrayMap waterMap;
+  ASSERT_EQ(waterMap.open(waterSource), navigator::WalkMapStatus::Ok);
+  navigator::GrayMapLayer waterLayer;
+  waterLayer.source = &waterSource;
+  waterLayer.map = &waterMap;
+
+  Frame frame(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(frame.pixels(), 792, 528, source, index, nullptr, nullptr, "STATUS",
+                                              nullptr, &waterLayer, navigator::NavGrayPlane::Base));
+  EXPECT_EQ(waterLayer.status, navigator::WalkMapStatus::Ok);
+  expectGuardsUntouched(frame);
+
+  // Whole-route overview of this local route stays inside the tile budget
+  // (the existing all-white gray tests use the same 6x6 grid), so the whole
+  // map rectangle below the compact header is water raster plus route.
+  const int mapY = NavScreenRenderer::kOverviewHeaderGrayPx;
+  const int chromeTop = 792 - NavScreenRenderer::kOverviewFooterGrayPx;
+  const int area = (512 - 16) * (chromeTop - mapY);
+  const int black = countLogicalBlack(frame, 16, mapY, 512, chromeTop);
+  // Solid dark water would fill the map area (fraction ~1.0). The corrected
+  // mapping mixes the water cells with white in stable 2x2 blocks, so the
+  // Base plane carries roughly half the ink and the water recedes while the
+  // black route stays the strongest element.
+  EXPECT_GT(black, area / 3) << "water raster missing after lightening";
+  EXPECT_LT(black, area * 2 / 3) << "water is still solid dark on the Base plane";
+}
+
+TEST(NavigatorRouteScreenTest, CalmGrayMapCarryingTileLabelsDrawsNoMapLabel) {
+  const auto route = LocalRoute::make();
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  // Cell (2,2) of the standard 6x6 grid (south 5234, west 4880) lies inside
+  // the route's whole-route view. One fixture gives that cell a white raster
+  // payload plus a valid label anchored on the route's second vertex (well
+  // inside the map and clear of the renderer's reserved centre band); the
+  // other gives it the identical raster without the label. Everything else
+  // stays an empty white cell, so the only possible pixel difference is the
+  // label.
+  const GeoPoint anchor{523'696'000, 49'061'000};
+  const Bytes withLabelBytes = encodeGrayMapData(523'400'000, 48'800'000, 6, 6, 2, 2, 2, 2, 0xFF, &anchor);
+  const Bytes plainBytes = encodeGrayMapData(523'400'000, 48'800'000, 6, 6, 2, 2, 2, 2, 0xFF);
+
+  Frame labelled(792, 528, kSentinel);
+  VectorWalkMapByteSource labelledSource(withLabelBytes);
+  navigator::GrayMap labelledMap;
+  ASSERT_EQ(labelledMap.open(labelledSource), navigator::WalkMapStatus::Ok);
+  navigator::GrayMapLayer labelledLayer;
+  labelledLayer.source = &labelledSource;
+  labelledLayer.map = &labelledMap;
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(labelled.pixels(), 792, 528, source, index, nullptr, nullptr, "STATUS",
+                                              nullptr, &labelledLayer, navigator::NavGrayPlane::Base));
+  EXPECT_EQ(labelledLayer.status, navigator::WalkMapStatus::Ok);
+
+  Frame plain(792, 528, kSentinel);
+  VectorWalkMapByteSource plainSource(plainBytes);
+  navigator::GrayMap plainMap;
+  ASSERT_EQ(plainMap.open(plainSource), navigator::WalkMapStatus::Ok);
+  navigator::GrayMapLayer plainLayer;
+  plainLayer.source = &plainSource;
+  plainLayer.map = &plainMap;
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(plain.pixels(), 792, 528, source, index, nullptr, nullptr, "STATUS",
+                                              nullptr, &plainLayer, navigator::NavGrayPlane::Base));
+  EXPECT_EQ(plainLayer.status, navigator::WalkMapStatus::Ok);
+
+  expectGuardsUntouched(labelled);
+  expectGuardsUntouched(plain);
+  // The calm four-gray map never paints tile labels: the frame with a label
+  // payload in its raster is byte-identical to the frame without one.
+  EXPECT_EQ(std::memcmp(labelled.pixels(), plain.pixels(), rowBytes(792) * 528), 0)
+      << "the calm gray map painted a tile label";
+}
+
+// ---------------------------------------------------------------------------
+// Correction: the compact Overview never depends on GPS or on gray coverage.
+//
+// NavigatorMain now opens the calm gray background for both navigation views
+// regardless of a live fix and always draws the compact four-gray chrome. A
+// whole-route Overview therefore keeps that chrome (a) without any GPS fix,
+// (b) with the gray raster when the route fits the tile budget, and (c) as a
+// clean white route-only map when the raster is unavailable or the route
+// exceeds the map's tile budget. The legacy plain-vector "ROUTE OP X3" screen
+// is never an ordinary fallback for these frames.
+// ---------------------------------------------------------------------------
+
+TEST(NavigatorRouteScreenTest, CompactOverviewWithoutGrayLayerOrGpsKeepsCompactChromeAndWhiteRouteOnlyMap) {
+  const auto route = LocalRoute::make();
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  const char* status = "WACHT OP GPS";
+  Frame compactWhite(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(compactWhite.pixels(), 792, 528, source, index, nullptr, nullptr, status,
+                                              nullptr, nullptr, navigator::NavGrayPlane::Base, nullptr, nullptr,
+                                              nullptr, nullptr, true));
+  expectGuardsUntouched(compactWhite);
+
+  // No legacy plain-vector title in the historical header block (20,24).
+  EXPECT_EQ(countLogicalBlack(compactWhite, 20, 24, 260, 56), 0) << "legacy 'ROUTE OP X3' title must not appear";
+
+  // The compact chrome geometry is exactly the four-gray layout: the map runs
+  // from the small gray header to the compact gray footer chrome.
+  const int mapY = NavScreenRenderer::kOverviewHeaderGrayPx;
+  const int chromeTop = 792 - NavScreenRenderer::kOverviewFooterGrayPx;
+  const int lh = 792;
+
+  // Compact single-row footer summary (distance, minutes, GPS status).
+  EXPECT_GT(countLogicalBlack(compactWhite, 16, lh - 40, 512, lh - 2), 40) << "compact footer summary row missing";
+  // No OSM attribution: without a successfully drawn gray/vector background
+  // the white route-only map draws no background attribution line.
+  EXPECT_EQ(countLogicalBlack(compactWhite, 16, chromeTop + 2, 512, lh - 40), 0)
+      << "attribution must not appear on the white route-only map";
+  // The route itself is the only map ink.
+  EXPECT_GT(countLogicalBlack(compactWhite, 16, mapY + 4, 512, chromeTop - 4), 100) << "route map missing";
+}
+
+TEST(NavigatorRouteScreenTest, CompactOverviewWithoutGpsStillDrawsCalmGrayRaster) {
+  const auto route = LocalRoute::make();
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  const Bytes grayBytes = encodeGrayMap(523'400'000, 48'800'000, 6, 6);
+  VectorWalkMapByteSource graySource(grayBytes);
+  navigator::GrayMap grayMap;
+  ASSERT_EQ(grayMap.open(graySource), navigator::WalkMapStatus::Ok);
+  navigator::GrayMapLayer grayLayer;
+  grayLayer.source = &graySource;
+  grayLayer.map = &grayMap;
+
+  // No live fix (the exact no/expired-GPS Overview case): the frame still
+  // uses the compact chrome with the calm gray raster, never the legacy
+  // plain-vector overview.
+  Frame frame(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(frame.pixels(), 792, 528, source, index, nullptr, nullptr, "WACHT OP GPS",
+                                              nullptr, &grayLayer, navigator::NavGrayPlane::Base, nullptr, nullptr,
+                                              nullptr, nullptr, true));
+  EXPECT_EQ(grayLayer.status, navigator::WalkMapStatus::Ok);
+  expectGuardsUntouched(frame);
+  EXPECT_EQ(countLogicalBlack(frame, 20, 24, 260, 56), 0) << "legacy 'ROUTE OP X3' title must not appear";
+  EXPECT_GT(countLogicalBlack(frame, 16, 792 - NavScreenRenderer::kOverviewFooterGrayPx + 2, 512, 792 - 2), 40)
+      << "compact footer summary row missing without GPS";
+  EXPECT_GT(countLogicalBlack(frame, 16, NavScreenRenderer::kOverviewHeaderGrayPx + 4, 512,
+                              792 - NavScreenRenderer::kOverviewFooterGrayPx - 4), 100)
+      << "route map missing without GPS";
+}
+
+TEST(NavigatorRouteScreenTest, GrayBudgetExceededOverviewStaysCompactWhiteRouteOnly) {
+  // A route spanning roughly 0.03 degrees in both axes: its whole-route view
+  // covers more than the 3x3 tile budget of the calm map, so GrayMap answers
+  // BudgetExceeded and the frame must fall back to the compact white
+  // route-only rendering - byte-identical to drawing the same route without
+  // any gray layer - instead of the legacy plain-vector overview.
+  std::vector<GeoPoint> points;
+  points.reserve(13);
+  for (int i = 0; i <= 12; ++i) {
+    points.push_back(GeoPoint{523'550'000 + i * 25'000, 48'900'000 + i * 25'000});
+  }
+  const Bytes routeBytes = encodeRoute(points, {0});
+  RouteIndex index;
+  ASSERT_EQ(decode(routeBytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(routeBytes);
+
+  const Bytes grayBytes = encodeGrayMap(523'400'000, 48'800'000, 6, 6);
+  VectorWalkMapByteSource graySource(grayBytes);
+  navigator::GrayMap grayMap;
+  ASSERT_EQ(grayMap.open(graySource), navigator::WalkMapStatus::Ok);
+
+  Frame withGray(792, 528, kSentinel);
+  navigator::GrayMapLayer grayLayer;
+  grayLayer.source = &graySource;
+  grayLayer.map = &grayMap;
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(withGray.pixels(), 792, 528, source, index, nullptr, nullptr, "STATUS",
+                                              nullptr, &grayLayer, navigator::NavGrayPlane::Base, nullptr, nullptr,
+                                              nullptr, nullptr, true));
+  EXPECT_EQ(grayLayer.status, navigator::WalkMapStatus::BudgetExceeded)
+      << "the whole-route view must exceed the calm map tile budget";
+
+  Frame whiteFallback(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(whiteFallback.pixels(), 792, 528, source, index, nullptr, nullptr,
+                                              "STATUS", nullptr, nullptr, navigator::NavGrayPlane::Base, nullptr,
+                                              nullptr, nullptr, nullptr, true));
+  expectGuardsUntouched(withGray);
+  expectGuardsUntouched(whiteFallback);
+  EXPECT_EQ(std::memcmp(withGray.pixels(), whiteFallback.pixels(), rowBytes(792) * 528), 0)
+      << "budget-exceeded gray overview must fall back to the compact white route-only frame";
+  EXPECT_EQ(countLogicalBlack(withGray, 20, 24, 260, 56), 0) << "legacy 'ROUTE OP X3' title must not appear";
+  EXPECT_GT(countLogicalBlack(withGray, 16, NavScreenRenderer::kOverviewHeaderGrayPx + 4, 512,
+                              792 - NavScreenRenderer::kOverviewFooterGrayPx - 4), 100)
+      << "authoritative full route missing on the budget-exceeded fallback";
 }
 
 // ---------------------------------------------------------------------------
@@ -1326,7 +1658,7 @@ TEST(NavigatorRouteScreenTest, InjectedViewportUsesIdenticalGeometryInEveryGrayP
   const int mapY = NavScreenRenderer::kOverviewHeaderGrayPx;
   const int cx = mapX + mapRect.width / 2;
   const int cy = mapY + mapRect.height / 2;
-  const navigator::NavMapText mapText{nullptr, nullptr, nullptr, nullptr, nullptr};
+  const navigator::NavMapText mapText{nullptr};
 
   Frame frames[3] = {Frame(792, 528, kSentinel), Frame(792, 528, kSentinel), Frame(792, 528, kSentinel)};
   const navigator::NavGrayPlane planes[] = {navigator::NavGrayPlane::Base, navigator::NavGrayPlane::Lsb,

@@ -17,9 +17,12 @@
 // card and every navigation session starts in Overview. Physical released
 // buttons are translated through mapNavigatorButton() before application
 // behaviour is chosen, so a later task can assign different buttons without
-// touching rendering, viewport or session logic. This component has no
-// display, BLE, storage, timing or preferences dependency; it stays a few
-// fixed-width bytes and never allocates.
+// touching rendering, viewport or session logic. The two physical controls
+// select a specific view deterministically - Up selects GPS zoom, Down
+// selects Overview - so the walker can always return to the whole route with
+// one press instead of toggling blind. This component has no display, BLE,
+// storage, timing or preferences dependency; it stays a few fixed-width bytes
+// and never allocates.
 
 namespace navigator {
 
@@ -31,15 +34,19 @@ enum class NavigationView : uint8_t { Overview = 0, GpsZoom = 1 };
 // Semantic navigator actions produced by the centralized button mapping.
 enum class NavigatorAction : uint8_t {
   None = 0,
-  ToggleView = 1,     // switch Overview <-> GPS zoom
-  ManualRefresh = 2,  // refresh the current view now
-  ReturnToDashboard = 3,
+  SelectGpsZoom = 1,  // deterministic GPS-zoom selection (Up)
+  SelectOverview = 2, // deterministic Overview selection (Down)
+  ManualRefresh = 3,  // refresh the current view now
+  ReturnToDashboard = 4,
 };
 
 // Maps a released FreeInk InputManager::BTN_* index to a semantic navigator
-// action: Up/Down toggle the view, OK (Confirm) refreshes manually and Back
-// returns to the dashboard; every other release (and unknown values) maps to
-// None. Pure input mapping: no display, BLE, storage, timing or preferences.
+// action: Up selects GPS zoom, Down selects Overview, OK (Confirm) refreshes
+// manually and Back returns to the dashboard; every other release (and
+// unknown values) maps to None. Selecting an already-active view is
+// idempotent at the controller level, so a repeated Up or Down never
+// toggles away from the requested view. Pure input mapping: no display, BLE,
+// storage, timing or preferences.
 NavigatorAction mapNavigatorButton(uint8_t releasedButton);
 
 // Fixed horizontal ground span of the GPS zoom view across the usable map
@@ -71,11 +78,33 @@ class NavigationViewController {
 
   NavigationView view() const { return view_; }
 
+  // The large calm raster is useful only for the centred walking view. The
+  // whole-route Overview deliberately stays the immediate compact white
+  // route-only frame, and GPS zoom cannot choose a centre without a fix.
+  bool shouldOpenGrayBackground(bool hasValidFix) const {
+    return view_ == NavigationView::GpsZoom && hasValidFix;
+  }
+
   // Every navigation session starts in Overview.
   void reset() { view_ = NavigationView::Overview; }
 
-  // Toggles between Overview and GPS zoom (session state only).
-  void toggle() { view_ = view_ == NavigationView::Overview ? NavigationView::GpsZoom : NavigationView::Overview; }
+  // Selects GPS zoom (session state only). Idempotent: returns whether the
+  // view actually changed, so a repeated Up while already zoomed needs no
+  // new frame.
+  bool selectGpsZoom() {
+    if (view_ == NavigationView::GpsZoom) return false;
+    view_ = NavigationView::GpsZoom;
+    return true;
+  }
+
+  // Selects Overview (session state only). Idempotent: returns whether the
+  // view actually changed, so a repeated Down while already on the whole
+  // route needs no new frame and can never toggle away from it.
+  bool selectOverview() {
+    if (view_ == NavigationView::Overview) return false;
+    view_ = NavigationView::Overview;
+    return true;
+  }
 
   // Selects the viewport that renders the current view over `mapRect` for
   // `route`:
