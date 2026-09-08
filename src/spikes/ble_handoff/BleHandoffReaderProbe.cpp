@@ -89,7 +89,10 @@ void copyText(char* output, size_t capacity, const dashboard::TextField& field) 
 }
 
 bool renderAgendaTemplate(GfxRenderer& renderer) {
-  dashboard::Package package{};
+  // Static for the same reason as `persisted` above: a decoded agenda package
+  // is 424 bytes, too large to place on the render task's stack.
+  static dashboard::Package package;
+  package = {};
   if (dashboard::decodePackage(persisted.bytes.data(), persisted.length, package) != dashboard::Status::Ok) {
     return false;
   }

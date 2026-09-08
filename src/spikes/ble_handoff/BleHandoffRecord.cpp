@@ -166,7 +166,12 @@ Status decodePackage(const uint8_t* bytes, const size_t size, Package& output) {
   if (bytes[5] != TEMPLATE_AGENDA) return Status::UnsupportedTemplate;
   if (crc32(bytes, size - CRC_SIZE) != readU32(bytes + size - CRC_SIZE)) return Status::InvalidCrc;
 
-  Package candidate{};
+  // Static rather than a stack local: a decoded agenda package is 424 bytes,
+  // more than this task's stack can spare. Decoding stays two-phase - a
+  // rejected package must not overwrite the caller's - and the only production
+  // caller is the single-threaded render path, so one workspace is enough.
+  static Package candidate;
+  candidate = {};
   candidate.schema = bytes[4];
   candidate.templateId = bytes[5];
   candidate.packageId = readU32(bytes + PACKAGE_ID_OFFSET);
