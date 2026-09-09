@@ -9,6 +9,7 @@
 #include <XteinkDetect.h>
 
 #include "../ble_handoff/DashboardBootSwitch.h"
+#include "ManeuverBandPlanner.h"
 #include "NavHandoff.h"
 #include "NavScreenRenderer.h"
 #include "NavigationRefreshPolicy.h"
@@ -31,6 +32,7 @@ navigator::GrayMapLayer grayLayer{&graySource, &grayMap};
 navigator::NavigationRefreshPolicy refreshPolicy;
 navigator::NavigationViewController viewController;  // session view mode (Overview default)
 navigator::NavigationStartup startup;                // calm entry submission gate
+navigator::ManeuverBandPlanner maneuverBand;         // next-turn selection for the instruction band (8 bytes)
 bool ready = false;
 bool sdReady = false;
 bool lastReceiverOpen = false;
@@ -60,12 +62,26 @@ bool showRouteLoadingLayout() {
   // white route-only map under the same compact chrome the completed
   // Overview frame always uses - the loading frame is the final navigation
   // layout, never a legacy plain-vector screen.
-  const navigator::Rect mapRect = navigator::NavScreenRenderer::overviewMapRect(width, height, true);
+  // The instruction band is reserved from the very first frame, so the map
+  // rectangle does not change height the moment a fix arrives. Without a fix
+  // the band counts down from the route start to the first turn.
+  const bool bandReserved = navigator::ManeuverBandPlanner::reservesBand(routes.index());
+  navigator::NavManeuverPresentation presentation{};
+  navigator::RouteProximity proximity{};
+  const navigator::Rect mapRect =
+      navigator::NavScreenRenderer::overviewMapRect(width, height, true, bandReserved);
   const auto selection = viewController.selectViewport(routes.index(), mapRect, nullptr);
   const bool drawn = navigator::NavScreenRenderer::drawOverview(
       display.getFrameBuffer(), width, height, routes.source(), routes.index(), nullptr, nullptr,
-      tr(STR_NAV_LOADING_ROUTE), tr(STR_NAV_ROUTE_APPROX), nullptr, navigator::NavGrayPlane::Base, &mapText, nullptr,
-      nullptr, &selection.viewport, true);
+      tr(STR_NAV_LOADING_ROUTE), tr(STR_NAV_ROUTE_APPROX), nullptr, navigator::NavGrayPlane::Base, &mapText,
+      bandReserved ? &presentation : nullptr, &proximity, &selection.viewport, true);
+  if (drawn && bandReserved) {
+    const auto plan = maneuverBand.plan(routes.index(), nullptr, proximity);
+    presentation.maneuver = plan.maneuver;
+    presentation.distanceMeters = plan.distanceMeters;
+    navigator::NavScreenRenderer::drawManeuverBand(display.getFrameBuffer(), width, height, presentation,
+                                                   navigator::NavGrayPlane::Base, true);
+  }
   if (drawn) {
     display.displayBuffer(freeink::FreeInkDisplay::FULL_REFRESH);
     return true;
@@ -116,19 +132,43 @@ void showRouteFrame(navigator::NavigationRefresh refresh = navigator::Navigation
     return (navigator::navigationSessionActive() ? tr(STR_NAV_WAITING_GPS) : tr(STR_NAV_GPS_INACTIVE));
   };
   const navigator::NavMapText mapText{tr(STR_NAV_ARRIVED_STATUS)};
+  // The instruction band. Whether it is reserved depends only on the route,
+  // never on the fix, so every plane of this frame -- and the loading frame
+  // before it -- agree about where the map starts. `presentation` is filled
+  // once, after the Base pass hands back the RouteProximity it already
+  // computed, and the auxiliary planes then repaint that same content.
+  const bool bandReserved = navigator::ManeuverBandPlanner::reservesBand(routes.index());
+  navigator::NavManeuverPresentation presentation{};
+  navigator::RouteProximity proximity{};
+  const auto bandArg = [&]() { return bandReserved ? &presentation : nullptr; };
+  const auto paintBand = [&](navigator::NavGrayPlane plane) {
+    if (bandReserved)
+      navigator::NavScreenRenderer::drawManeuverBand(display.getFrameBuffer(), width, height, presentation, plane,
+                                                     true);
+  };
   // Both views share the compact chrome, so the map rectangle is always the
-  // compact one.
+  // compact one, shortened by the band when one is reserved.
   const auto selectFor = [&](const navigator::CurrentPosition* fixPosition) {
     return viewController.selectViewport(
-        routes.index(), navigator::NavScreenRenderer::overviewMapRect(width, height, true), fixPosition);
+        routes.index(), navigator::NavScreenRenderer::overviewMapRect(width, height, true, bandReserved),
+        fixPosition);
   };
   bool useGray = grayReady;
   navigator::NavigationViewportSelection selection = selectFor(hasPosition ? &position : nullptr);
   bool drawn = navigator::NavScreenRenderer::drawOverview(
       display.getFrameBuffer(), width, height, routes.source(), routes.index(), nullptr,
       hasPosition ? &position : nullptr, statusText(selection.waitingForGps), tr(STR_NAV_ROUTE_APPROX),
-      useGray ? &grayLayer : nullptr, navigator::NavGrayPlane::Base, &mapText, nullptr, nullptr, &selection.viewport,
-      true);
+      useGray ? &grayLayer : nullptr, navigator::NavGrayPlane::Base, &mapText, bandArg(), &proximity,
+      &selection.viewport, true);
+  if (drawn && bandReserved) {
+    // The selector is updated exactly once per submitted frame, from the
+    // proximity this pass already produced; the auxiliary planes below reuse
+    // the result so Base/LSB/MSB cannot show different instructions.
+    const auto plan = maneuverBand.plan(routes.index(), hasPosition ? &position : nullptr, proximity);
+    presentation.maneuver = plan.maneuver;
+    presentation.distanceMeters = plan.distanceMeters;
+    paintBand(navigator::NavGrayPlane::Base);
+  }
   if (drawn && useGray && grayLayer.status != navigator::WalkMapStatus::Ok && !backRequested) {
     // Coverage absent/damaged, or the whole-route view spans more than the
     // map's tile budget. RouteMapRenderer cleared the map to white before
@@ -146,11 +186,14 @@ void showRouteFrame(navigator::NavigationRefresh refresh = navigator::Navigation
       drawn = navigator::NavScreenRenderer::drawOverview(
           display.getFrameBuffer(), width, height, routes.source(), routes.index(), nullptr,
           hasPosition ? &position : nullptr, statusText(selection.waitingForGps), tr(STR_NAV_ROUTE_APPROX),
-          &grayLayer, plane, &mapText, nullptr, nullptr, &selection.viewport, true);
+          &grayLayer, plane, &mapText, bandArg(), &proximity, &selection.viewport, true);
       if (!drawn || grayLayer.status != navigator::WalkMapStatus::Ok || backRequested) {
         drawn = false;
         break;
       }
+      // Same presentation as the Base pass: the selector is not consulted
+      // again, so the three planes are painted from one decision.
+      paintBand(plane);
       if (plane == navigator::NavGrayPlane::Lsb)
         display.copyGrayscaleLsbBuffers(display.getFrameBuffer());
       else
@@ -164,7 +207,8 @@ void showRouteFrame(navigator::NavigationRefresh refresh = navigator::Navigation
       drawn = navigator::NavScreenRenderer::drawOverview(
           display.getFrameBuffer(), width, height, routes.source(), routes.index(), nullptr,
           hasPosition ? &position : nullptr, statusText(selection.waitingForGps), tr(STR_NAV_ROUTE_APPROX), nullptr,
-          navigator::NavGrayPlane::Base, &mapText, nullptr, nullptr, &selection.viewport, true);
+          navigator::NavGrayPlane::Base, &mapText, bandArg(), &proximity, &selection.viewport, true);
+      if (drawn) paintBand(navigator::NavGrayPlane::Base);
     }
   }
   // Slow SD reads can age a fix out. Never publish it as a current position:
@@ -176,7 +220,12 @@ void showRouteFrame(navigator::NavigationRefresh refresh = navigator::Navigation
     drawn = navigator::NavScreenRenderer::drawOverview(
         display.getFrameBuffer(), width, height, routes.source(), routes.index(), nullptr, nullptr,
         statusText(selection.waitingForGps), tr(STR_NAV_ROUTE_APPROX), nullptr, navigator::NavGrayPlane::Base,
-        &mapText, nullptr, nullptr, &selection.viewport, true);
+        &mapText, bandArg(), &proximity, &selection.viewport, true);
+    // Deliberately no second plan() call: the fix that aged out is gone, and
+    // re-planning without one would measure the countdown from the route
+    // start again and jump the number backwards mid-walk. Repaint what the
+    // frame above already decided.
+    if (drawn) paintBand(navigator::NavGrayPlane::Base);
   }
   graySource.endRead();
   LOG_INF("NAV", "map load ms=%u cancelled=%d", millis() - started, backRequested);
@@ -308,6 +357,9 @@ void loop() {
     if (result.code == navigator::RouteTransferCode::RouteAccepted) {
       // Route replacement: receive and validation never submitted per-chunk
       // display updates; replace the visible route with one complete frame.
+      // The selection belongs to the route that was replaced, so drop it
+      // explicitly rather than relying on the route-id check alone.
+      maneuverBand.reset();
       showRouteFrame(navigator::NavigationRefresh::Full);
       LOG_INF("NAV", "route=%u heap=%u minHeap=%u largest=%u stackHighWater=%u", routes.index().routeId,
               ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap(), uxTaskGetStackHighWaterMark(nullptr));

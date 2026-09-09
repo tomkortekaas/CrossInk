@@ -40,6 +40,7 @@
 #include <utility>
 #include <vector>
 
+#include "ManeuverBandPlanner.h"
 #include "NavScreenRenderer.h"
 #include "NavSplash.h"
 #include "NavState.h"
@@ -57,12 +58,17 @@ using Bytes = std::vector<uint8_t>;
 using navigator::CurrentPosition;
 using navigator::DecodeStatus;
 using navigator::GeoPoint;
+using navigator::Maneuver;
+using navigator::ManeuverBandPlanner;
+using navigator::NavGrayPlane;
+using navigator::NavManeuverPresentation;
 using navigator::NavScreenRenderer;
 using navigator::NavState;
 using navigator::NavStatus;
 using navigator::Rect;
 using navigator::RouteIndex;
 using navigator::RouteMapRenderer;
+using navigator::RouteProximity;
 using navigator::RouteViewport;
 using navigator::ScreenPoint;
 
@@ -1125,6 +1131,50 @@ void expectChromeIdenticalBelow(const Frame& withBand, const Frame& mapOnly, int
           << "chrome changed at logical (" << lx << "," << ly << ")";
     }
   }
+}
+
+// End-to-end mirror of the sequence NavigatorMain performs for one frame.
+// It lives here because NavigatorMain sits behind CROSSINK_NAVIGATOR and
+// pulls in Arduino, the display driver and I18n, so no host build compiles
+// it; this test is what stands in for that compilation. Until this wiring
+// existed drawManeuverBand had zero callers and the band was never reserved:
+// the panel showed the map and the walker, never the turn.
+TEST(NavigatorRouteScreenTest, TheNavigatorMainSequencePaintsAnInstructionBand) {
+  const auto route = TurnRoute::make(1200);
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  ASSERT_EQ(index.maneuverCount, 3U);
+  VectorRouteByteSource source(route.bytes);
+
+  ManeuverBandPlanner planner;
+  ASSERT_TRUE(ManeuverBandPlanner::reservesBand(index)) << "a route with maneuvers must get a band";
+
+  // 1. Reserve: a non-null presentation shortens the map before any ink.
+  NavManeuverPresentation presentation{};
+  RouteProximity proximity{};
+  Frame frame(792, 528, kSentinel);
+  ASSERT_TRUE(NavScreenRenderer::drawOverview(frame.pixels(), 792, 528, source, index, nullptr, nullptr, "STATUS",
+                                              "ROUTE", nullptr, NavGrayPlane::Base, nullptr, &presentation,
+                                              &proximity, nullptr, true));
+
+  // 2. Plan from the proximity that pass already computed. Without a fix the
+  //    countdown runs from the route start to the first turn.
+  const auto plan = planner.plan(index, nullptr, proximity);
+  ASSERT_TRUE(plan.visible);
+  EXPECT_EQ(plan.maneuver, Maneuver::Left);
+  EXPECT_EQ(plan.distanceMeters, 200);
+  presentation.maneuver = plan.maneuver;
+  presentation.distanceMeters = plan.distanceMeters;
+
+  // 3. Paint. The reserved band is still empty at this point, so any ink it
+  //    gains is the instruction itself.
+  const int bandTop = overviewHeaderTop(true);
+  const int bandBottom = bandTop + overviewBandHeight(792);
+  const int reservedButEmpty = countLogicalBlack(frame, 0, bandTop, 528, bandBottom);
+  NavScreenRenderer::drawManeuverBand(frame.pixels(), 792, 528, presentation, NavGrayPlane::Base, true);
+  EXPECT_GT(countLogicalBlack(frame, 0, bandTop, 528, bandBottom), reservedButEmpty)
+      << "the reserved band never received the instruction";
+  expectGuardsUntouched(frame);
 }
 
 TEST(NavigatorRouteScreenTest, OverviewNullManeuverPresentationKeepsMapOnlyBytes) {

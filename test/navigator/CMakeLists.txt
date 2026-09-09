@@ -10,6 +10,9 @@ add_executable(NavigatorCoreTest
   RouteTransferTest.cpp
   RouteViewportTest.cpp
   RouteMapRendererTest.cpp
+  ManeuverBandPlannerTest.cpp
+  ${REPO_ROOT}/src/spikes/navigator/ManeuverBandPlanner.cpp
+  ${REPO_ROOT}/src/spikes/navigator/route/RouteManeuverSelector.cpp
   ${REPO_ROOT}/src/spikes/navigator/NavHandoff.cpp
   ${REPO_ROOT}/src/spikes/navigator/NavSplash.cpp
   ${REPO_ROOT}/src/spikes/navigator/NavScreenRenderer.cpp
