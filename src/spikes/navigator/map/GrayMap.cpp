@@ -86,10 +86,13 @@ WalkMapStatus GrayMap::draw(WalkMapByteSource& s, const RouteViewport& v, RouteC
   if (!valid_ || s.size() != u32(header_ + 8)) return WalkMapStatus::NotOpen;
   GeoBounds b{};
   if (!walkMapBounds(v, b)) return WalkMapStatus::InvalidData;
-  const int32_t south = i32(header_ + 12), west = i32(header_ + 16);
+  // south/west are int64 for the same reason open() keeps them so: a map may
+  // legally span the full 360 degrees of longitude (cols up to 36000), and
+  // then both `b.westE7 - west` and `c * 100000` exceed int32.
+  const int64_t south = i32(header_ + 12), west = i32(header_ + 16);
   const int rows = u16(header_ + 24), cols = u16(header_ + 26);
-  if (b.southE7 < south || b.westE7 < west || b.northE7 > int64_t(south) + rows * 100000ll ||
-      b.eastE7 > int64_t(west) + cols * 100000ll)
+  if (b.southE7 < south || b.westE7 < west || b.northE7 > south + rows * 100000ll ||
+      b.eastE7 > west + cols * 100000ll)
     return WalkMapStatus::NotOpen;
   const int r0 = (b.southE7 - south) / 100000, r1 = std::min<int>(rows - 1, (b.northE7 - south) / 100000);
   const int c0 = (b.westE7 - west) / 100000, c1 = std::min<int>(cols - 1, (b.eastE7 - west) / 100000);
@@ -113,8 +116,10 @@ WalkMapStatus GrayMap::draw(WalkMapByteSource& s, const RouteViewport& v, RouteC
     for (int c = c0; c <= c1; ++c) {
       if (!read(s, 48 + (r * cols + c) * 12, entry, 12)) return WalkMapStatus::ReadFailed;
       if (!entryValid(entry, u32(header_ + 36), s.size())) return WalkMapStatus::InvalidData;
-      const auto tl = v.project({south + (r + 1) * 100000, west + c * 100000});
-      const auto br = v.project({south + r * 100000, west + (c + 1) * 100000});
+      // open() bounds every corner to the E7 range, so the int64 sums narrow
+      // back to int32 without loss; the products are what needed the width.
+      const auto tl = v.project({int32_t(south + (r + 1) * 100000ll), int32_t(west + c * 100000ll)});
+      const auto br = v.project({int32_t(south + r * 100000ll), int32_t(west + (c + 1) * 100000ll)});
       if (br.x <= tl.x || br.y <= tl.y) return WalkMapStatus::BudgetExceeded;
       int left = std::max(rect.x, tl.x), right = std::min(rect.x + rect.width, br.x);
       int top = std::max(rect.y, tl.y), bottom = std::min(rect.y + rect.height, br.y);

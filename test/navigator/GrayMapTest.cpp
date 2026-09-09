@@ -141,4 +141,37 @@ int main() {
   // The water-toned raster itself still reaches the canvas unchanged.
   assert(labelledCanvas.tones[1] > 0);
   assert(labelledCanvas.tones[1] + labelledCanvas.tones[3] == 120 * 160);
+
+  // A map may legally span the full 360 degrees of longitude: open() only
+  // requires west >= -180e7 and west + cols * 1e5 <= 180e7, which permits
+  // cols = 36000. Drawing a cell far east of that origin then puts both
+  // `b.westE7 - west` (3.5e9) and `c * 100000` (3.5e9) past int32. With the
+  // arithmetic in int32 the column index wrapped negative and draw() bailed
+  // out with BudgetExceeded; every empty tile must instead paint tone 3.
+  GrayMap wide;
+  Canvas wideCanvas;
+  Source w;
+  const int wideCols = 36000;
+  const uint32_t wideSize = 48 + uint32_t(wideCols) * 12;
+  w.b.assign(wideSize, 0);  // every cell entry zero: an all-empty, all-white map
+  std::memcpy(w.b.data(), "X3GM", 4);
+  put(w, 4, 1, 2);
+  put(w, 6, 48, 2);
+  put(w, 8, wideSize);
+  put(w, 12, 520000000);
+  put(w, 16, uint32_t(-1800000000));
+  put(w, 20, 100000);
+  put(w, 24, 1, 2);
+  put(w, 26, wideCols, 2);
+  put(w, 28, 512, 2);
+  put(w, 30, 832, 2);
+  put(w, 32, 48);
+  put(w, 36, wideSize);
+  put(w, 40, crc(w.b.data() + 48, wideCols * 12));
+  put(w, 44, crc(w.b.data(), 44));
+  assert(wide.open(w) == WalkMapStatus::Ok);
+  // Column 35000 of that map starts at -180e7 + 35000 * 1e5 = +170e7.
+  auto farEast = RouteViewport::centered({520050000, 1700050000}, {0, 0, 120, 160}, 200, 8);
+  assert(wide.draw(w, farEast, wideCanvas) == WalkMapStatus::Ok);
+  assert(wideCanvas.tones[3] == 120 * 160);
 }
