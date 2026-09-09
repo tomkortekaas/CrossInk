@@ -14,12 +14,8 @@
 #include "AgendaWakePolicy.h"
 #include "BleHandoffNvs.h"
 #include "CrossPointSettings.h"
-#include "DashboardGridRenderer.h"
-#include "DashboardGridRendererV2.h"
 #include "DashboardV3.h"
 #include "DashboardV3Renderer.h"
-#include "DashboardWidgetGrid.h"
-#include "DashboardWidgetGridV2.h"
 #include "fontIds.h"
 
 namespace BleHandoffReaderProbe {
@@ -110,42 +106,9 @@ bool renderAgendaTemplate(GfxRenderer& renderer) {
   return true;
 }
 
-bool renderWidgetGridTemplate(GfxRenderer& renderer) {
-  // Static for the same reason as `persisted` above: a decoded package
-  // covering the whole grid is too large to place on the render task's stack.
-  static dashboard::WidgetGridPackage package;
-  package = {};
-  if (dashboard::decodeWidgetGridPackage(persisted.bytes.data(), persisted.length, package) !=
-      dashboard::Status::Ok) {
-    return false;
-  }
-  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
-  renderer.clearScreen();
-  dashboard::renderWidgetGrid(renderer, package);
-  renderer.displayBuffer(HalDisplay::HALF_REFRESH, true);
-  return true;
-}
-
-bool renderWidgetGridV2Template(GfxRenderer& renderer) {
-  // Static for the same reason as `persisted` above: a decoded template-4
-  // package covering the whole grid is too large to place on the render task's
-  // stack.
-  static dashboard::v2::WidgetGridPackageV2 package;
-  package = {};
-  if (dashboard::v2::decodeWidgetGridPackageV2(persisted.bytes.data(), persisted.length, package) !=
-      dashboard::Status::Ok) {
-    return false;
-  }
-  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
-  renderer.clearScreen();
-  dashboard::v2::renderWidgetGridV2(renderer, package);
-  renderer.displayBuffer(HalDisplay::HALF_REFRESH, true);
-  return true;
-}
-
 bool renderDashboardV3Template(GfxRenderer& renderer, DashboardSkipReason* const reasonOut) {
   // Keep the decoded maximum-size V3 package out of the render task's stack,
-  // matching the established template-4 path above.
+  // for the same reason as `persisted` above.
   static dashboard::v3::DashboardV3Package package;
   package = {};
   const auto decodeStatus = dashboard::v3::decodeDashboardV3(persisted.bytes.data(), persisted.length, package);
@@ -330,14 +293,6 @@ bool renderDashboardCard(GfxRenderer& renderer, DashboardSkipReason* const reaso
   switch (persisted.header.templateId) {
     case dashboard::TEMPLATE_AGENDA:
       if (renderAgendaTemplate(renderer)) return true;
-      setReason(DashboardSkipReason::Undecodable);
-      return false;
-    case dashboard::TEMPLATE_WIDGET_GRID:
-      if (renderWidgetGridTemplate(renderer)) return true;
-      setReason(DashboardSkipReason::Undecodable);
-      return false;
-    case dashboard::v2::TEMPLATE_WIDGET_GRID_V2:
-      if (renderWidgetGridV2Template(renderer)) return true;
       setReason(DashboardSkipReason::Undecodable);
       return false;
     case dashboard::v3::TEMPLATE_DASHBOARD_V3:

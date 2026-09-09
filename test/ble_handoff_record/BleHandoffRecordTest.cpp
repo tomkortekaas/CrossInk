@@ -183,7 +183,7 @@ TEST(PackageHeaderPeek, RejectsBadMagicSchemaAndCrc) {
   EXPECT_EQ(dashboard::peekPackageHeader(corrupted.data(), length, header), dashboard::Status::InvalidMagic);
 
   corrupted = bytes;
-  corrupted[4] = 3;  // schema 2 is valid for TEMPLATE_WIDGET_GRID now
+  corrupted[4] = 3;  // schema 2 is valid for the V3 dashboard now
   EXPECT_EQ(dashboard::peekPackageHeader(corrupted.data(), length, header), dashboard::Status::UnsupportedSchema);
 
   corrupted = bytes;

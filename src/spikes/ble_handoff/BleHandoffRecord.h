@@ -23,8 +23,8 @@ constexpr size_t MIN_PACKAGE_SIZE = FIXED_HEADER_SIZE + CRC_SIZE;
 // length, packageId, generatedAt, validUntil, refreshIntervalMinutes,
 // wakeWindowStartHour, wakeWindowEndHour - ending where template-specific
 // content begins at offset 31. Smaller than FIXED_HEADER_SIZE, so peeking at
-// any template's envelope must not use the agenda-only minimum: a widget grid
-// carrying no widgets is a valid 38-byte package.
+// any template's envelope must not use the agenda-only minimum: a non-agenda
+// template without content can be smaller than the agenda's fixed header.
 constexpr size_t SHARED_PREFIX_SIZE = 31;
 constexpr size_t MIN_ENVELOPE_SIZE = SHARED_PREFIX_SIZE + CRC_SIZE;
 constexpr size_t MAX_TITLE_SIZE = 96;
@@ -32,9 +32,7 @@ constexpr size_t MAX_TIME_LINE_SIZE = 48;
 constexpr size_t MAX_FOOTER_SIZE = 40;
 constexpr size_t MAX_STALE_LINE_SIZE = 48;
 constexpr uint8_t SCHEMA_V1 = 1;
-// TEMPLATE_WIDGET_GRID packages moved to schema 2 to add the global style byte
-// and the per-widget style word without disturbing agenda packages, which stay
-// on schema 1.
+// TEMPLATE_DASHBOARD_V3 packages use schema 2; agenda packages stay on schema 1.
 constexpr uint8_t SCHEMA_V2 = 2;
 constexpr uint8_t TEMPLATE_AGENDA = 1;
 
@@ -88,8 +86,8 @@ struct Package {
 };
 
 // The fields every template's 28-byte common prefix carries, independent of
-// which template-specific decoder (decodePackage, decodeWidgetGridPackage,
-// ...) would be needed to read the rest. Lets persistence validate, compare
+// which template-specific decoder (decodePackage, decodeDashboardV3, ...) would
+// be needed to read the rest. Lets persistence validate, compare
 // package ids, and store any current or future template without knowing its
 // content shape.
 struct PackageHeader {

@@ -1,10 +1,6 @@
 add_executable(BleHandoffRecordTest
   AgendaWakePolicyTest.cpp
   BleHandoffRecordTest.cpp
-  DashboardGridLayoutTest.cpp
-  DashboardGridLayoutV2Test.cpp
-  DashboardWidgetGridTest.cpp
-  DashboardWidgetGridV2Test.cpp
   DashboardV3Test.cpp
   DashboardV3GoldenTest.cpp
   DashboardV3LayoutTest.cpp
@@ -16,10 +12,6 @@ add_executable(BleHandoffRecordTest
   DashboardArcTest.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/AgendaWakePolicy.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/BleHandoffRecord.cpp
-  ${REPO_ROOT}/src/spikes/ble_handoff/DashboardGridLayout.cpp
-  ${REPO_ROOT}/src/spikes/ble_handoff/DashboardGridLayoutV2.cpp
-  ${REPO_ROOT}/src/spikes/ble_handoff/DashboardWidgetGrid.cpp
-  ${REPO_ROOT}/src/spikes/ble_handoff/DashboardWidgetGridV2.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/DashboardV3.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/DashboardV3Layout.cpp
   ${REPO_ROOT}/src/spikes/ble_handoff/DashboardV3Renderer.cpp

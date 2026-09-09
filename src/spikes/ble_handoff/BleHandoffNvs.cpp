@@ -39,9 +39,9 @@ bool readSlot(nvs_handle_t handle, int index, SlotState& state) {
     return false;
   }
   const SlotRecord& record = slotWorkspace[index];
-  // peekPackageHeader (not decodePackage/decodeWidgetGridPackage) so any
-  // current or future template's package can be validated and persisted
-  // without this storage layer knowing its content shape.
+  // peekPackageHeader (not decodePackage/decodeDashboardV3) so any current or
+  // future template's package can be validated and persisted without this
+  // storage layer knowing its content shape.
   if (record.magic != SLOT_MAGIC || record.version != STORAGE_VERSION || record.length > MAX_PACKAGE_SIZE ||
       crc32(reinterpret_cast<const uint8_t*>(&record), sizeof(SlotRecord) - sizeof(uint32_t)) != record.crc ||
       peekPackageHeader(record.bytes.data(), record.length, decodeWorkspace) != Status::Ok) {
