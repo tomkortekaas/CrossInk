@@ -78,20 +78,8 @@ inline int64_t foldLongitudeDeltaE7(int64_t e7) {
   return e7;
 }
 
-// Re-requests a read until `length` bytes arrived; a source that returns 0
-// while bytes are still required is treated as truncation. Every individual
-// request is <= `length` (callers pass at most the 1,024-byte work buffer).
-bool readFully(RouteByteSource& source, uint32_t offset, uint8_t* destination, uint32_t length) {
-  uint32_t done = 0;
-  while (done < length) {
-    const uint32_t got = source.read(offset + done, destination + done, length - done);
-    if (got == 0) {
-      return false;
-    }
-    done += got;
-  }
-  return true;
-}
+// readFully is declared in route/RoutePackageV1.h; this file kept an
+// identical private copy until the route name needed the same loop.
 
 // Projects one reconstructed E5 point. E5 -> E7 is exact for validated
 // geometry; a corrupt source could grow latitude past int32, so the widening

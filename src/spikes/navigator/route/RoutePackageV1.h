@@ -144,6 +144,13 @@ class RouteByteSource {
   virtual uint32_t read(uint32_t offset, uint8_t* destination, uint32_t length) = 0;
 };
 
+// Reads exactly `length` bytes starting at `offset`, honouring the split-read
+// tolerance documented above: read() may deliver fewer bytes than asked, so
+// every caller that needs a whole range must re-request the remainder. A
+// source that returns 0 while bytes are still required is treated as
+// truncation and yields false. Every individual request is <= `length`.
+bool readFully(RouteByteSource& source, uint32_t offset, uint8_t* destination, uint32_t length);
+
 // Fixed-size, allocation-free result of a successful validation. The caller
 // owns it (static/global storage on the C3) and zero-initializes it; only
 // slots [0, segmentCount), [0, maneuverCount) and [0, overviewPointCount) are

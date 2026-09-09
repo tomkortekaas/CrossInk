@@ -284,6 +284,25 @@ class StallingSource : public navigator::RouteByteSource {
   uint32_t delivered_ = 0;
 };
 
+// A conforming source, but the most awkward one the contract allows: it never
+// delivers more than `chunk` bytes per call, so every reader has to loop.
+// RoutePackageV1.h documents this as permitted; StoredRoute's NVS-backed
+// reads behave this way once a range straddles a page.
+class ChunkedSource : public navigator::RouteByteSource {
+ public:
+  ChunkedSource(Bytes bytes, uint32_t chunk) : inner_(std::move(bytes)), chunk_(chunk) {}
+
+  uint32_t size() const override { return inner_.size(); }
+
+  uint32_t read(uint32_t offset, uint8_t* destination, uint32_t length) override {
+    return inner_.read(offset, destination, std::min(length, chunk_));
+  }
+
+ private:
+  VectorRouteByteSource inner_;
+  uint32_t chunk_;
+};
+
 DecodeStatus decode(const Bytes& bytes, RouteIndex& out) {
   VectorRouteByteSource source(bytes);
   return navigator::validateRoutePackageV1(source, out);
@@ -846,6 +865,55 @@ TEST(NavigatorRouteScreenTest, OverviewUsesRealRouteWithoutInventedGpsAndGuardsB
   if (const char* dir = std::getenv("NAV_PREVIEW_DIR")) {
     EXPECT_TRUE(writePortraitPbm(frame, std::string(dir) + "/navigator-overview.pbm"));
   }
+}
+
+// The route name was the one range the overview read with a single bare
+// read() call, demanding all of it at once. Against a source that splits
+// reads the call returned short, and drawOverview answered false: the user
+// lost the whole frame, not just the name. Every other range already looped
+// through readFully, so this went unnoticed -- the fixtures above all carry
+// an empty name, which skips the read entirely.
+TEST(NavigatorRouteScreenTest, OverviewNameSurvivesASourceThatSplitsEveryRead) {
+  // encodeRoute always emits an empty name, so build one by hand: the name
+  // bytes sit directly after the 38-byte header, and header[36] is their
+  // count (offset 32 is estimatedMinutes).
+  const auto route = LocalRoute::make();
+  const std::string name = "RONDJE ZUIDERPARK";
+  Bytes bytes = encodeRoute(route.points, route.segmentStarts);
+  bytes.resize(bytes.size() - 4);  // drop the crc; the name shifts everything after the header
+  bytes.insert(bytes.begin() + 38, name.begin(), name.end());
+  bytes[36] = static_cast<uint8_t>(name.size());
+  putU32(bytes, 8, static_cast<uint32_t>(bytes.size() + 4));
+  appendU32(bytes, crc32Of(bytes));
+
+  RouteIndex index;
+  ASSERT_EQ(decode(bytes, index), DecodeStatus::Ok);
+  ASSERT_EQ(index.routeNameLength, name.size()) << "the name read must actually be exercised";
+
+  Frame whole(792, 528, kSentinel);
+  VectorRouteByteSource wholeSource(bytes);
+  ASSERT_TRUE(NavScreenRenderer::drawOverview(whole.pixels(), 792, 528, wholeSource, index));
+
+  Frame split(792, 528, kSentinel);
+  ChunkedSource splitSource(bytes, 1);  // one byte per read
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(split.pixels(), 792, 528, splitSource, index));
+  expectGuardsUntouched(split);
+  EXPECT_EQ(whole.bytes, split.bytes) << "a split-read source must render the identical frame";
+
+  // And the name genuinely reaches pixels, so the comparison above is not two
+  // identically blank headers agreeing with each other.
+  Bytes unnamed = bytes;
+  unnamed.resize(unnamed.size() - 4);
+  unnamed.erase(unnamed.begin() + 38, unnamed.begin() + 38 + static_cast<long>(name.size()));
+  unnamed[36] = 0;
+  putU32(unnamed, 8, static_cast<uint32_t>(unnamed.size() + 4));
+  appendU32(unnamed, crc32Of(unnamed));
+  RouteIndex unnamedIndex;
+  ASSERT_EQ(decode(unnamed, unnamedIndex), DecodeStatus::Ok);
+  Frame blank(792, 528, kSentinel);
+  VectorRouteByteSource unnamedSource(unnamed);
+  ASSERT_TRUE(NavScreenRenderer::drawOverview(blank.pixels(), 792, 528, unnamedSource, unnamedIndex));
+  EXPECT_NE(whole.bytes, blank.bytes) << "the route name must be painted, or this test proves nothing";
 }
 
 TEST(NavigatorRouteScreenTest, OverviewRejectsUnreadableRouteRatherThanShowingExample) {

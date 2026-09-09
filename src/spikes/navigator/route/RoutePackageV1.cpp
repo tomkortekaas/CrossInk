@@ -43,24 +43,6 @@ inline uint32_t crcStep(uint32_t crc, uint8_t byte) {
   return crc;
 }
 
-// Reads exactly `length` bytes starting at `offset`. A conforming source
-// returns the whole range in one call; sources that split a request into
-// smaller reads are tolerated by re-requesting the remainder. Returns false
-// when the source stops delivering bytes before `length` were received.
-// Every single request passed to RouteByteSource::read is <= `length`, and
-// callers never pass more than kRoutePackageV1WorkBufferBytes.
-bool readFully(RouteByteSource& source, uint32_t offset, uint8_t* destination, uint32_t length) {
-  uint32_t done = 0;
-  while (done < length) {
-    const uint32_t got = source.read(offset + done, destination + done, length - done);
-    if (got == 0) {
-      return false;
-    }
-    done += got;
-  }
-  return true;
-}
-
 // E7 -> E5 quantization: nearest multiple of 100 E7 units, ties away from
 // zero. Deterministic integer arithmetic shared with the Swift encoder.
 inline int64_t quantizeE5(int32_t e7) {
@@ -363,6 +345,20 @@ bool fillRouteIndex(RouteByteSource& source, uint8_t* work, const ParsedHeader& 
 }
 
 }  // namespace
+
+// Declared in RoutePackageV1.h so the renderers share one implementation
+// instead of each keeping a private copy of the split-read loop.
+bool readFully(RouteByteSource& source, uint32_t offset, uint8_t* destination, uint32_t length) {
+  uint32_t done = 0;
+  while (done < length) {
+    const uint32_t got = source.read(offset + done, destination + done, length - done);
+    if (got == 0) {
+      return false;
+    }
+    done += got;
+  }
+  return true;
+}
 
 DecodeStatus validateRoutePackageV1(RouteByteSource& source, RouteIndex& out) {
   const uint32_t available = source.size();

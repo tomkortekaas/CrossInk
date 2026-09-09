@@ -1159,7 +1159,11 @@ bool NavScreenRenderer::drawOverview(uint8_t* frameBuffer, uint16_t widthPx, uin
   if (!compact) drawText(frameBuffer, g, 20, 24, "ROUTE OP X3", 4, true);
   char name[65]{};
   const uint32_t count = std::min<uint32_t>(index.routeNameLength, sizeof(name) - 1);
-  if (count && source.read(index.routeNameOffset, reinterpret_cast<uint8_t*>(name), count) != count) return false;
+  // RouteByteSource::read may satisfy a request in several smaller reads (see
+  // the contract in RoutePackageV1.h). Demanding the whole name in one call
+  // made a conforming split-read source drop the entire overview frame, not
+  // just the name: drawOverview returned false and nothing was painted.
+  if (count && !readFully(source, index.routeNameOffset, reinterpret_cast<uint8_t*>(name), count)) return false;
   // Existing tiny bitmap font is ASCII; unsupported UTF-8 bytes are blanks.
   // Limit the visible name to the width of the card; no unbounded strings.
   for (uint32_t i = 0; i < count; ++i) {
