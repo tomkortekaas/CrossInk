@@ -17,7 +17,11 @@
 //   * return a typed RenderStatus and fail safely (no out-of-bounds canvas
 //     access, no crash) on short reads, malformed indexes and invalid
 //     viewports;
-//   * keep the GPX route pen the dominant stroke.
+//   * keep the GPX route pen the dominant stroke;
+//   * when a live fix carries trusted phone-tracked progress, split the drawn
+//     route in strict route order: the already-walked prefix is one continuous
+//     *solid* subordinate ink line (never dashes) and the part still ahead is
+//     one continuous *cased* stroke (a black contour with a white core).
 
 #include <gtest/gtest.h>
 
@@ -263,7 +267,7 @@ DecodeStatus decode(const Bytes& bytes, RouteIndex& out) {
 
 class RecordingCanvas : public RouteCanvas {
  public:
-  enum class Kind : uint8_t { Clear, Line, Disc, Ring };
+  enum class Kind : uint8_t { Clear, Line, CaseContour, CaseCore, Disc, Ring };
 
   struct Line {
     int x0;
@@ -271,6 +275,7 @@ class RecordingCanvas : public RouteCanvas {
     int x1;
     int y1;
     int width;
+    Kind kind;
   };
 
   struct Circle {
@@ -291,17 +296,24 @@ class RecordingCanvas : public RouteCanvas {
   }
 
   void line(int x0, int y0, int x1, int y1, int widthPx) override {
-    EXPECT_GE(x0, 0) << "line endpoint left of canvas";
-    EXPECT_GE(y0, 0) << "line endpoint above canvas";
-    EXPECT_LT(x0, width_) << "line endpoint right of canvas";
-    EXPECT_LT(y0, height_) << "line endpoint below canvas";
-    EXPECT_GE(x1, 0) << "line endpoint left of canvas";
-    EXPECT_GE(y1, 0) << "line endpoint above canvas";
-    EXPECT_LT(x1, width_) << "line endpoint right of canvas";
-    EXPECT_LT(y1, height_) << "line endpoint below canvas";
-    EXPECT_GE(widthPx, 1);
+    checkStroke(x0, y0, x1, y1, widthPx, "line");
     kinds_.push_back(Kind::Line);
-    lines_.push_back(Line{x0, y0, x1, y1, widthPx});
+    lines_.push_back(Line{x0, y0, x1, y1, widthPx, Kind::Line});
+  }
+
+  // One half of a cased route stroke: the black contour band, then the white
+  // core punched through it. Both must obey the same canvas clip contract as
+  // an ink line.
+  void caseContour(int x0, int y0, int x1, int y1, int widthPx) override {
+    checkStroke(x0, y0, x1, y1, widthPx, "case contour");
+    kinds_.push_back(Kind::CaseContour);
+    lines_.push_back(Line{x0, y0, x1, y1, widthPx, Kind::CaseContour});
+  }
+
+  void caseCore(int x0, int y0, int x1, int y1, int widthPx) override {
+    checkStroke(x0, y0, x1, y1, widthPx, "case core");
+    kinds_.push_back(Kind::CaseCore);
+    lines_.push_back(Line{x0, y0, x1, y1, widthPx, Kind::CaseCore});
   }
 
   void disc(int centerX, int centerY, int radiusPx) override {
@@ -337,6 +349,18 @@ class RecordingCanvas : public RouteCanvas {
   const std::vector<Circle>& circles() const { return circles_; }
 
  private:
+  void checkStroke(int x0, int y0, int x1, int y1, int widthPx, const char* what) const {
+    EXPECT_GE(x0, 0) << what << " endpoint left of canvas";
+    EXPECT_GE(y0, 0) << what << " endpoint above canvas";
+    EXPECT_LT(x0, width_) << what << " endpoint right of canvas";
+    EXPECT_LT(y0, height_) << what << " endpoint below canvas";
+    EXPECT_GE(x1, 0) << what << " endpoint left of canvas";
+    EXPECT_GE(y1, 0) << what << " endpoint above canvas";
+    EXPECT_LT(x1, width_) << what << " endpoint right of canvas";
+    EXPECT_LT(y1, height_) << what << " endpoint below canvas";
+    EXPECT_GE(widthPx, 1) << what << " width";
+  }
+
   int width_;
   int height_;
   std::vector<Kind> kinds_;
@@ -931,11 +955,13 @@ TEST(RouteMapRendererTest, RemainingDistanceWithoutMeasurableGeometryKeepsDeclar
 
 // ---------------------------------------------------------------------------
 // Phone-tracked route progress (live v3 fix): split the drawn route at the
-// trusted distance-from-start so the already-walked prefix becomes a thin
-// dashed stroke and the remaining route keeps the dominant pen, in strict
-// route order (never the nearest-edge ambiguity). Progress 0, a mid-route
-// split, progress past the total, multiple segments and legacy fixes without
-// the progress flag must all stay deterministic and bounded.
+// trusted distance-from-start so the already-walked prefix becomes one
+// continuous *solid* subordinate ink line and the part still ahead one
+// continuous *cased* stroke (a black contour band with its white core punched
+// through it), in strict route order (never the nearest-edge ambiguity).
+// Progress 0, a mid-route split, progress past the total, multiple segments
+// and legacy fixes without the progress flag must all stay deterministic and
+// bounded.
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -1015,133 +1041,191 @@ SplitDrawResult drawProgress(const Bytes& bytes, const RouteIndex& index, const 
   return result;
 }
 
-void splitLines(const SplitDrawResult& result, std::vector<RecordingCanvas::Line>& dominant,
-                std::vector<RecordingCanvas::Line>& walked) {
+void splitLines(const SplitDrawResult& result, std::vector<RecordingCanvas::Line>& caseContour,
+                std::vector<RecordingCanvas::Line>& caseCore, std::vector<RecordingCanvas::Line>& walked) {
   for (const auto& line : result.canvas.lines()) {
-    if (line.width == RouteMapRenderer::kRouteLineWidthPx) {
-      dominant.push_back(line);
-    } else {
-      walked.push_back(line);
+    switch (line.kind) {
+      case RecordingCanvas::Kind::CaseContour:
+        caseContour.push_back(line);
+        break;
+      case RecordingCanvas::Kind::CaseCore:
+        caseCore.push_back(line);
+        break;
+      default:
+        walked.push_back(line);
+        break;
     }
   }
 }
 
-}  // namespace
-
-TEST(RouteMapRendererTest, TrustedProgressZeroKeepsWholeRouteDominantAndMarkerLast) {
-  const auto route = makeFourEdgeProgressRoute(4000);
-  // Progress 0 means nothing has been walked yet: the whole route keeps the
-  // dominant pen exactly as a legacy fix would draw it.
-  const CurrentPosition position{route.points[0], 5, 0, true, 0};
-  const SplitDrawResult result = drawProgress(route.bytes, route.index, position);
-  ASSERT_EQ(result.status, RenderStatus::Ok);
-  ASSERT_EQ(result.canvas.lineCount(), 4U);
-  for (const auto& line : result.canvas.lines()) {
-    EXPECT_EQ(line.width, RouteMapRenderer::kRouteLineWidthPx) << "progress 0 must not dash the route";
+// The cased remaining route is painted once as its black contour and once as
+// its white core, on identical geometry, both around the dominant route pen.
+void expectCasingPairs(const std::vector<RecordingCanvas::Line>& contour,
+                       const std::vector<RecordingCanvas::Line>& core) {
+  ASSERT_EQ(contour.size(), core.size()) << "every cased stroke needs its contour and its core";
+  for (size_t i = 0; i < contour.size(); ++i) {
+    SCOPED_TRACE("casing pair " + std::to_string(i));
+    EXPECT_EQ(contour[i].x0, core[i].x0);
+    EXPECT_EQ(contour[i].y0, core[i].y0);
+    EXPECT_EQ(contour[i].x1, core[i].x1);
+    EXPECT_EQ(contour[i].y1, core[i].y1);
+    EXPECT_EQ(contour[i].width, RouteMapRenderer::kRouteLineWidthPx);
+    EXPECT_EQ(core[i].width, RouteMapRenderer::kRouteLineWidthPx);
   }
-  // The marker is still drawn last, over the whole route.
+}
+
+// The white core is punched through the *finished* contour: no ink primitive
+// may follow the first core stroke, or an outgoing edge's contour would clip
+// the core back into dots. The marker still closes the frame.
+void expectCasingOrder(const SplitDrawResult& result) {
   const auto& kinds = result.canvas.kinds();
-  ASSERT_EQ(kinds.size(), 7U);  // clear + 4 route lines + ring + disc
+  size_t firstCore = kinds.size();
+  for (size_t i = 0; i < kinds.size(); ++i) {
+    if (kinds[i] == RecordingCanvas::Kind::CaseCore) {
+      firstCore = i;
+      break;
+    }
+  }
+  ASSERT_LT(firstCore, kinds.size()) << "expected a cased remaining route";
+  for (size_t i = firstCore + 1; i < kinds.size(); ++i) {
+    EXPECT_TRUE(kinds[i] == RecordingCanvas::Kind::CaseCore || kinds[i] == RecordingCanvas::Kind::Ring ||
+                kinds[i] == RecordingCanvas::Kind::Disc)
+        << "ink primitive " << static_cast<int>(kinds[i]) << " painted after the casing core pass";
+  }
+  ASSERT_GE(kinds.size(), 3U);
   EXPECT_EQ(kinds.back(), RecordingCanvas::Kind::Disc);
   EXPECT_EQ(kinds[kinds.size() - 2], RecordingCanvas::Kind::Ring);
 }
 
-TEST(RouteMapRendererTest, TrustedProgressAtVertexSplitsWalkedDashesFromDominantRemaining) {
+}  // namespace
+
+TEST(RouteMapRendererTest, TrustedProgressZeroCasesTheWholeRouteAndKeepsMarkerLast) {
+  const auto route = makeFourEdgeProgressRoute(4000);
+  // Progress 0 means nothing has been walked yet: the whole route is the part
+  // still ahead, so it is drawn as one continuous cased stroke and nothing is
+  // drawn in the subordinate walked pen.
+  const CurrentPosition position{route.points[0], 5, 0, true, 0};
+  const SplitDrawResult result = drawProgress(route.bytes, route.index, position);
+  ASSERT_EQ(result.status, RenderStatus::Ok);
+
+  std::vector<RecordingCanvas::Line> contour;
+  std::vector<RecordingCanvas::Line> core;
+  std::vector<RecordingCanvas::Line> walked;
+  splitLines(result, contour, core, walked);
+  EXPECT_TRUE(walked.empty()) << "nothing has been walked yet";
+  ASSERT_EQ(contour.size(), 4U) << "the whole route is cased";
+  expectCasingPairs(contour, core);
+  expectCasingOrder(result);
+}
+
+TEST(RouteMapRendererTest, TrustedProgressAtVertexDrawsSolidWalkedPrefixAndCasedRemaining) {
   const auto route = makeFourEdgeProgressRoute(4000);
   // Progress 2000 m of 4000 m: the split lands exactly on the p2 vertex, so
-  // edges p0->p1 and p1->p2 are walked (dashes) and p2->p3 + p3->p4 remain
-  // dominant and start exactly at the projected vertex.
+  // edges p0->p1 and p1->p2 are walked and p2->p3 + p3->p4 remain.
   const CurrentPosition position{route.points[2], 5, 0, true, 2000};
   const SplitDrawResult result = drawProgress(route.bytes, route.index, position);
   ASSERT_EQ(result.status, RenderStatus::Ok);
 
-  std::vector<RecordingCanvas::Line> dominant;
+  std::vector<RecordingCanvas::Line> contour;
+  std::vector<RecordingCanvas::Line> core;
   std::vector<RecordingCanvas::Line> walked;
-  splitLines(result, dominant, walked);
-  ASSERT_EQ(dominant.size(), 2U) << "only the two remaining edges keep the dominant pen";
-  ASSERT_FALSE(walked.empty()) << "the walked prefix must be drawn as dashes";
+  splitLines(result, contour, core, walked);
 
   const auto proj = [&](size_t i) { return result.viewport.project(route.points[i]); };
-  // The first dominant edge is exactly the remaining edge starting at p2.
-  EXPECT_EQ(dominant[0].x0, proj(2).x);
-  EXPECT_EQ(dominant[0].y0, proj(2).y);
-  EXPECT_EQ(dominant[0].x1, proj(3).x);
-  EXPECT_EQ(dominant[0].y1, proj(3).y);
-  EXPECT_EQ(dominant[1].x0, proj(3).x);
-  EXPECT_EQ(dominant[1].y0, proj(3).y);
-  EXPECT_EQ(dominant[1].x1, proj(4).x);
-  EXPECT_EQ(dominant[1].y1, proj(4).y);
-
-  // Every walked dash lies on the vertical route between p0 and p2.
-  const int x = proj(0).x;
-  const int y0 = proj(0).y;
-  const int y2 = proj(2).y;
+  // The walked prefix is one continuous solid line per edge - never dashes -
+  // so it is exactly one primitive per walked edge, spanning the projected
+  // vertices.
+  ASSERT_EQ(walked.size(), 2U) << "the walked prefix must not be dashed";
   for (const auto& line : walked) {
-    EXPECT_EQ(line.width, RouteMapRenderer::kRouteWalkedWidthPx) << "walked dashes use the thin subordinate stroke";
-    EXPECT_EQ(line.x0, x);
-    EXPECT_EQ(line.x1, x);
-    EXPECT_GE(line.y0, std::min(y0, y2));
-    EXPECT_LE(line.y0, std::max(y0, y2));
-    EXPECT_GE(line.y1, std::min(y0, y2));
-    EXPECT_LE(line.y1, std::max(y0, y2));
+    EXPECT_EQ(line.width, RouteMapRenderer::kRouteWalkedWidthPx) << "walked prefix uses the subordinate solid pen";
   }
+  EXPECT_EQ(walked[0].x0, proj(0).x);
+  EXPECT_EQ(walked[0].y0, proj(0).y);
+  EXPECT_EQ(walked[0].x1, proj(1).x);
+  EXPECT_EQ(walked[0].y1, proj(1).y);
+  EXPECT_EQ(walked[1].x0, proj(1).x);
+  EXPECT_EQ(walked[1].y0, proj(1).y);
+  EXPECT_EQ(walked[1].x1, proj(2).x);
+  EXPECT_EQ(walked[1].y1, proj(2).y);
 
-  // Route order: every dashed stroke precedes every dominant stroke.
-  const auto& kinds = result.canvas.kinds();
-  size_t firstDominant = kinds.size();
-  size_t lastWalked = 0;
-  for (size_t i = 1; i < kinds.size(); ++i) {
-    if (kinds[i] == RecordingCanvas::Kind::Line) {
-      if (result.canvas.lines()[i - 1].width == RouteMapRenderer::kRouteWalkedWidthPx) lastWalked = i;
-      if (result.canvas.lines()[i - 1].width == RouteMapRenderer::kRouteLineWidthPx && firstDominant == kinds.size())
-        firstDominant = i;
-    }
-  }
-  EXPECT_LT(lastWalked, firstDominant) << "walked dashes must precede the dominant remaining route";
-  // Marker stays last.
-  EXPECT_EQ(kinds.back(), RecordingCanvas::Kind::Disc);
+  // The remaining route is cased: the two remaining edges are painted once as
+  // the black contour and once as its white core, starting exactly at the
+  // projected split vertex.
+  ASSERT_EQ(contour.size(), 2U) << "only the two remaining edges are cased";
+  expectCasingPairs(contour, core);
+  EXPECT_EQ(contour[0].x0, proj(2).x);
+  EXPECT_EQ(contour[0].y0, proj(2).y);
+  EXPECT_EQ(contour[0].x1, proj(3).x);
+  EXPECT_EQ(contour[0].y1, proj(3).y);
+  EXPECT_EQ(contour[1].x0, proj(3).x);
+  EXPECT_EQ(contour[1].y0, proj(3).y);
+  EXPECT_EQ(contour[1].x1, proj(4).x);
+  EXPECT_EQ(contour[1].y1, proj(4).y);
+  expectCasingOrder(result);
 }
 
 TEST(RouteMapRendererTest, TrustedProgressInsideEdgeSplitsThatSingleEdge) {
   const auto route = makeFourEdgeProgressRoute(4000);
   // Progress 1250 m: the split lies one quarter into the p1->p2 edge (edge 1
   // spans measured [1000, 2000]). Exactly one edge is split: its walked
-  // quarter is dashed and its dominant remainder starts at the split point,
-  // followed by the two fully remaining edges (3 dominant lines total).
+  // quarter is a solid line ending at the split point, and its cased remainder
+  // starts there, followed by the two fully remaining edges.
   const CurrentPosition position{GeoPoint{520'125'000, 40'000'000}, 5, 0, true, 1250};
   const SplitDrawResult result = drawProgress(route.bytes, route.index, position);
   ASSERT_EQ(result.status, RenderStatus::Ok);
 
-  std::vector<RecordingCanvas::Line> dominant;
+  std::vector<RecordingCanvas::Line> contour;
+  std::vector<RecordingCanvas::Line> core;
   std::vector<RecordingCanvas::Line> walked;
-  splitLines(result, dominant, walked);
-  ASSERT_EQ(dominant.size(), 3U) << "split edge tail + two fully remaining edges";
-  ASSERT_FALSE(walked.empty());
+  splitLines(result, contour, core, walked);
 
   const auto proj = [&](size_t i) { return result.viewport.project(route.points[i]); };
   const ScreenPoint split = result.viewport.project(GeoPoint{520'125'000, 40'000'000});
-  EXPECT_NEAR(dominant[0].x0, split.x, 1) << "dominant remainder starts at the split point";
-  EXPECT_NEAR(dominant[0].y0, split.y, 1);
-  EXPECT_EQ(dominant[0].x1, proj(2).x) << "split edge remainder ends at the original vertex";
-  EXPECT_EQ(dominant[0].y1, proj(2).y);
-  EXPECT_EQ(dominant[1].x0, proj(2).x);
-  EXPECT_EQ(dominant[1].y0, proj(2).y);
-  EXPECT_EQ(dominant[2].x0, proj(3).x);
-  EXPECT_EQ(dominant[2].y0, proj(3).y);
+  ASSERT_EQ(walked.size(), 2U) << "the whole first edge and the walked quarter of the split edge";
+  EXPECT_EQ(walked[0].x0, proj(0).x);
+  EXPECT_EQ(walked[0].y0, proj(0).y);
+  EXPECT_EQ(walked[0].x1, proj(1).x);
+  EXPECT_EQ(walked[0].y1, proj(1).y);
+  EXPECT_EQ(walked[1].x0, proj(1).x);
+  EXPECT_EQ(walked[1].y0, proj(1).y);
+  EXPECT_NEAR(walked[1].x1, split.x, 1) << "the solid walked line stops at the split point";
+  EXPECT_NEAR(walked[1].y1, split.y, 1);
+
+  ASSERT_EQ(contour.size(), 3U) << "split edge tail + two fully remaining edges";
+  expectCasingPairs(contour, core);
+  EXPECT_NEAR(contour[0].x0, split.x, 1) << "the cased remainder starts at the split point";
+  EXPECT_NEAR(contour[0].y0, split.y, 1);
+  EXPECT_EQ(contour[0].x1, proj(2).x) << "split edge remainder ends at the original vertex";
+  EXPECT_EQ(contour[0].y1, proj(2).y);
+  EXPECT_EQ(contour[1].x0, proj(2).x);
+  EXPECT_EQ(contour[1].y0, proj(2).y);
+  EXPECT_EQ(contour[2].x0, proj(3).x);
+  EXPECT_EQ(contour[2].y0, proj(3).y);
+  expectCasingOrder(result);
 }
 
-TEST(RouteMapRendererTest, TrustedProgressAtOrBeyondTotalDashesTheWholeRoute) {
+TEST(RouteMapRendererTest, TrustedProgressAtOrBeyondTotalWalksTheWholeRouteSolid) {
   const auto route = makeFourEdgeProgressRoute(4000);
   for (uint32_t walkedMeters : {4000U, 999'999U}) {
     SCOPED_TRACE("walked=" + std::to_string(walkedMeters));
     const CurrentPosition position{route.points[4], 5, 0, true, walkedMeters};
     const SplitDrawResult result = drawProgress(route.bytes, route.index, position);
     ASSERT_EQ(result.status, RenderStatus::Ok);
-    std::vector<RecordingCanvas::Line> dominant;
+    std::vector<RecordingCanvas::Line> contour;
+    std::vector<RecordingCanvas::Line> core;
     std::vector<RecordingCanvas::Line> walked;
-    splitLines(result, dominant, walked);
-    EXPECT_TRUE(dominant.empty()) << "nothing remains to walk once progress reaches the total";
-    EXPECT_FALSE(walked.empty()) << "the fully walked route is drawn as the subordinate dashes";
+    splitLines(result, contour, core, walked);
+    EXPECT_TRUE(contour.empty()) << "nothing remains to case once progress reaches the total";
+    EXPECT_TRUE(core.empty());
+    ASSERT_EQ(walked.size(), 4U) << "every edge is one continuous solid line";
+    const auto proj = [&](size_t i) { return result.viewport.project(route.points[i]); };
+    for (size_t i = 0; i < walked.size(); ++i) {
+      EXPECT_EQ(walked[i].width, RouteMapRenderer::kRouteWalkedWidthPx);
+      EXPECT_EQ(walked[i].x0, proj(i).x);
+      EXPECT_EQ(walked[i].y0, proj(i).y);
+      EXPECT_EQ(walked[i].x1, proj(i + 1).x);
+      EXPECT_EQ(walked[i].y1, proj(i + 1).y);
+    }
   }
 }
 
@@ -1155,6 +1239,7 @@ TEST(RouteMapRendererTest, LegacyFixWithoutTrustedProgressKeepsSingleDominantPas
   ASSERT_EQ(result.status, RenderStatus::Ok);
   ASSERT_EQ(result.canvas.lineCount(), 4U);
   for (const auto& line : result.canvas.lines()) {
+    EXPECT_EQ(line.kind, RecordingCanvas::Kind::Line);
     EXPECT_EQ(line.width, RouteMapRenderer::kRouteLineWidthPx);
   }
 }
@@ -1168,22 +1253,29 @@ TEST(RouteMapRendererTest, TrustedProgressSplitsAcrossSegmentsInRouteOrderWithou
   const SplitDrawResult result = drawProgress(route.bytes, route.index, position);
   ASSERT_EQ(result.status, RenderStatus::Ok);
 
-  std::vector<RecordingCanvas::Line> dominant;
+  std::vector<RecordingCanvas::Line> contour;
+  std::vector<RecordingCanvas::Line> core;
   std::vector<RecordingCanvas::Line> walked;
-  splitLines(result, dominant, walked);
-  ASSERT_EQ(dominant.size(), 2U) << "a synthetic A2->B0 join would add a third dominant edge";
-  ASSERT_FALSE(walked.empty());
+  splitLines(result, contour, core, walked);
+  ASSERT_EQ(walked.size(), 3U) << "segment 0's two edges and segment 1's walked half; a synthetic A2->B0 join "
+                                  "would add a fourth walked line";
+  ASSERT_EQ(contour.size(), 2U) << "segment 1's cased tail and its last edge";
+  expectCasingPairs(contour, core);
 
   const auto proj = [&](size_t i) { return result.viewport.project(route.points[i]); };
   const ScreenPoint split = result.viewport.project(GeoPoint{520'300'000, 40'000'000});
-  EXPECT_NEAR(dominant[0].x0, split.x, 1);
-  EXPECT_NEAR(dominant[0].y0, split.y, 1);
-  EXPECT_EQ(dominant[0].x1, proj(4).x);
-  EXPECT_EQ(dominant[0].y1, proj(4).y);
-  EXPECT_EQ(dominant[1].x0, proj(4).x);
-  EXPECT_EQ(dominant[1].y0, proj(4).y);
-  EXPECT_EQ(dominant[1].x1, proj(5).x);
-  EXPECT_EQ(dominant[1].y1, proj(5).y);
+  EXPECT_NEAR(walked[2].x0, proj(3).x, 1) << "the walked half of segment 1 starts at its own B0 anchor";
+  EXPECT_NEAR(walked[2].x1, split.x, 1);
+  EXPECT_NEAR(walked[2].y1, split.y, 1);
+  EXPECT_NEAR(contour[0].x0, split.x, 1);
+  EXPECT_NEAR(contour[0].y0, split.y, 1);
+  EXPECT_EQ(contour[0].x1, proj(4).x);
+  EXPECT_EQ(contour[0].y1, proj(4).y);
+  EXPECT_EQ(contour[1].x0, proj(4).x);
+  EXPECT_EQ(contour[1].y0, proj(4).y);
+  EXPECT_EQ(contour[1].x1, proj(5).x);
+  EXPECT_EQ(contour[1].y1, proj(5).y);
+  expectCasingOrder(result);
 }
 
 TEST(RouteMapRendererTest, TrustedProgressShortReadFailsBeforeAnySplitLineIsDrawn) {
@@ -1201,14 +1293,14 @@ TEST(RouteMapRendererTest, TrustedProgressShortReadFailsBeforeAnySplitLineIsDraw
   const RenderStatus status = RouteMapRenderer::draw(canvas, source, route.index, viewport, &position);
   EXPECT_EQ(status, RenderStatus::ShortRead);
   EXPECT_EQ(canvas.clearCount(), 1U);
-  EXPECT_EQ(canvas.lineCount(), 0U) << "no walked dashes may be drawn from a half-measured route";
+  EXPECT_EQ(canvas.lineCount(), 0U) << "no split route ink may be drawn from a half-measured route";
 }
 
-TEST(RouteMapRendererTest, TrustedProgressStreamsGeometryTwiceWithBoundedReads) {
+TEST(RouteMapRendererTest, TrustedProgressStreamsGeometryThreeTimesWithBoundedReads) {
   // A long single-segment route forces the split path to stream the detailed
-  // geometry twice (one measure pass, one draw pass), each through <= 1,024
-  // byte reads. Progress 0 keeps every edge dominant while still proving the
-  // second pass happened.
+  // geometry three times (one measure pass and the casing's contour and core
+  // draw passes), each through <= 1,024 byte reads. Progress 0 keeps every edge
+  // cased while still proving the extra passes happened.
   std::vector<GeoPoint> points;
   points.reserve(1501);
   for (int i = 0; i <= 1500; ++i) {
@@ -1228,8 +1320,8 @@ TEST(RouteMapRendererTest, TrustedProgressStreamsGeometryTwiceWithBoundedReads) 
   ASSERT_EQ(status, RenderStatus::Ok);
 
   // 1500 deltas * 4 bytes = 6000 bytes of geometry: >= 6 reads per pass, so
-  // two passes need at least 12 reads, each individually <= 1,024 bytes.
-  EXPECT_GE(source.readCalls, 12U) << "the split path must stream geometry twice";
+  // three passes need at least 18 reads, each individually <= 1,024 bytes.
+  EXPECT_GE(source.readCalls, 18U) << "the split path must stream geometry three times";
   EXPECT_LE(source.maxRequested, navigator::kRoutePackageV1WorkBufferBytes);
   EXPECT_GT(canvas.lineCount(), 0U);
 }

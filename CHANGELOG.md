@@ -54,11 +54,11 @@
   centered line, and the two-column distance/time footer with captions is a
   single compact row that reads distance, minutes and the current GPS status
   at a glance (the plain vector layout is unchanged). During a live walk the
-  route is drawn with the already-walked part as a thin dashed line and only
-  the part still ahead in the dominant route colour, split by the phone's own
-  progress reporting. The offline gray map no longer draws individual building
-  footprints, so water and green/open land stay distinguishable in the calm
-  four-tone look.
+  route is drawn with the already-walked part as a thin solid black line and
+  the part still ahead as a cased line - a white centre inside a black outline
+  - split by the phone's own progress reporting. The offline gray map no
+  longer draws individual building footprints, so water and green/open land
+  stay distinguishable in the calm four-tone look.
 
 - Navigator supports an optional detailed walking map with street names, building outlines, water hatching, road/path styles, a larger position marker, north/scale and approximate straight-line direction to the GPX route. The previous regional map remains available as fallback.
 

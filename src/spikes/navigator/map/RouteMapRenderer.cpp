@@ -191,6 +191,26 @@ void drawEdge(RouteCanvas& canvas, int xmin, int ymin, int xmax, int ymax, int a
   canvas.line(ax, ay, bx, by, stroke);
 }
 
+// Clips one polyline edge and, when anything visible remains, paints one half
+// of the cased remaining-route stroke: `contour` selects the black outline
+// band, `!contour` the white core punched through it. Zero-length edges draw
+// nothing. Both halves are clipped identically, so the core can only ever be
+// painted inside the contour's own extent.
+void drawCasedEdge(RouteCanvas& canvas, int xmin, int ymin, int xmax, int ymax, int ax, int ay, int bx, int by,
+                   bool contour) {
+  if (!clipSegment(xmin, ymin, xmax, ymax, ax, ay, bx, by)) {
+    return;
+  }
+  if (ax == bx && ay == by) {
+    return;
+  }
+  if (contour) {
+    canvas.caseContour(ax, ay, bx, by, RouteMapRenderer::kRouteLineWidthPx);
+  } else {
+    canvas.caseCore(ax, ay, bx, by, RouteMapRenderer::kRouteLineWidthPx);
+  }
+}
+
 // Raster-space nearest segment, evaluated before clipping. Fixed-point
 // interpolation keeps products below int64 limits at kMaxProjectedPx. When
 // this edge is closer than `best`, updates best/nearest and returns true.
@@ -350,6 +370,12 @@ void accumulateRouteUnits(void* opaque, const RouteEdge& edge) {
 // measurement accumulators (proximity) and the trusted-progress split
 // boundary, both driven strictly in route order.
 struct DrawRouteState {
+  // The cased part still ahead is painted in two streamed passes: the contour
+  // pass paints all ink (the solid walked prefix plus every remaining edge's
+  // black outline band), the core pass then punches the white core back
+  // through the finished contour. See RouteCanvas::caseContour.
+  enum class CasingPass : uint8_t { Contour, Core };
+
   RouteCanvas* canvas = nullptr;
   int xmin = 0;
   int ymin = 0;
@@ -367,17 +393,22 @@ struct DrawRouteState {
   int64_t measureCosQ16 = 65536;
   bool splitActive = false;
   uint64_t splitWalkedUnits = 0;  // measured units already walked
+  CasingPass casingPass = CasingPass::Contour;
 };
 
-// Draws one streamed edge. The un-walked part keeps the dominant route pen;
-// a trusted fix's phone-tracked progress turns the already-walked prefix into
-// the thin dashed stroke. Zero-length vertex edges can still become the
+// Draws one streamed edge. Without a trusted fix the whole route keeps the
+// dominant solid pen. With one, the already-walked prefix becomes a continuous
+// solid subordinate line and the part still ahead a continuous cased stroke,
+// both in strict route order. Zero-length vertex edges can still become the
 // nearest measured edge but draw nothing.
 void drawRouteEdge(void* opaque, const RouteEdge& edge) {
   auto& state = *static_cast<DrawRouteState*>(opaque);
   const uint64_t lengthU = edge.lengthU;
+  const bool contourPass = state.casingPass == DrawRouteState::CasingPass::Contour;
 
-  if (state.position != nullptr && state.proximity != nullptr) {
+  // The along-route proximity is computed once, from the first (contour) pass
+  // over the drawn geometry; the core pass only erases the casing's centre.
+  if (contourPass && state.position != nullptr && state.proximity != nullptr) {
     // Projection parameter along this edge measured in the same U space as
     // the length sums, so a fix between two route points lands exactly where
     // it is on the ground rather than where a pixel-grid projection happened
@@ -412,36 +443,49 @@ void drawRouteEdge(void* opaque, const RouteEdge& edge) {
     }
   }
 
-  if (state.splitActive) {
-    if (lengthU > 0) {
-      const uint64_t begin = state.routeUnits;
-      const uint64_t end = begin + lengthU;
-      const Rect rect{state.xmin, state.ymin, state.xmax - state.xmin + 1, state.ymax - state.ymin + 1};
-      if (state.splitWalkedUnits <= begin) {
-        drawEdge(*state.canvas, state.xmin, state.ymin, state.xmax, state.ymax, edge.a.x, edge.a.y, edge.b.x, edge.b.y);
-      } else if (state.splitWalkedUnits >= end) {
-        patternedEdge(*state.canvas, rect, edge.a, edge.b, RouteMapRenderer::kRouteWalkedDashPx,
-                      RouteMapRenderer::kRouteWalkedGapPx);
-      } else {
-        // Split inside this edge: the walked prefix is dashed and the remaining
-        // suffix stays continuous with the dominant pen. The split parameter is
-        // measured in U units; the projection is affine along the edge, so the
-        // same parameter splits the drawn screen segment.
-        const int64_t t = int64_t(((state.splitWalkedUnits - begin) * 65536) / lengthU);  // in (0, 65536)
-        const ScreenPoint p{edge.a.x + int(roundDiv(int64_t(edge.b.x - edge.a.x) * t, 65536)),
-                            edge.a.y + int(roundDiv(int64_t(edge.b.y - edge.a.y) * t, 65536))};
-        patternedEdge(*state.canvas, rect, edge.a, p, RouteMapRenderer::kRouteWalkedDashPx,
-                      RouteMapRenderer::kRouteWalkedGapPx);
-        drawEdge(*state.canvas, state.xmin, state.ymin, state.xmax, state.ymax, p.x, p.y, edge.b.x, edge.b.y);
-      }
-      state.routeUnits = end;
-    }
+  if (!state.splitActive) {
+    // No split: draw every edge with the dominant pen (zero-length pixel edges
+    // draw nothing) exactly as the historical single-pass renderer did.
+    drawEdge(*state.canvas, state.xmin, state.ymin, state.xmax, state.ymax, edge.a.x, edge.a.y, edge.b.x, edge.b.y);
+    state.routeUnits += lengthU;
     return;
   }
-  // No split: draw every edge with the dominant pen (zero-length pixel edges
-  // draw nothing) exactly as the historical single-pass renderer did.
-  drawEdge(*state.canvas, state.xmin, state.ymin, state.xmax, state.ymax, edge.a.x, edge.a.y, edge.b.x, edge.b.y);
-  state.routeUnits += lengthU;
+
+  if (lengthU == 0) {
+    return;  // a zero-length vertex edge draws nothing, walked or cased
+  }
+  const uint64_t begin = state.routeUnits;
+  const uint64_t end = begin + lengthU;
+  const auto edgeInk = [&](const ScreenPoint& a, const ScreenPoint& b) {
+    drawEdge(*state.canvas, state.xmin, state.ymin, state.xmax, state.ymax, a.x, a.y, b.x, b.y,
+             RouteMapRenderer::kRouteWalkedWidthPx);
+  };
+  const auto edgeCase = [&](const ScreenPoint& a, const ScreenPoint& b) {
+    drawCasedEdge(*state.canvas, state.xmin, state.ymin, state.xmax, state.ymax, a.x, a.y, b.x, b.y, contourPass);
+  };
+  if (state.splitWalkedUnits <= begin) {
+    // Entirely ahead: the cased stroke.
+    edgeCase(edge.a, edge.b);
+  } else if (state.splitWalkedUnits >= end) {
+    // Entirely walked: one continuous solid line, painted in the contour pass
+    // only (the core pass touches nothing but the part still ahead).
+    if (contourPass) {
+      edgeInk(edge.a, edge.b);
+    }
+  } else {
+    // Split inside this edge: the walked prefix is solid ink up to the split
+    // point and the remaining suffix is cased from there. The split parameter
+    // is measured in U units; the projection is affine along the edge, so the
+    // same parameter splits the drawn screen segment.
+    const int64_t t = int64_t(((state.splitWalkedUnits - begin) * 65536) / lengthU);  // in (0, 65536)
+    const ScreenPoint p{edge.a.x + int(roundDiv(int64_t(edge.b.x - edge.a.x) * t, 65536)),
+                        edge.a.y + int(roundDiv(int64_t(edge.b.y - edge.a.y) * t, 65536))};
+    if (contourPass) {
+      edgeInk(edge.a, p);
+    }
+    edgeCase(p, edge.b);
+  }
+  state.routeUnits = end;
 }
 
 }  // namespace
@@ -573,8 +617,21 @@ RenderStatus RouteMapRenderer::draw(RouteCanvas& canvas, RouteByteSource& source
   state.measureCosQ16 = measureLength ? viewport.cosScaleQ16() : 65536;
   state.splitActive = splitActive;
   state.splitWalkedUnits = splitWalkedUnits;
+  state.casingPass = DrawRouteState::CasingPass::Contour;
   if (!streamDetailedGeometry(source, route, viewport, work, measureLength, &state, &drawRouteEdge)) {
     return RenderStatus::ShortRead;
+  }
+  // Second draw pass over the same geometry: punch the white core back through
+  // the finished black contour of the part still ahead, so no later contour
+  // stroke can clip it. The walked prefix is fully drawn by the contour pass.
+  const uint64_t drawnUnits = state.routeUnits;
+  if (splitActive) {
+    state.casingPass = DrawRouteState::CasingPass::Core;
+    state.routeUnits = 0;
+    if (!streamDetailedGeometry(source, route, viewport, work, measureLength, &state, &drawRouteEdge)) {
+      return RenderStatus::ShortRead;
+    }
+    state.routeUnits = drawnUnits;
   }
 
   if (position != nullptr && proximity != nullptr && state.nearestDistance != UINT64_MAX) {

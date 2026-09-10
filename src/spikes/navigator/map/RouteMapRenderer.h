@@ -35,10 +35,12 @@
 //     and never joined to the next one.
 //   * When CurrentPosition carries trusted phone-tracked route progress
 //     (hasRouteProgress and a declared positive total), the drawn route is
-//     split at that progress in strict route order: the already-walked prefix
-//     becomes a thin dashed stroke (kRouteWalkedDashPx/kRouteWalkedGapPx) and
-//     the remaining route stays continuous with the dominant pen. The split
-//     is measured on the same streamed detailed geometry as the along-route
+//     split at that progress in strict route order. The already-walked prefix
+//     is one continuous *solid* line in the subordinate walked pen
+//     (kRouteWalkedWidthPx), and the part still ahead is one continuous
+//     *cased* stroke: a black outline/contour band whose white core is punched
+//     back through it (RouteCanvas::caseContour + caseCore). The split is
+//     measured on the same streamed detailed geometry as the along-route
 //     remaining estimate; no synthetic joins are ever drawn or measured.
 //   * The current-position marker is drawn last (ring first, then the filled
 //     disc on top). The ring radius encodes accuracyMeters at the viewport
@@ -72,6 +74,22 @@ class RouteCanvas {
 
   // Ink stroke between two map-rect points, widthPx >= 1.
   virtual void line(int x0, int y0, int x1, int y1, int widthPx) = 0;
+
+  // Cased route stroke, painted in two passes so the white core stays
+  // continuous through polyline vertices: the renderer draws every
+  // `caseContour` of the cased route first (the black outline/contour band
+  // around `penWidthPx`) and only then every `caseCore` (the same stroke
+  // punched back to the canvas background). Drawing an edge's contour after a
+  // neighbour's core would clip that core at every shared vertex and turn the
+  // white centre into dots. `penWidthPx` is the route pen the casing is built
+  // around; the canvas decides the actual contour band and core widths for its
+  // display (its own minimum stroke, its own background).
+  //
+  // Both default to a canvas without casing support: the contour is the
+  // historical solid ink stroke and the core is dropped, so a plain BW display
+  // keeps the dominant solid route and never loses route ink.
+  virtual void caseContour(int x0, int y0, int x1, int y1, int penWidthPx) { line(x0, y0, x1, y1, penWidthPx); }
+  virtual void caseCore(int, int, int, int, int) {}
 
   // Filled ink circle.
   virtual void disc(int centerX, int centerY, int radiusPx) = 0;
@@ -120,14 +138,11 @@ class RouteMapRenderer {
   // GPX route pen: the visually dominant stroke on the canvas.
   static constexpr int kRouteLineWidthPx = 3;
   // Walked-route pen when a live fix carries trusted phone-tracked progress
-  // (CurrentPosition::hasRouteProgress): the already-walked prefix is drawn
-  // as a thin dashed stroke so the remaining route keeps the dominant
-  // kRouteLineWidthPx pen. Dash/gap lengths are map-local pixels, matching
-  // the background walking-path pattern so the walked prefix reads as
-  // subordinate rather than a second route.
+  // (CurrentPosition::hasRouteProgress): the already-walked prefix is drawn as
+  // one continuous solid line in this subordinate pen - never as dashes - so
+  // it reads as the part already behind the walker while the cased part still
+  // ahead stays the visually dominant stroke.
   static constexpr int kRouteWalkedWidthPx = 1;
-  static constexpr int kRouteWalkedDashPx = 6;
-  static constexpr int kRouteWalkedGapPx = 5;
   // Position marker: thin ring plus small filled disc, drawn over the route.
   static constexpr int kMarkerRingWidthPx = 2;
   static constexpr int kMarkerDiscRadiusPx = 7;
@@ -137,7 +152,9 @@ class RouteMapRenderer {
   // Streams the detailed geometry of every segment in `route` from `source`
   // and draws it onto `canvas` through `viewport`. `position` may be null.
   // No heap, no recursion, no exceptions, no RTTI; one <= 1,024-byte stack
-  // buffer for delta reads, each individual read request <= 1,024 bytes.
+  // buffer for delta reads, each individual read request <= 1,024 bytes. A
+  // trusted-progress split streams that geometry up to three times (the
+  // length measure, the casing contour, the casing core).
   static RenderStatus draw(RouteCanvas& canvas, RouteByteSource& source, const RouteIndex& route,
                            const RouteViewport& viewport, const CurrentPosition* position,
                            WalkMapLayer* background = nullptr, RouteProximity* proximity = nullptr,

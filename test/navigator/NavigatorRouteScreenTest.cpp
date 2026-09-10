@@ -1691,4 +1691,135 @@ TEST(NavigatorRouteScreenTest, InjectedViewportUsesIdenticalGeometryInEveryGrayP
   EXPECT_NE(logicalPixelIsBlack(frames[2], cx + ring, cy), baseBlack) << "msb ring east";
 }
 
+// ---------------------------------------------------------------------------
+// Correction: the compact four-gray overview's trusted-progress route split.
+//
+// The already-walked prefix of the route must be one continuous *solid* black
+// line (never dashes), and the part still ahead one continuous *cased* stroke:
+// a black outline/contour band around a white core. The previous rendering had
+// both the other way round - thin dashes for the walked prefix and a black
+// core with a white halo for the part ahead. Asserted on the exact Base-plane
+// pixels drawOverview submits, so the checks cover the real framebuffer path.
+// ---------------------------------------------------------------------------
+
+// A straight north-south route (constant longitude, so it projects onto one
+// vertical column) with four equal edges and a declared total, so a trusted
+// fix at the middle vertex splits the drawn route exactly in half.
+struct VerticalProgressRoute {
+  std::vector<GeoPoint> points;
+  Bytes bytes;
+
+  static VerticalProgressRoute make(uint32_t totalMeters) {
+    VerticalProgressRoute route;
+    const int32_t baseLat = 520'000'000;
+    const int32_t baseLon = 40'000'000;
+    for (int i = 0; i < 5; ++i) {
+      route.points.push_back(GeoPoint{baseLat + i * 100'000, baseLon});
+    }
+    route.bytes = encodeRoute(route.points, {0});
+    putU32(route.bytes, 28, totalMeters);
+    putU16(route.bytes, 32, 100);
+    route.bytes.resize(route.bytes.size() - 4);
+    appendU32(route.bytes, crc32Of(route.bytes));
+    return route;
+  }
+};
+
+TEST(NavigatorRouteScreenTest, CompactOverviewTrustedProgressDrawsSolidWalkedPrefixAndCasedRemaining) {
+  const auto route = VerticalProgressRoute::make(4000);
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  // A trusted fix at the middle vertex: 2000 m of the declared 4000 m walked,
+  // so the first half of the geometry is behind the walker and the second half
+  // is still ahead.
+  CurrentPosition position;
+  position.point = route.points[2];
+  position.accuracyMeters = 5;
+  position.hasRouteProgress = true;
+  position.distanceFromStartMeters = 2000;
+
+  // The whole-route Overview viewport the orchestrator selects for this view.
+  const Rect mapRect = NavScreenRenderer::overviewMapRect(792, 528, true, false);
+  const RouteViewport fitted = RouteViewport::fitOverview(index, mapRect, 24);
+  ASSERT_TRUE(fitted.isValid());
+
+  Frame frame(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(frame.pixels(), 792, 528, source, index, nullptr, &position, "STATUS",
+                                              nullptr, nullptr, navigator::NavGrayPlane::Base, nullptr, nullptr,
+                                              nullptr, &fitted, true));
+  expectGuardsUntouched(frame);
+
+  const ScreenPoint p0 = fitted.project(route.points[0]);
+  const ScreenPoint p1 = fitted.project(route.points[1]);
+  const ScreenPoint p2 = fitted.project(route.points[2]);
+  const ScreenPoint p3 = fitted.project(route.points[3]);
+  const ScreenPoint p4 = fitted.project(route.points[4]);
+  ASSERT_EQ(p0.x, p2.x) << "the test route must project onto one vertical column";
+  ASSERT_LT(p4.y, p0.y) << "the test route must run bottom to top";
+  const int mapX = 16;
+  const int mapY = NavScreenRenderer::kOverviewHeaderGrayPx;
+  const int routeX = mapX + p2.x;
+
+  // Walked prefix (the first two edges, below the split vertex): one
+  // continuous solid black line. Every row of the walked half carries route
+  // ink - a dashed stroke leaves white gaps - and the stroke stays thin, with
+  // no white core of its own.
+  for (int y = p1.y + 8; y <= p0.y - 4; ++y) {
+    EXPECT_TRUE(logicalPixelIsBlack(frame, routeX, mapY + y)) << "walked prefix has a gap at local y=" << y;
+  }
+  const int walkedMidY = (p1.y + p0.y) / 2;
+  EXPECT_FALSE(logicalPixelIsBlack(frame, routeX - 1, mapY + walkedMidY)) << "walked prefix stays a thin line";
+  EXPECT_FALSE(logicalPixelIsBlack(frame, routeX + 1, mapY + walkedMidY)) << "walked prefix stays a thin line";
+
+  // Part still ahead (the last two edges): a black outline/contour around a
+  // white core, continuous across the p3 vertex.
+  for (const int y : {(p2.y + p3.y) / 2, (p3.y + p4.y) / 2}) {
+    SCOPED_TRACE("remaining local y=" + std::to_string(y));
+    EXPECT_FALSE(logicalPixelIsBlack(frame, routeX, mapY + y)) << "white core missing on the remaining route";
+    EXPECT_TRUE(logicalPixelIsBlack(frame, routeX - 3, mapY + y)) << "black outline missing left of the core";
+    EXPECT_TRUE(logicalPixelIsBlack(frame, routeX + 3, mapY + y)) << "black outline missing right of the core";
+    EXPECT_FALSE(logicalPixelIsBlack(frame, routeX - 8, mapY + y)) << "the ahead stroke must be cased, not solid";
+    EXPECT_FALSE(logicalPixelIsBlack(frame, routeX + 8, mapY + y)) << "the ahead stroke must be cased, not solid";
+  }
+
+  // The position marker is still drawn last and stays visible at the split.
+  EXPECT_TRUE(logicalPixelIsBlack(frame, routeX, mapY + p2.y)) << "position marker missing at the split vertex";
+}
+
+TEST(NavigatorRouteScreenTest, CompactOverviewLegacyFixKeepsDominantSolidRouteWithoutCasing) {
+  const auto route = VerticalProgressRoute::make(4000);
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+
+  // A legacy fix carries no trusted progress: its carried distance value is
+  // meaningless, the route is never split, and the whole route keeps the
+  // dominant solid ink stroke it has always had - no white core anywhere.
+  CurrentPosition legacy;
+  legacy.point = route.points[2];
+  legacy.accuracyMeters = 5;
+  legacy.hasRouteProgress = false;
+  legacy.distanceFromStartMeters = 2000;
+
+  const Rect mapRect = NavScreenRenderer::overviewMapRect(792, 528, true, false);
+  const RouteViewport fitted = RouteViewport::fitOverview(index, mapRect, 24);
+  ASSERT_TRUE(fitted.isValid());
+
+  Frame frame(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(frame.pixels(), 792, 528, source, index, nullptr, &legacy, "STATUS",
+                                              nullptr, nullptr, navigator::NavGrayPlane::Base, nullptr, nullptr,
+                                              nullptr, &fitted, true));
+  expectGuardsUntouched(frame);
+
+  const ScreenPoint p2 = fitted.project(route.points[2]);
+  const ScreenPoint p3 = fitted.project(route.points[3]);
+  const int routeX = 16 + p2.x;
+  const int y = NavScreenRenderer::kOverviewHeaderGrayPx + (p2.y + p3.y) / 2;
+  EXPECT_TRUE(logicalPixelIsBlack(frame, routeX, y)) << "the legacy whole route stays solid ink";
+  EXPECT_TRUE(logicalPixelIsBlack(frame, routeX - 1, y)) << "the legacy whole route stays solid ink";
+  EXPECT_TRUE(logicalPixelIsBlack(frame, routeX + 1, y)) << "the legacy whole route stays solid ink";
+}
+
 }  // namespace

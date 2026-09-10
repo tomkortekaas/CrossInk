@@ -885,6 +885,10 @@ class MapRouteCanvas final : public RouteCanvas {
     if (widthPx < 1) {
       return;
     }
+    // The dominant route pen (the whole route when no trusted progress splits
+    // it): ink raised to the panel's minimum stroke, with a white halo on the
+    // compact four-gray panel so the route stays the strongest ink over the
+    // calm raster. The cased split stroke uses caseContour/caseCore instead.
     if (styled_ && widthPx == RouteMapRenderer::kRouteLineWidthPx) {
       fillRouteLineLog(frameBuffer_, g_, x0 + mapX_, y0 + mapY_, x1 + mapX_, y1 + mapY_,
                        std::max(widthPx, minStroke_) + 4, mapX_, mapY_, mapX_ + mapW_ - 1, mapY_ + mapH_ - 1, false);
@@ -897,6 +901,34 @@ class MapRouteCanvas final : public RouteCanvas {
       fillDiscLog(frameBuffer_, g_, x0 + mapX_, y0 + mapY_, core, true);
       fillDiscLog(frameBuffer_, g_, x1 + mapX_, y1 + mapY_, core, true);
     }
+  }
+
+  // Cased remaining-route stroke on the compact four-gray panel: a black
+  // outline/contour band around a white core. The two halves are drawn as two
+  // passes by the renderer (contour first, core second) so the white centre
+  // stays continuous through the polyline vertices. The plain vector overview
+  // keeps the historical dominant solid route: no panel casing, so its contour
+  // is a plain ink line of the dominant pen and its core is dropped.
+  void caseContour(int x0, int y0, int x1, int y1, int penWidthPx) override {
+    if (penWidthPx < 1) {
+      return;
+    }
+    if (!styled_) {
+      line(x0, y0, x1, y1, penWidthPx);
+      return;
+    }
+    const int band = std::max(penWidthPx, minStroke_) + 4;
+    fillRouteLineLog(frameBuffer_, g_, x0 + mapX_, y0 + mapY_, x1 + mapX_, y1 + mapY_, band, mapX_, mapY_,
+                     mapX_ + mapW_ - 1, mapY_ + mapH_ - 1, true);
+  }
+
+  void caseCore(int x0, int y0, int x1, int y1, int penWidthPx) override {
+    if (penWidthPx < 1 || !styled_) {
+      return;  // the plain overview has no casing core
+    }
+    const int core = std::max(penWidthPx, minStroke_);
+    fillRouteLineLog(frameBuffer_, g_, x0 + mapX_, y0 + mapY_, x1 + mapX_, y1 + mapY_, core, mapX_, mapY_,
+                     mapX_ + mapW_ - 1, mapY_ + mapH_ - 1, false);
   }
 
   void toneSpan(int x, int y, int width, uint8_t tone) override {
