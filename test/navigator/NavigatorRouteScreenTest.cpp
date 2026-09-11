@@ -1532,6 +1532,54 @@ TEST(NavigatorRouteScreenTest, GrayBudgetExceededOverviewStaysCompactWhiteRouteO
       << "authoritative full route missing on the budget-exceeded fallback";
 }
 
+// The approved design backs BOTH navigation views with the calm raster, so the
+// controller must report Overview eligible without any GPS fix (its
+// whole-route fit viewport needs no centre). This test mirrors NavigatorMain's
+// decision - the controller answers eligibility and only then may the renderer
+// use the raster - and proves the eligible no-fix Overview paints calm raster
+// tone instead of the clean white route-only fallback. The over-budget
+// fallback itself stays covered by GrayBudgetExceededOverviewStaysCompactWhiteRouteOnly.
+TEST(NavigatorRouteScreenTest, OverviewWithoutFixIsGrayEligibleAndPaintsCalmRaster) {
+  navigator::NavigationViewController controller;  // every session starts in Overview
+  ASSERT_EQ(controller.view(), navigator::NavigationView::Overview);
+  const bool grayEligible = controller.shouldOpenGrayBackground(/*hasValidFix=*/false);
+  EXPECT_TRUE(grayEligible) << "the approved design opens the calm raster behind the whole route without a fix";
+
+  const auto route = LocalRoute::make();
+  RouteIndex index;
+  ASSERT_EQ(decode(route.bytes, index), DecodeStatus::Ok);
+  VectorRouteByteSource source(route.bytes);
+  const Rect mapRect = NavScreenRenderer::overviewMapRect(792, 528, true, false);
+  const RouteViewport fitted = RouteViewport::fitOverview(index, mapRect, navigator::kNavigationViewPaddingPx);
+  ASSERT_TRUE(fitted.isValid());
+
+  // Solid water raster across the visible grid, so a frame that actually used
+  // the raster carries tone ink the white route-only fallback does not.
+  const Bytes waterBytes = encodeGrayMapData(523'400'000, 48'800'000, 6, 6, 0, 0, 5, 5, 0x55);
+  VectorWalkMapByteSource waterSource(waterBytes);
+  navigator::GrayMap waterMap;
+  ASSERT_EQ(waterMap.open(waterSource), navigator::WalkMapStatus::Ok);
+  navigator::GrayMapLayer waterLayer;
+  waterLayer.source = &waterSource;
+  waterLayer.map = &waterMap;
+
+  ASSERT_TRUE(grayEligible) << "eligibility is the gate that lets the raster be opened";
+  Frame grayFrame(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(grayFrame.pixels(), 792, 528, source, index, nullptr, nullptr,
+                                              "WACHT OP GPS", nullptr, &waterLayer, navigator::NavGrayPlane::Base,
+                                              nullptr, nullptr, nullptr, &fitted, true));
+  EXPECT_EQ(waterLayer.status, navigator::WalkMapStatus::Ok);
+  expectGuardsUntouched(grayFrame);
+
+  Frame whiteFrame(792, 528, kSentinel);
+  EXPECT_TRUE(NavScreenRenderer::drawOverview(whiteFrame.pixels(), 792, 528, source, index, nullptr, nullptr,
+                                              "WACHT OP GPS", nullptr, nullptr, navigator::NavGrayPlane::Base, nullptr,
+                                              nullptr, nullptr, &fitted, true));
+  expectGuardsUntouched(whiteFrame);
+  EXPECT_NE(std::memcmp(grayFrame.pixels(), whiteFrame.pixels(), rowBytes(792) * 528), 0)
+      << "an eligible no-fix Overview must paint the calm raster, not the white route-only map";
+}
+
 // ---------------------------------------------------------------------------
 // Task: inject one selected viewport into every render plane.
 //

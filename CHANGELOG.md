@@ -49,6 +49,13 @@
 
 ### Changed
 
+- The X3 walking navigator's calm grayscale map now also backs the whole-route
+  Overview, not only the close GPS view. From the moment a route opens you see
+  the water, green and built-up context behind the whole route, whether or not
+  a GPS fix has arrived yet. A route whose whole-route view is larger than the
+  map's tile budget, or a missing map, still falls back to the clean white
+  route-only frame rather than a half-drawn background.
+
 - The X3 walking navigator's grayscale route overview is calmer and gives the
   map more room: the oversized route-name header is now a single compact
   centered line, and the two-column distance/time footer with captions is a

@@ -15,7 +15,10 @@
 //     ground span is 250 m across the usable map rectangle within 5%;
 //   * when GPS zoom is requested without a valid fix, keep the mode but
 //     return the Overview fit viewport and expose waitingForGps - it never
-//     invents a centre.
+//     invents a centre;
+//   * request the calm gray background for Overview regardless of a valid
+//     fix (its whole-route fit viewport needs no centre) and for GPS zoom
+//     only once a valid fix exists.
 
 #include <gtest/gtest.h>
 
@@ -95,17 +98,24 @@ TEST(NavigationViewControllerTest, RepeatedOverviewSelectionIsIdempotent) {
   EXPECT_EQ(controller.view(), NavigationView::Overview);
 }
 
-TEST(NavigationViewControllerTest, GrayBackgroundIsOnlyOpenedForGpsZoomWithValidFix) {
-  NavigationViewController controller;
-  EXPECT_FALSE(controller.shouldOpenGrayBackground(false));
-  EXPECT_FALSE(controller.shouldOpenGrayBackground(true));
+TEST(NavigationViewControllerTest, GrayBackgroundOpensForOverviewWithoutFixAndGpsZoomOnlyWithFix) {
+  NavigationViewController controller;  // Overview is the session default
+  // Approved design: the calm raster backs the whole route, so Overview
+  // attempts it even before any GPS fix - its whole-route fit viewport needs
+  // no centre.
+  EXPECT_TRUE(controller.shouldOpenGrayBackground(false));
+  EXPECT_TRUE(controller.shouldOpenGrayBackground(true));
+  EXPECT_EQ(controller.view(), NavigationView::Overview) << "eligibility must not mutate the view";
 
+  // GPS zoom still cannot choose a centre without a valid fix.
   ASSERT_TRUE(controller.selectGpsZoom());
   EXPECT_FALSE(controller.shouldOpenGrayBackground(false));
   EXPECT_TRUE(controller.shouldOpenGrayBackground(true));
 
+  // Returning to Overview restores the fix-independent attempt.
   ASSERT_TRUE(controller.selectOverview());
-  EXPECT_FALSE(controller.shouldOpenGrayBackground(true));
+  EXPECT_TRUE(controller.shouldOpenGrayBackground(false));
+  EXPECT_TRUE(controller.shouldOpenGrayBackground(true));
 }
 
 TEST(NavigationViewControllerTest, DownReturnsToOverviewAndUpReturnsToGpsZoom) {

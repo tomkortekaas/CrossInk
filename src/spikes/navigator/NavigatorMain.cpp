@@ -99,9 +99,10 @@ void showRouteFrame(navigator::NavigationRefresh refresh = navigator::Navigation
   const uint32_t started = millis();
   navigator::LivePosition fix{};
   bool hasPosition = navigator::navigationPosition(millis(), fix);
-  // Keep session entry immediate: the whole-route Overview is the compact
-  // white route-only map and never scans the large gray-map index. Open the
-  // calm raster only for GPS zoom once a valid centre is available.
+  // The calm raster backs both views: Overview opens it for the whole-route
+  // fit even without a fix, and GPS zoom opens it once a valid centre is
+  // available. Absent, invalid or over-budget coverage still falls back to
+  // the compact white route-only frame below, never a partial gray frame.
   const bool grayReady =
       viewController.shouldOpenGrayBackground(hasPosition) && display.supportsStripGrayscale() && !backRequested &&
       graySource.beginRead(cancelMapRead, "/Navigation/Maps/gray.x3gm") &&

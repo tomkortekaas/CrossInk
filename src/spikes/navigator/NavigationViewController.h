@@ -78,11 +78,13 @@ class NavigationViewController {
 
   NavigationView view() const { return view_; }
 
-  // The large calm raster is useful only for the centred walking view. The
-  // whole-route Overview deliberately stays the immediate compact white
-  // route-only frame, and GPS zoom cannot choose a centre without a fix.
+  // The calm raster backs the whole route as well as the centred walking
+  // view, so Overview attempts it whatever the GPS state - its whole-route
+  // fit viewport needs no centre. GPS zoom cannot choose a centre without a
+  // valid fix, so it stays fix-gated: with no fix the caller keeps the
+  // Overview framing and shows the waiting state.
   bool shouldOpenGrayBackground(bool hasValidFix) const {
-    return view_ == NavigationView::GpsZoom && hasValidFix;
+    return view_ == NavigationView::Overview || hasValidFix;
   }
 
   // Every navigation session starts in Overview.
