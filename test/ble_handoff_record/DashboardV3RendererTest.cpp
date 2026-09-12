@@ -608,43 +608,50 @@ TEST(DashboardV3Renderer, StepsUseTheSameMeterRowAsTheBatteryRows) {
 // The phone sends a quote id, never the text, and computes it as
 // `dayNumber % quotes.count` - zero based, with no "absent" value. If the two
 // tables drift apart by one entry, every footer quietly renders the wrong
-// quote, which nothing else in the system would notice. These expectations are
-// transcribed from Sources/DashboardCore/DashboardV3Quotes.swift.
+// quote, which nothing else in the system would notice. The full entry-by-entry
+// comparison against the Swift table lives in
+// scripts/validate_dashboard_v3_quotes.py --firmware; these checks pin the
+// count, the widened-id boundaries and a few spot entries.
 
-TEST(DashboardV3Quotes, TableMatchesThePhoneTableEntryForEntry) {
-  ASSERT_EQ(dashboard::v3::QUOTE_COUNT, 8u);
+TEST(DashboardV3Quotes, TableHoldsAFullYearAndTheWidenedIdsResolve) {
+  ASSERT_EQ(dashboard::v3::QUOTE_COUNT, 365u) << "the phone selects the id as dayNumber % 365";
+  // 255 is the last id a one-byte wire field could carry; 256 and 364 only
+  // exist because the field widened to a little-endian uint16_t.
+  for (const uint16_t id : {0, 255, 256, 364}) {
+    const dashboard::v3::Quote* quote = dashboard::v3::quoteForId(id);
+    ASSERT_NE(quote, nullptr) << "id " << id << " must resolve";
+    EXPECT_NE(quote->text[0], '\0') << "id " << id << " has empty text";
+    EXPECT_NE(quote->author[0], '\0') << "id " << id << " has an empty author";
+  }
 
-  const char* const expectedText[] = {
-      "Verbeelding is belangrijker dan kennis.",
-      "Eenvoud is de ultieme verfijning.",
-      "Minder is meer.",
-      "Pluk de dag.",
-      "Geluk is waar voorbereiding en kans elkaar ontmoeten.",
-      "Een reis van duizend mijl begint met \xc3\xa9\xc3\xa9n stap.",
-      "Wie niet waagt, die niet wint.",
-      "Kennis spreekt, maar wijsheid luistert.",
+  // The first eight entries keep their order - old packages addressed them by
+  // the same ids - and the last entry proves the table's tail came across.
+  const struct {
+    uint16_t id;
+    const char* text;
+    const char* author;
+  } spotChecks[] = {
+      {0, "Verbeelding is belangrijker dan kennis.", "Albert Einstein"},
+      {7, "Kennis spreekt, maar wijsheid luistert.", "Jimi Hendrix"},
+      {8, "Attention is the rarest gift you can give.", "Anonymous"},
+      {364, "The second best time to plant a tree is now.", "English proverb"},
   };
-  const char* const expectedAuthor[] = {
-      "Albert Einstein", "Leonardo da Vinci",      "Ludwig Mies van der Rohe", "Horatius",
-      "Seneca",          "Laozi",                  "Nederlands spreekwoord",   "Jimi Hendrix",
-  };
-
-  for (size_t index = 0; index < dashboard::v3::QUOTE_COUNT; ++index) {
-    const dashboard::v3::Quote* quote = dashboard::v3::quoteForId(static_cast<uint8_t>(index));
-    ASSERT_NE(quote, nullptr) << "id " << index << " must resolve";
-    EXPECT_STREQ(quote->text, expectedText[index]) << "at id " << index;
-    EXPECT_STREQ(quote->author, expectedAuthor[index]) << "at id " << index;
+  for (const auto& spot : spotChecks) {
+    const dashboard::v3::Quote* quote = dashboard::v3::quoteForId(spot.id);
+    ASSERT_NE(quote, nullptr) << "id " << spot.id << " must resolve";
+    EXPECT_STREQ(quote->text, spot.text) << "at id " << spot.id;
+    EXPECT_STREQ(quote->author, spot.author) << "at id " << spot.id;
   }
 }
 
-TEST(DashboardV3Quotes, IdsAreZeroBasedAndOutOfRangeDrawsNothing) {
+TEST(DashboardV3Quotes, IdsPastTheEndOfTheTableDrawNothing) {
   const dashboard::v3::Quote* first = dashboard::v3::quoteForId(0);
   ASSERT_NE(first, nullptr) << "id 0 is a real quote, not an absent sentinel";
   EXPECT_STREQ(first->author, "Albert Einstein");
   // A newer phone may carry a longer table; an unknown id must draw nothing
   // rather than wrap around onto the wrong quote.
-  EXPECT_EQ(dashboard::v3::quoteForId(static_cast<uint8_t>(dashboard::v3::QUOTE_COUNT)), nullptr);
-  EXPECT_EQ(dashboard::v3::quoteForId(255), nullptr);
+  EXPECT_EQ(dashboard::v3::quoteForId(static_cast<uint16_t>(dashboard::v3::QUOTE_COUNT)), nullptr);
+  EXPECT_EQ(dashboard::v3::quoteForId(UINT16_MAX), nullptr);
 }
 
 // A dry forecast and a missing one look identical in the buckets, so the wire

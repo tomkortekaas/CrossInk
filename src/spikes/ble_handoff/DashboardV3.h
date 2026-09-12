@@ -9,7 +9,14 @@
 namespace dashboard::v3 {
 
 constexpr uint8_t TEMPLATE_DASHBOARD_V3 = 5;
-constexpr uint8_t FORMAT_VERSION = 2;
+// Payload formats this firmware decodes. Format 2 is the first shipped
+// dashboard format and carries a one-byte quote id. Format 3 widened that id to
+// a little-endian uint16_t so the quote table could grow past 256 entries;
+// nothing else about the payload changed. The phone emits format 3 only, but a
+// format-2 package can still be sitting in a device's cache, so both decode and
+// anything else is rejected as UnsupportedVersion.
+constexpr uint8_t FORMAT_VERSION_V2 = 2;
+constexpr uint8_t FORMAT_VERSION = 3;
 // The rain buckets carry one nibble each. The nibble is the Buienradar
 // intensity band shared with the iOS composer, not a rescaled byte:
 //   0 = dry (< 0.1 mm/u), 1 = light (0.1..1), 2 = moderate (1..5),
@@ -104,7 +111,10 @@ struct DashboardV3Package {
   Traffic traffic{};
   StatusValues status{};
   uint16_t unreadTotal = 0;
-  uint8_t quoteId = 0;
+  /// Quote table index. Format 2 sent one byte, format 3 a little-endian
+  /// uint16_t; the decoder widens both into this field, so it is the same width
+  /// as the table can address.
+  uint16_t quoteId = 0;
   std::array<AgendaRow, MAX_AGENDA_ROWS> agenda{};
   std::array<MarketRow, MAX_MARKETS> markets{};
   std::array<ChatRow, MAX_CHATS> chats{};

@@ -74,7 +74,11 @@ Status decodeDashboardV3(const uint8_t* bytes, size_t size, DashboardV3Package& 
   // is a stale cache that heals once the phone sends a fresh one, not a corrupt
   // payload. The decoder reports only "unsupported"; which direction it is
   // (package older vs firmware behind) is the reader's call.
-  if (version != FORMAT_VERSION) return Status::UnsupportedVersion;
+  //
+  // Both shipped formats are accepted. They differ in exactly one place - the
+  // quote id's width, read further down - so the rest of the field walk is
+  // shared.
+  if (version != FORMAT_VERSION_V2 && version != FORMAT_VERSION) return Status::UnsupportedVersion;
   if (!cursor.read8(flags) || (flags & 0xF8U) != 0) return Status::InvalidArgument;
   candidate.heatingKnown = (flags & 1U) != 0;
   candidate.heatingAllowed = (flags & 2U) != 0;
@@ -109,8 +113,22 @@ Status decodeDashboardV3(const uint8_t* bytes, size_t size, DashboardV3Package& 
       !cursor.read8(candidate.traffic.classification) || !cursor.read8(candidate.status.x3Battery) ||
       !cursor.read8(candidate.status.vehicleBattery) || !cursor.read8(candidate.status.homeBattery) ||
       !cursor.read16(candidate.status.steps) || !cursor.read16(candidate.status.stepGoal) ||
-      !cursor.read16(candidate.unreadTotal) || !cursor.read8(candidate.quoteId) ||
-      !cursor.read8(candidate.agendaCount) || !cursor.read8(candidate.marketCount) || !cursor.read8(candidate.chatCount)) {
+      !cursor.read16(candidate.unreadTotal)) {
+    return Status::InvalidLength;
+  }
+  // The quote id is the one field whose width depends on the format version:
+  // format 2 sent a single byte, format 3 the little-endian uint16_t the phone
+  // writes now. Reading the wrong width would hand every following count the
+  // wrong byte, so this is the only place the version matters.
+  if (version == FORMAT_VERSION) {
+    if (!cursor.read16(candidate.quoteId)) return Status::InvalidLength;
+  } else {
+    uint8_t narrowQuoteId = 0;
+    if (!cursor.read8(narrowQuoteId)) return Status::InvalidLength;
+    candidate.quoteId = narrowQuoteId;
+  }
+  if (!cursor.read8(candidate.agendaCount) || !cursor.read8(candidate.marketCount) ||
+      !cursor.read8(candidate.chatCount)) {
     return Status::InvalidLength;
   }
   if ((candidate.traffic.classification != UINT8_MAX && candidate.traffic.classification > 2) ||

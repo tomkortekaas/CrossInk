@@ -2,6 +2,12 @@
 
 ### Added
 
+- The dashboard's daily quote now comes from a full year of 365 Dutch and
+  English entries instead of repeating every eight days. The phone app and the
+  device keep the same list in the same order, so a given day shows the same
+  quote on both, and a dashboard update that was already waiting on the device
+  still shows its quote after this firmware is installed.
+
 - X3 walking navigation opens on the whole route and lets you switch views on
   the device: Up or Down toggles between Overview and a north-up GPS view
   centred on your current position with a fixed 250-metre span, OK refreshes

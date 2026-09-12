@@ -189,7 +189,9 @@ struct Scenario {
 // Every quote in the shared table, measured against the footer boxes it has to
 // live in. A quote is chosen by the calendar day, so a single entry that is too
 // long shows up as a truncated footer once every few days and nowhere else.
-void reportQuoteFit(const dashboard::preview::FontBook& fonts) {
+// Returns non-zero when any text or author overflows, so a table that cannot be
+// drawn in full fails the preview run instead of only printing a count.
+int reportQuoteFit(const dashboard::preview::FontBook& fonts) {
   constexpr int kQuoteWidth = 528 - 2 * 14;        // footer width minus padding
   constexpr int kAuthorWidth = kQuoteWidth - 140;  // shares its line with "ververst HH:MM"
 
@@ -211,6 +213,11 @@ void reportQuoteFit(const dashboard::preview::FontBook& fonts) {
                 stepsDown ? "micro" : "body", textWidth, kQuoteWidth, authorWidth, kAuthorWidth, quote.text);
   }
   std::printf("  %d of %zu quotes overflow their box\n", overflowing, dashboard::v3::QUOTE_COUNT);
+  if (overflowing > 0) {
+    std::fprintf(stderr, "quote fit: %d of %zu quotes overflow their box\n", overflowing, dashboard::v3::QUOTE_COUNT);
+    return 1;
+  }
+  return 0;
 }
 
 void reportFontLadder(const dashboard::preview::FontBook& fonts) {
@@ -286,7 +293,7 @@ int main(const int argc, char** argv) {
   const std::string outputDirectory = argv[1];
   const dashboard::preview::FontBook fonts;
   reportFontLadder(fonts);
-  reportQuoteFit(fonts);
+  int status = reportQuoteFit(fonts);
 
   const std::vector<Scenario> scenarios = {
       {"mockup", mockupPackage(), 1153},   // 19:13, so the header shows tonight's sunset
@@ -297,7 +304,6 @@ int main(const int argc, char** argv) {
       {"missing-lead-market", missingLeadMarketPackage(), 1153},
   };
 
-  int status = 0;
   for (const Scenario& scenario : scenarios) {
     status |= reportScenario(scenario, outputDirectory, fonts);
   }
