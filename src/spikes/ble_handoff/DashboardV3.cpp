@@ -3,7 +3,10 @@
 #include <algorithm>
 
 namespace dashboard::v3 {
-static_assert(sizeof(DashboardV3Package) <= 1024, "V3 decoded package exceeds its static DRAM budget");
+// Thirteen agenda slots make the decoded package 1,240 bytes on the ESP32-C3.
+// Keep a small alignment margin while still catching accidental structural
+// growth long before it becomes a meaningful share of DRAM.
+static_assert(sizeof(DashboardV3Package) <= 1280, "V3 decoded package exceeds its static DRAM budget");
 namespace {
 
 uint16_t readU16(const uint8_t* bytes) {
@@ -78,7 +81,9 @@ Status decodeDashboardV3(const uint8_t* bytes, size_t size, DashboardV3Package& 
   // Both shipped formats are accepted. They differ in exactly one place - the
   // quote id's width, read further down - so the rest of the field walk is
   // shared.
-  if (version != FORMAT_VERSION_V2 && version != FORMAT_VERSION) return Status::UnsupportedVersion;
+  if (version != FORMAT_VERSION_V2 && version != FORMAT_VERSION && version != FORMAT_VERSION_8A &&
+      version != FORMAT_VERSION_DAY_TOTALS) return Status::UnsupportedVersion;
+  candidate.formatVersion = version;
   if (!cursor.read8(flags) || (flags & 0xF8U) != 0) return Status::InvalidArgument;
   candidate.heatingKnown = (flags & 1U) != 0;
   candidate.heatingAllowed = (flags & 2U) != 0;
@@ -120,7 +125,7 @@ Status decodeDashboardV3(const uint8_t* bytes, size_t size, DashboardV3Package& 
   // format 2 sent a single byte, format 3 the little-endian uint16_t the phone
   // writes now. Reading the wrong width would hand every following count the
   // wrong byte, so this is the only place the version matters.
-  if (version == FORMAT_VERSION) {
+  if (version >= FORMAT_VERSION) {
     if (!cursor.read16(candidate.quoteId)) return Status::InvalidLength;
   } else {
     uint8_t narrowQuoteId = 0;
@@ -163,6 +168,67 @@ Status decodeDashboardV3(const uint8_t* bytes, size_t size, DashboardV3Package& 
     if (status != Status::Ok) return status;
     if (!cursor.read16(row.unreadCount) || !cursor.read16(row.lastMessageMinuteOfDay)) return Status::InvalidLength;
     if (row.lastMessageMinuteOfDay >= 1440) return Status::InvalidArgument;
+  }
+  if (version >= FORMAT_VERSION_8A) {
+    uint16_t rawPortfolio = 0;
+    uint16_t rawMover = 0;
+    if (!cursor.read16(rawPortfolio) || !cursor.read8(candidate.moverCount)) return Status::InvalidLength;
+    candidate.portfolioChangeBasisPoints = static_cast<int16_t>(rawPortfolio);
+    status = cursor.readText(candidate.strongestMover.label, candidate.strongestMover.labelLength, true);
+    if (status != Status::Ok) return status;
+    if (!cursor.read16(rawMover)) return Status::InvalidLength;
+    candidate.strongestMover.changeBasisPoints = static_cast<int16_t>(rawMover);
+    const int change = candidate.strongestMover.changeBasisPoints;
+    if (candidate.moverCount == 0) {
+      if (candidate.strongestMover.labelLength != 0 || change != INT16_MIN) return Status::InvalidArgument;
+    } else if (candidate.strongestMover.labelLength == 0 || change == INT16_MIN ||
+               (change >= -300 && change <= 300)) {
+      return Status::InvalidArgument;
+    }
+    for (uint8_t index = 0; index < candidate.agendaCount; ++index) {
+      AgendaRow& row = candidate.agenda[index];
+      uint8_t agendaFlags = 0;
+      if (!cursor.read16(row.durationMinutes) || !cursor.read8(agendaFlags)) return Status::InvalidLength;
+      if ((row.durationMinutes != UINT16_MAX && row.durationMinutes > 1440) || (agendaFlags & ~3U) != 0) {
+        return Status::InvalidArgument;
+      }
+      row.isAllDay = (agendaFlags & 1U) != 0;
+      row.isSoftBlock = (agendaFlags & 2U) != 0;
+      if (version >= FORMAT_VERSION_DAY_TOTALS) {
+        if (!cursor.read8(row.dayTotalCount) || !cursor.read8(row.dayAllDayCount) || row.dayTotalCount == 0 ||
+            row.dayAllDayCount > row.dayTotalCount) {
+          return Status::InvalidArgument;
+        }
+      }
+    }
+
+    // Format 5 totals describe the source calendar before the row ceiling. All
+    // rows for one day must agree, and a total may never be smaller than the
+    // rows already present. Format 4 had no totals, so derive safe exact values
+    // from its encoded rows for the unchanged 8A renderer.
+    for (uint8_t index = 0; index < candidate.agendaCount; ++index) {
+      AgendaRow& row = candidate.agenda[index];
+      uint8_t encodedCount = 0;
+      uint8_t encodedAllDayCount = 0;
+      for (uint8_t other = 0; other < candidate.agendaCount; ++other) {
+        const AgendaRow& peer = candidate.agenda[other];
+        if (peer.dayOffset != row.dayOffset) continue;
+        ++encodedCount;
+        if (peer.isAllDay) ++encodedAllDayCount;
+        if (version >= FORMAT_VERSION_DAY_TOTALS &&
+            (peer.dayTotalCount != row.dayTotalCount || peer.dayAllDayCount != row.dayAllDayCount)) {
+          return Status::InvalidArgument;
+        }
+      }
+      if (version >= FORMAT_VERSION_DAY_TOTALS) {
+        if (row.dayTotalCount < encodedCount || row.dayAllDayCount < encodedAllDayCount) {
+          return Status::InvalidArgument;
+        }
+      } else {
+        row.dayTotalCount = encodedCount;
+        row.dayAllDayCount = encodedAllDayCount;
+      }
+    }
   }
   if (cursor.offset != cursor.end) return Status::InvalidLength;
   output = candidate;

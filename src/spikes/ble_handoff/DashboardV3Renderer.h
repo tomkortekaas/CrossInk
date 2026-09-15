@@ -36,6 +36,13 @@ struct TextSpec {
   TextAlign align = TextAlign::Left;
   bool bold = false;
   bool black = true;
+  /// Draws the glyph ink as a half-tone instead of solid. The panel is one bit
+  /// deep, so a secondary line (the focus row's caption) cannot be a lighter
+  /// grey: the canvas lays the text down and then clears a checkerboard out of
+  /// its box, exactly like the dimmed rows in the reader's themes. Canvases
+  /// that only record operations carry the flag through; the ones that raster
+  /// (firmware, preview, the PBM artifact) do the knockout.
+  bool dithered = false;
 };
 
 /// Ink coverage for an area that has to read as a shade rather than a solid.
@@ -74,6 +81,14 @@ class DashboardV3Canvas {
   /// the rectangle, so neighbouring shaded blocks line up instead of showing a
   /// seam where their patterns fall out of phase.
   virtual void shade(Rect bounds, Shade level) = 0;
+  /// Width `value` would occupy at the spec's rung and style, or -1 when the
+  /// canvas cannot measure. Only the 8A path calls it, and only where a wrong
+  /// guess would clip a value rather than merely look loose: the header's
+  /// right-hand group, the hero's hairline, the single-line market strip and
+  /// the KPI value columns. The default returns -1 so host canvases and any
+  /// future canvas stay source-compatible; the renderer then falls back to a
+  /// per-rung estimate that errs towards leaving room.
+  virtual int measureText(const TextSpec& spec, const char* value) const;
 };
 
 /// `utcOffsetQ` is `SETTINGS.clockUtcOffsetQ`: quarter hours biased by 48, so
@@ -85,6 +100,11 @@ constexpr uint8_t UTC_OFFSET_Q_UTC = 48;
 
 void renderDashboardV3(DashboardV3Canvas& canvas, const DashboardV3Package& package, uint16_t minuteOfDay,
                        uint8_t utcOffsetQ = UTC_OFFSET_Q_UTC);
+/// The rain band's single-line outlook ("12:55 lichte regen", "droog tot 13:15"
+/// or "regen -" when the phone sent no forecast). Exposed so the host preview
+/// reports the exact string the panel draws rather than a second copy of the
+/// renderer's decision tree.
+void formatRainLine(const DashboardV3Package& package, char (&out)[40]);
 void renderDashboardV3(GfxRenderer& renderer, const DashboardV3Package& package, uint16_t minuteOfDay,
                        uint8_t utcOffsetQ = UTC_OFFSET_Q_UTC);
 void applyDashboardV3DeviceBattery(DashboardV3Package& package, uint16_t percentage);

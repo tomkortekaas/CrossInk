@@ -78,6 +78,15 @@ Refer to https://freeink.org/llms.txt for guidance.
   own `lib_deps` lists. Anything in `src/spikes/ble_handoff/` that includes
   `<Logging.h>` needs `BoardConfig` there, or the build fails with
   `fatal error: BoardConfig.h: No such file or directory`.
+- In the sandboxed agent shell `PLATFORMIO_CORE_DIR` points at
+  `/Volumes/2TB/Development/PlatformIO/Core`, which is outside the writable
+  roots, so `pio run` dies with `PermissionError: ... platforms.lock` before it
+  compiles anything. A shadow core dir is checked into the ignored `.pio/`: real
+  `platforms/` and `packages/` entries are symlinked back to the real Core, and
+  the few directories PlatformIO must write are copied. Build through it, e.g.
+  `PLATFORMIO_CORE_DIR="$PWD/.pio/pio-core" pio run -e dashboard-x3`; an
+  unsandboxed shell needs no override. Never point it at a fresh empty dir —
+  that installs packages and needs the network.
 
 ## Fonts: do not regenerate `src/fontIds.h`
 

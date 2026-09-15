@@ -10,12 +10,18 @@ int fontIdFor(const dashboard::v3::FontRole role) {
   switch (role) {
     // Must stay identical to fontId() in DashboardV3Renderer.cpp: a preview that
     // resolves a rung differently from the firmware measures the wrong font.
-    case dashboard::v3::FontRole::Micro: return LEXENDDECA_8_FONT_ID;
-    case dashboard::v3::FontRole::Small: return LEXENDDECA_9_FONT_ID;
-    case dashboard::v3::FontRole::Body: return LEXENDDECA_10_FONT_ID;
-    case dashboard::v3::FontRole::Heading: return LEXENDDECA_12_FONT_ID;
-    case dashboard::v3::FontRole::Value: return LEXENDDECA_14_FONT_ID;
-    case dashboard::v3::FontRole::Hero: return LEXENDDECA_16_FONT_ID;
+    case dashboard::v3::FontRole::Micro:
+      return LEXENDDECA_8_FONT_ID;
+    case dashboard::v3::FontRole::Small:
+      return LEXENDDECA_9_FONT_ID;
+    case dashboard::v3::FontRole::Body:
+      return LEXENDDECA_10_FONT_ID;
+    case dashboard::v3::FontRole::Heading:
+      return LEXENDDECA_12_FONT_ID;
+    case dashboard::v3::FontRole::Value:
+      return LEXENDDECA_14_FONT_ID;
+    case dashboard::v3::FontRole::Hero:
+      return LEXENDDECA_16_FONT_ID;
   }
   return LEXENDDECA_10_FONT_ID;
 }
@@ -67,6 +73,19 @@ void PreviewCanvas::text(const dashboard::v3::TextSpec& spec, const char* value)
   if (spec.align == dashboard::v3::TextAlign::Center) x += (spec.bounds.width - drawnWidth) / 2;
   if (spec.align == dashboard::v3::TextAlign::Right) x += spec.bounds.width - drawnWidth;
   fonts_.drawText(framebuffer_, fontId, x, spec.bounds.y, bounded.c_str(), spec.black, style);
+  if (spec.dithered) {
+    // Mirrors GfxDashboardV3Canvas: draw the line solid, then knock a
+    // checkerboard out of its own box so the one-bit framebuffer shows the
+    // grey the panel would draw.
+    const int height = fonts_.lineHeight(fontId);
+    for (int py = spec.bounds.y; py < spec.bounds.y + height; ++py) {
+      for (int px = x; px < x + drawnWidth; ++px) {
+        if (!dashboard::v3::shadeCoversPixel(dashboard::v3::Shade::Half, px, py)) {
+          framebuffer_.setPixel(px, py, false);
+        }
+      }
+    }
+  }
 
   TextObservation observation;
   observation.requested = value == nullptr ? "" : value;
@@ -78,6 +97,13 @@ void PreviewCanvas::text(const dashboard::v3::TextSpec& spec, const char* value)
   observation.truncated = bounded != observation.requested;
   observation.missingGlyph = hasMissingGlyph(fonts_, fontId, bounded.c_str(), style);
   observations_.push_back(std::move(observation));
+}
+
+int PreviewCanvas::measureText(const dashboard::v3::TextSpec& spec, const char* value) const {
+  if (value == nullptr) return 0;
+  const int fontId = fontIdFor(spec.font);
+  const auto style = spec.bold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+  return fonts_.textWidth(fontId, value, style);
 }
 
 void PreviewCanvas::shade(const dashboard::v3::Rect bounds, const dashboard::v3::Shade level) {
@@ -92,7 +118,7 @@ void PreviewCanvas::shade(const dashboard::v3::Rect bounds, const dashboard::v3:
 void PreviewCanvas::icon(const uint8_t iconId, const dashboard::v3::Rect bounds, const bool black) {
   if (iconId == 0 || iconId > dashboard::DASHBOARD_ICON_COUNT) return;
   const freeink::Icon* selected = bounds.width >= 40 && bounds.height >= 40 ? dashboard::DASHBOARD_ICONS_48[iconId]
-                                                                           : dashboard::DASHBOARD_ICONS_32[iconId];
+                                                                            : dashboard::DASHBOARD_ICONS_32[iconId];
   if (selected != nullptr) drawIcon(framebuffer_, *selected, bounds, black);
 }
 

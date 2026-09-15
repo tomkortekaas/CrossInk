@@ -10,6 +10,47 @@ cmake --build /tmp/x3-v3-preview -j8
 /tmp/x3-v3-preview/dashboard-v3-preview /tmp/x3-v3-out
 ```
 
+## Scenarios
+
+Legacy format-2/3 fixtures (`mockup`, `empty`, `maximum`, `before-sunrise`,
+`solo-market`, `missing-lead-market`) keep the V3 band layout. The format-5
+fixtures exercise the 8A design:
+
+- `agenda-8a` — the demonstration day (Sunday 2026-09-13 11:15 UTC) with all
+  bands populated and one soft agenda block.
+- `agenda-8a-allday` — the same day plus an all-day row and one agenda row with
+  an unknown duration, so the ribbon draws a mark instead of an interval.
+- `empty-8a` — every missing marker the wire format has.
+- `missing-8a` — every band present but one value in each band missing.
+- `no-movers-8a` — the demonstration day without the strongest-mover block.
+- `extreme-8a` — the wire maximums (longest labels/durations, biggest counts,
+  edge-of-range signed values).
+
+The normal-value 8A fixtures (`agenda-8a`, `agenda-8a-allday`,
+`no-movers-8a`) must end with zero truncated strings; the tool prints that
+verdict per scenario and returns a non-zero exit status if one truncates.
+`extreme-8a` is expected to truncate and is reported without failing the run.
+
+## 8A measurement section
+
+For every format-4-or-newer scenario the report also prints an explicit 8A measurement
+section:
+
+- the rain band's single row: the outlook string `formatRainLine` returns, its
+  measured width against the budget the row leaves it, the window's end clock,
+  and the width the intensity strip gets (with the renderer's 96 px minimum);
+- the four fixed market slots (AEX, S&P, NDX, BTC) and the mover block at the
+  Micro rung, their sum, and the market band's available width (the market band
+  uses a 10 px pad, not the 14 px pad used elsewhere);
+- the KPI left column's reserved value width and the aligned bar geometry, plus
+  the right column's value strings measured against their Body-bold boxes;
+- the in-agenda focus row's time width, the hairline position that results from
+  it, and the location its second line leads with (the caption text itself is
+  the renderer's decision, so the picture shows the finished line).
+
+All widths come from `FontBook::textWidth`, the same real Lexend metrics the
+draw path uses.
+
 ## Why it exists
 
 The renderer test's PBM export draws with a 7x9 test glyph table, not with
@@ -38,3 +79,9 @@ reading distance still need a photograph of the real panel.
 `PreviewCanvas::fontIdFor` must resolve each `FontRole` to the same font id as
 `fontId()` in `src/spikes/ble_handoff/DashboardV3Renderer.cpp`. If they drift,
 the preview measures a font the firmware never draws.
+
+`PreviewCanvas::measureText` must stay a direct wrapper around
+`FontBook::textWidth`, matching the firmware's `GfxDashboardV3Canvas`. The 8A
+renderer sizes its value boxes from that call; without it the preview falls back
+to a character-count estimate and the report measures a font the firmware never
+draws.

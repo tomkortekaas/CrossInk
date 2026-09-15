@@ -22,7 +22,52 @@ struct Operation {
   uint8_t iconId = 0;
   dashboard::v3::TextAlign align = dashboard::v3::TextAlign::Left;
   dashboard::v3::FontRole font = dashboard::v3::FontRole::Body;
+  bool bold = false;
+  bool dithered = false;
 };
+
+/// The nominal advance model, in the same shape as the renderer's own fallback:
+/// a digit is ten pixels at the Micro rung, a capital twelve, a comma four and
+/// a percent sign eighteen. The test canvas measures with these numbers so the
+/// 8A layout runs down its measured path without the host needing font bitmaps,
+/// and so the widths asserted here are independent of the renderer's estimate.
+int nominalWidth(const dashboard::v3::FontRole role, const char* text) {
+  int units = 0;
+  for (const unsigned char* cursor = reinterpret_cast<const unsigned char*>(text); *cursor != '\0'; ++cursor) {
+    const unsigned char character = *cursor;
+    if (character >= 0x80U) {
+      units += 13;
+      while ((cursor[1] & 0xC0U) == 0x80U) ++cursor;
+    } else if (character >= '0' && character <= '9') {
+      units += 10;
+    } else if (character >= 'A' && character <= 'Z') {
+      units += 12;
+    } else if (character >= 'a' && character <= 'z') {
+      units += 9;
+    } else if (character == '%') {
+      units += 18;
+    } else if (character == '&') {
+      units += 13;
+    } else if (character == ' ') {
+      units += 4;
+    } else if (character == ',' || character == '.' || character == ':' || character == ';') {
+      units += 4;
+    } else if (character == '-') {
+      units += 6;
+    } else {
+      units += 9;
+    }
+  }
+  switch (role) {
+    case dashboard::v3::FontRole::Micro: return units;
+    case dashboard::v3::FontRole::Small: return units * 112 / 100;
+    case dashboard::v3::FontRole::Body: return units * 124 / 100;
+    case dashboard::v3::FontRole::Heading: return units * 150 / 100;
+    case dashboard::v3::FontRole::Value: return units * 175 / 100;
+    case dashboard::v3::FontRole::Hero: return units * 200 / 100;
+  }
+  return units;
+}
 
 class RecordingCanvas final : public dashboard::v3::DashboardV3Canvas {
  public:
@@ -44,7 +89,15 @@ class RecordingCanvas final : public dashboard::v3::DashboardV3Canvas {
   }
 
   void text(const dashboard::v3::TextSpec& spec, const char* value) override {
-    operations.push_back({Operation::Kind::Text, spec.bounds, value, spec.black, 0, spec.align, spec.font});
+    operations.push_back(
+        {Operation::Kind::Text, spec.bounds, value, spec.black, 0, spec.align, spec.font, spec.bold, spec.dithered});
+  }
+
+  /// `canMeasure = false` mimics a canvas without font metrics, which is the
+  /// only case the renderer's character-count fallback runs in.
+  int measureText(const dashboard::v3::TextSpec& spec, const char* value) const override {
+    if (!canMeasure || value == nullptr) return -1;
+    return nominalWidth(spec.font, value);
   }
 
   void icon(const uint8_t iconId, const dashboard::v3::Rect bounds, const bool black) override {
@@ -58,6 +111,7 @@ class RecordingCanvas final : public dashboard::v3::DashboardV3Canvas {
   }
 
   std::vector<dashboard::v3::Shade> shades;
+  bool canMeasure = true;
 
   std::vector<Operation> operations;
 };
@@ -186,10 +240,12 @@ dashboard::v3::DashboardV3Package maximumContentPackage() {
   // crash the moment a ceiling is raised.
   static const char* const agendaTitles[dashboard::v3::MAX_AGENDA_ROWS] = {
       "AFSPRAAK 1", "AFSPRAAK 2", "AFSPRAAK 3", "AFSPRAAK 4",
-      "AFSPRAAK 5", "AFSPRAAK 6", "AFSPRAAK 7", "AFSPRAAK 8"};
+      "AFSPRAAK 5", "AFSPRAAK 6", "AFSPRAAK 7", "AFSPRAAK 8",
+      "AFSPRAAK 9", "AFSPRAAK 10", "AFSPRAAK 11", "AFSPRAAK 12", "AFSPRAAK 13"};
   static const char* const agendaDetails[dashboard::v3::MAX_AGENDA_ROWS] = {
       "DETAIL 1", "DETAIL 2", "DETAIL 3", "DETAIL 4",
-      "DETAIL 5", "DETAIL 6", "DETAIL 7", "DETAIL 8"};
+      "DETAIL 5", "DETAIL 6", "DETAIL 7", "DETAIL 8",
+      "DETAIL 9", "DETAIL 10", "DETAIL 11", "DETAIL 12", "DETAIL 13"};
   static_assert(std::size(agendaTitles) == dashboard::v3::MAX_AGENDA_ROWS, "one title per declared row");
   static_assert(std::size(agendaDetails) == dashboard::v3::MAX_AGENDA_ROWS, "one detail per declared row");
   for (size_t index = 0; index < dashboard::v3::MAX_AGENDA_ROWS; ++index) {
@@ -200,12 +256,16 @@ dashboard::v3::DashboardV3Package maximumContentPackage() {
   }
   package.agendaCount = static_cast<uint8_t>(dashboard::v3::MAX_AGENDA_ROWS);
 
-  static const char* const marketLabels[dashboard::v3::MAX_MARKETS] = {"AEX", "DOW", "DAX"};
-  for (size_t index = 0; index < dashboard::v3::MAX_MARKETS; ++index) {
+  // Three rows even though the wire cap is four: the legacy bands are tight
+  // enough that a fourth market row costs a WhatsApp row, and every expectation
+  // below was written against this three-row column. The format-4 ceiling is
+  // exercised by the 8A tests instead.
+  static const char* const marketLabels[] = {"AEX", "DOW", "DAX"};
+  for (size_t index = 0; index < std::size(marketLabels); ++index) {
     copyText(package.markets[index].label, package.markets[index].labelLength, marketLabels[index]);
     package.markets[index].changeBasisPoints = static_cast<int16_t>(100 + static_cast<int16_t>(index) * 25);
   }
-  package.marketCount = static_cast<uint8_t>(dashboard::v3::MAX_MARKETS);
+  package.marketCount = static_cast<uint8_t>(std::size(marketLabels));
 
   static const char* const chatNames[dashboard::v3::MAX_CHATS] = {"PAPA",   "MAMA",  "WERK", "SIEM",
                                                                   "FAMILIE", "LUKE", "TBOS"};
@@ -1254,6 +1314,1408 @@ TEST(DashboardV3Renderer, DeviceBatteryOverridesOnlyTheX3StatusValue) {
 // target-compiled. Icons are bounded filled-disk placeholders for the same
 // reason.
 
+// --- 8A ---------------------------------------------------------------------
+//
+// Format-4 packages are drawn with the approved 8A design instead of the legacy
+// bands: a black header, the rain line, the agenda, and the three lower bands
+// that tile the rest of the canvas. There is no standalone hero band any more:
+// the first day group heads on white, then draws its 07:00..23:00 ribbon, then
+// the 58 px focus row for row 0 — the appointment in black on the same white as
+// the rows below it — and then the day's remaining rows. Every later group is
+// heading, ribbon and rows, with no focus row.
+// These tests pin what was approved and what is easy to regress: nothing outside
+// the canvas, no invented clock times, no silently dropped events, no row drawn
+// twice, and values that survive where captions may be shortened.
+
+void setAgenda8A(dashboard::v3::DashboardV3Package& package, const size_t index, const uint8_t dayOffset,
+                 const uint16_t minute, const char* title, const uint16_t duration, const bool allDay = false,
+                 const bool soft = false, const uint8_t dayTotal = 0, const uint8_t dayAllDay = 0) {
+  dashboard::v3::AgendaRow& row = package.agenda[index];
+  row.dayOffset = dayOffset;
+  row.minuteOfDay = minute;
+  row.durationMinutes = duration;
+  row.isAllDay = allDay;
+  row.isSoftBlock = soft;
+  row.dayTotalCount = dayTotal;
+  row.dayAllDayCount = dayAllDay;
+  copyText(row.title, row.titleLength, title);
+}
+
+void setMarket8A(dashboard::v3::DashboardV3Package& package, const size_t index, const char* label,
+                 const int16_t basisPoints) {
+  dashboard::v3::MarketRow& row = package.markets[index];
+  copyText(row.label, row.labelLength, label);
+  row.changeBasisPoints = basisPoints;
+}
+
+/// The demonstration day: Sunday 2026-09-13 11:15, the first event at 19:00,
+/// three day groups, four indices and a mover.
+dashboard::v3::DashboardV3Package agenda8APackage() {
+  dashboard::v3::DashboardV3Package package{};
+  package.formatVersion = dashboard::v3::FORMAT_VERSION_8A;
+  package.generatedAt = 1789298100ULL;  // 2026-09-13 11:15 UTC, a Sunday
+  package.weather.currentCelsius = 13;
+  package.weather.minimumCelsius = 9;
+  package.weather.maximumCelsius = 17;
+  package.weather.conditionIconId = 3;
+  package.weather.windKilometersPerHour = 12;
+  package.weather.windDirection = 4;
+  package.weather.sunriseTodayMinute = 7 * 60 + 12;
+  package.weather.sunsetTodayMinute = 19 * 60 + 50;
+  package.weather.sunriseTomorrowMinute = 7 * 60 + 13;
+  for (size_t index = 0; index < dashboard::v3::RAIN_BUCKET_COUNT; ++index) {
+    package.rain[index] = index < 20 ? 0 : 1;
+  }
+  package.rainStartMinute = 11 * 60 + 15;
+  package.heatingKnown = true;
+  package.heatingAllowed = true;
+  copyText(package.traffic.destination, package.traffic.destinationLength, "NAAR WERK");
+  package.traffic.travelMinutes = 43;
+  package.traffic.nationalCongestionKilometers = 128;
+  package.traffic.classification = 2;
+  package.status.x3Battery = 76;
+  package.status.vehicleBattery = 49;
+  package.status.homeBattery = 23;
+  package.status.steps = 7850;
+  package.status.stepGoal = 10000;
+  package.portfolioChangeBasisPoints = 90;
+  static const char* const labels[] = {"AEX", "S&P", "NDX", "BTC"};
+  static const int16_t changes[] = {50, 30, 70, 120};
+  static_assert(std::size(labels) == dashboard::v3::MAX_MARKETS, "one label per wire market row");
+  for (size_t index = 0; index < std::size(labels); ++index) {
+    setMarket8A(package, index, labels[index], changes[index]);
+  }
+  package.marketCount = static_cast<uint8_t>(std::size(labels));
+  package.moverCount = 3;
+  copyText(package.strongestMover.label, package.strongestMover.labelLength, "ASML");
+  package.strongestMover.changeBasisPoints = 610;
+  static const char* const chats[] = {"Chanel Kortekaas", "Richard Vaderman", "Luke De Brouwer"};
+  for (size_t index = 0; index < std::size(chats); ++index) {
+    copyText(package.chats[index].name, package.chats[index].nameLength, chats[index]);
+    package.chats[index].unreadCount = static_cast<uint16_t>(index + 1);
+    package.chats[index].lastMessageMinuteOfDay = static_cast<uint16_t>(11 * 60 + index);
+  }
+  package.chatCount = static_cast<uint8_t>(std::size(chats));
+  package.unreadTotal = 24;
+  package.quoteId = 1;
+  setAgenda8A(package, 0, 0, 19 * 60, "Verhalenhuis 3", 120);
+  setAgenda8A(package, 1, 1, 16 * 60, "Theaterles", 60);
+  setAgenda8A(package, 2, 1, 18 * 60 + 30, "Padel", 90);
+  setAgenda8A(package, 3, 2, 8 * 60, "Blok", 120, false, /*soft=*/true);
+  setAgenda8A(package, 4, 2, 8 * 60, "Overleg", 45);
+  setAgenda8A(package, 5, 2, 8 * 60, "Koffie", 30);
+  setAgenda8A(package, 6, 2, 9 * 60 + 30, "AI doc", 60);
+  package.agendaCount = 7;
+  return package;
+}
+
+/// Nothing but a timestamp: the 8A bands must still hold their geometry and
+/// show dashes rather than collapsing into each other.
+dashboard::v3::DashboardV3Package empty8APackage() {
+  dashboard::v3::DashboardV3Package package{};
+  package.formatVersion = dashboard::v3::FORMAT_VERSION_8A;
+  package.generatedAt = 1789298100ULL;
+  package.rainKnown = false;
+  package.rainStartMinute = UINT16_MAX;
+  package.portfolioChangeBasisPoints = INT16_MIN;
+  return package;
+}
+
+/// Every optional source at its wire maximum, including eight agenda rows over
+/// four calendar days: the case where the agenda cannot draw every row and has
+/// to account for the rest in words.
+dashboard::v3::DashboardV3Package extreme8APackage() {
+  dashboard::v3::DashboardV3Package package = agenda8APackage();
+  copyText(package.traffic.destination, package.traffic.destinationLength, "NAAR AMSTERDAM Z");
+  package.traffic.travelMinutes = 188;
+  package.traffic.nationalCongestionKilometers = 1860;
+  package.status.steps = 19999;
+  package.unreadTotal = 999;
+  package.portfolioChangeBasisPoints = -800;
+  for (size_t index = 0; index < dashboard::v3::MAX_MARKETS; ++index) {
+    setMarket8A(package, index, "All-World ET", -1234);
+  }
+  package.moverCount = 8;
+  copyText(package.strongestMover.label, package.strongestMover.labelLength, "All-World ET");
+  package.strongestMover.changeBasisPoints = -9999;
+  for (size_t index = 0; index < dashboard::v3::MAX_CHATS; ++index) {
+    copyText(package.chats[index].name, package.chats[index].nameLength, "Familie Kortekaas");
+    package.chats[index].unreadCount = 128;
+  }
+  package.chatCount = static_cast<uint8_t>(dashboard::v3::MAX_CHATS);
+  setAgenda8A(package, 0, 0, 8 * 60, "Eerste afspraak", UINT16_MAX);
+  for (size_t index = 1; index < dashboard::v3::MAX_AGENDA_ROWS; ++index) {
+    const uint8_t day = static_cast<uint8_t>(index / 2);
+    const uint16_t duration = index % 3 == 0 ? UINT16_MAX : 1440;
+    setAgenda8A(package, index, day, static_cast<uint16_t>(8 * 60 + index), "Kwartaalreview Fiberforce Nederl",
+                duration);
+  }
+  package.agendaCount = static_cast<uint8_t>(dashboard::v3::MAX_AGENDA_ROWS);
+  package.quoteId = 0;
+  return package;
+}
+
+/// A day with an all-day event first and one event around midnight: the two
+/// places a panel is tempted to claim a 00:00 that the wire never sent.
+dashboard::v3::DashboardV3Package allDay8APackage() {
+  dashboard::v3::DashboardV3Package package = agenda8APackage();
+  setAgenda8A(package, 0, 0, 0, "Feestdag Koningsdag", UINT16_MAX, /*allDay=*/true);
+  setAgenda8A(package, 1, 0, 5, "Nachtdienst", 90);
+  setAgenda8A(package, 2, 0, 23 * 60 + 30, "Laat slapen", UINT16_MAX);
+  package.agendaCount = 3;
+  return package;
+}
+
+/// One day for the ribbon at known and unknown durations. The hero owns the
+/// 08:00 event, so the list itself starts at 09:00 with "Kort", "Lang" and a
+/// point that has no encoded duration.
+dashboard::v3::DashboardV3Package ribbon8APackage() {
+  dashboard::v3::DashboardV3Package package{};
+  package.formatVersion = dashboard::v3::FORMAT_VERSION_8A;
+  package.generatedAt = 1789298100ULL;
+  setAgenda8A(package, 0, 0, 8 * 60, "Eerste", 30);
+  setAgenda8A(package, 1, 0, 9 * 60, "Kort", 60);
+  setAgenda8A(package, 2, 0, 9 * 60, "Lang", 120);
+  setAgenda8A(package, 3, 0, 12 * 60, "Punt", UINT16_MAX);
+  package.agendaCount = 4;
+  return package;
+}
+
+/// One calendar day holding the hero and six more events. The hero owns the
+/// first event, so the list below it is six rows deep: with the fixed
+/// three-rows-per-day cap gone, the band must list every one of them.
+dashboard::v3::DashboardV3Package singleDayAgenda8APackage() {
+  dashboard::v3::DashboardV3Package package{};
+  package.formatVersion = dashboard::v3::FORMAT_VERSION_8A;
+  package.generatedAt = 1789298100ULL;
+  setAgenda8A(package, 0, 0, 9 * 60, "Eerste", 60);
+  static const char* const titles[] = {"Tweede", "Derde", "Vierde", "Vijfde", "Zesde", "Zevende"};
+  for (size_t index = 0; index < std::size(titles); ++index) {
+    setAgenda8A(package, index + 1, 0, static_cast<uint16_t>(9 * 60 + (index + 1) * 30), titles[index], 30);
+  }
+  package.agendaCount = static_cast<uint8_t>(std::size(titles) + 1);
+  return package;
+}
+
+/// The hero's day plus three further days, each with two listed events. The
+/// agenda band has room for the hero's group and two of the later ones, so the
+/// last day rides in the standalone "+N meer" line.
+dashboard::v3::DashboardV3Package threeDayAgenda8APackage() {
+  dashboard::v3::DashboardV3Package package{};
+  package.formatVersion = dashboard::v3::FORMAT_VERSION_8A;
+  package.generatedAt = 1789298100ULL;
+  setAgenda8A(package, 0, 0, 19 * 60, "Verhalenhuis 3", 120);
+  static const char* const titles[] = {"Theaterles", "Padel", "Overleg", "Koffie", "Blok", "AI doc"};
+  for (size_t index = 0; index < std::size(titles); ++index) {
+    const uint8_t day = static_cast<uint8_t>(index / 2 + 1);
+    const uint16_t minute = static_cast<uint16_t>(10 * 60 + (index % 2) * 60);
+    setAgenda8A(package, index + 1, day, minute, titles[index], 30);
+  }
+  package.agendaCount = static_cast<uint8_t>(std::size(titles) + 1);
+  return package;
+}
+
+std::vector<const Operation*> textOperationsInBand(const RecordingCanvas& canvas, const int y0, const int y1) {
+  std::vector<const Operation*> found;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind == Operation::Kind::Text && operation.bounds.y >= y0 && operation.bounds.y < y1) {
+      found.push_back(&operation);
+    }
+  }
+  return found;
+}
+
+int countTextOperations(const RecordingCanvas& canvas, const std::string& value) {
+  int count = 0;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind == Operation::Kind::Text && operation.text == value) ++count;
+  }
+  return count;
+}
+
+void expectTextFitsItsBox(const RecordingCanvas& canvas, const std::string& value, const char* what) {
+  const Operation* operation = findTextOperation(canvas, value);
+  ASSERT_NE(operation, nullptr) << what;
+  EXPECT_GE(operation->bounds.width, nominalWidth(operation->font, value.c_str())) << what << " is clipped";
+}
+
+// The band the drawer of the day ribbon uses, found from the canvas rather than
+// hard-coded, so a geometry change moves the test with it. It is the one
+// full-content-width 10 px outline inside the agenda band; every day group draws
+// one, and the first group's is the day the ribbon tests exercise.
+const Operation* findDayRibbon(const RecordingCanvas& canvas) {
+  const dashboard::v3::Agenda8ARects agenda = dashboard::v3::computeAgenda8ALayout(528, 792, {});
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Rect) continue;
+    if (operation.bounds.height != agenda.ribbonHeight) continue;
+    if (operation.bounds.width != agenda.content.width) continue;
+    if (operation.bounds.y < agenda.content.y) continue;
+    if (operation.bounds.y + operation.bounds.height > agenda.content.y + agenda.content.height) continue;
+    return &operation;
+  }
+  return nullptr;
+}
+
+// The focus row's reference height, pinned as a literal so these tests are not
+// just re-deriving whatever the layout happens to say.
+constexpr int FOCUS_ROW_8A_HEIGHT = 58;
+
+/// The 58 px focus row the first day group draws for row 0. It is no longer a
+/// drawn op — there is no black band to find any more — so it is the band the
+/// day group's own metrics put between the ribbon's tick gap and the first
+/// ordinary row.
+dashboard::v3::Rect focusRowBounds(const dashboard::v3::Agenda8ARects& agenda) {
+  return {agenda.band.x, agenda.content.y + agenda.headingHeight + agenda.ribbonHeight + agenda.ribbonGap,
+          agenda.band.width, FOCUS_ROW_8A_HEIGHT};
+}
+
+TEST(DashboardV3Renderer8A, NormalPackageKeepsEveryOperationInsideTheCanvas) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+  expectOperationsInsideCanvas(canvas);
+}
+
+TEST(DashboardV3Renderer8A, EmptyAndExtremePackagesKeepEveryOperationInsideTheCanvas) {
+  RecordingCanvas emptyCanvas;
+  dashboard::v3::renderDashboardV3(emptyCanvas, empty8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+  ASSERT_FALSE(emptyCanvas.operations.empty());
+  expectOperationsInsideCanvas(emptyCanvas);
+
+  RecordingCanvas extremeCanvas;
+  dashboard::v3::renderDashboardV3(extremeCanvas, extreme8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+  ASSERT_FALSE(extremeCanvas.operations.empty());
+  expectOperationsInsideCanvas(extremeCanvas);
+}
+
+TEST(DashboardV3Renderer8A, BandsTileTheCanvasWithTheHeroInsideTheAgenda) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  const dashboard::v3::Dashboard8ARects bands = dashboard::v3::computeDashboard8ALayout(528, 792, {});
+
+  bool hasHeader = false;
+  bool hasStandaloneHero = false;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Fill || !operation.black) continue;
+    hasHeader |= operation.bounds == dashboard::v3::Rect{0, 0, 528, 62};
+    hasStandaloneHero |= operation.bounds == dashboard::v3::Rect{0, 102, 528, 58};
+  }
+  EXPECT_TRUE(hasHeader) << "the 8A header is a black band 62 px tall";
+  EXPECT_FALSE(hasStandaloneHero) << "the hero is drawn by the agenda's first group, not as a band of its own";
+  // The focus row lives inside the agenda too. It draws no band of its own, so
+  // it is found by its large time rather than by a black fill.
+  const Operation* focusTime = findTextOperation(canvas, "19:00");
+  ASSERT_NE(focusTime, nullptr) << "the first day group still draws the focus row for row 0";
+  EXPECT_EQ(focusTime->font, dashboard::v3::FontRole::Hero);
+  const dashboard::v3::Agenda8ARects agenda = dashboard::v3::computeAgenda8ALayout(528, 792, {});
+  const dashboard::v3::Rect focus = focusRowBounds(agenda);
+  EXPECT_GE(focusTime->bounds.y, focus.y) << "the focus row's time sits inside the focus row";
+  EXPECT_LT(focusTime->bounds.y, focus.y + focus.height);
+  EXPECT_EQ(focus.height, FOCUS_ROW_8A_HEIGHT)
+      << "the focus row still owns the 58 px the standalone hero band used to";
+  EXPECT_LT(focus.y + focus.height, agenda.content.y + agenda.content.height)
+      << "the focus row stays inside the agenda band";
+  // The agenda now runs from the rain straight down to the unchanged KPI top.
+  EXPECT_EQ(bands.hero.height, 0) << "the hero rect is a zero-height seam marker now";
+  EXPECT_EQ(bands.agenda.y, 102);
+  EXPECT_EQ(bands.agenda.y + bands.agenda.height, 554);
+  // The bands below the agenda are separated by hairlines, so the four paper
+  // bands do not read as one tall column.
+  for (const int boundary : {554, 694, 728}) {
+    bool rule = false;
+    for (const auto& operation : canvas.operations) {
+      rule |= operation.kind == Operation::Kind::Line && operation.bounds.y == boundary &&
+              operation.bounds.width == 528;
+    }
+    EXPECT_TRUE(rule) << "no hairline at y=" << boundary;
+  }
+}
+
+TEST(DashboardV3Renderer8A, HeaderCarriesDateRangeAndRefreshInOneBand) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  const Operation* date = findTextOperation(canvas, "ZO 13 SEP");
+  ASSERT_NE(date, nullptr);
+  EXPECT_LT(date->bounds.y + date->bounds.height, 62) << "the date sits inside the header band";
+  EXPECT_FALSE(date->black) << "header text stays white on the black band";
+
+  const Operation* caption = findTextOperation(canvas, "9\xc2\xb0 / 17\xc2\xb0 \xc2\xb7 ververst 11:15");
+  ASSERT_NE(caption, nullptr) << "the range and the refresh time share the caption line";
+  EXPECT_LT(caption->bounds.y + caption->bounds.height, 62);
+  EXPECT_NE(findTextOperation(canvas, "13\xc2\xb0"), nullptr) << "the current reading is on the value line";
+  const Operation* sun = findTextOperation(canvas, "19:50");
+  ASSERT_NE(sun, nullptr) << "at 11:15 the next sun event is today's sunset";
+  EXPECT_LT(sun->bounds.y + sun->bounds.height, 62) << "it shares the header's value line";
+  EXPECT_NE(findTextOperation(canvas, "12"), nullptr) << "the wind speed is drawn beside its icon";
+
+  // "ververst" moved out of the quote band into the header.
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Text) continue;
+    if (operation.text.find("ververst") != std::string::npos) {
+      EXPECT_LT(operation.bounds.y, 62) << "the refresh time belongs to the header now";
+    }
+  }
+}
+
+TEST(DashboardV3Renderer8A, RainBandShowsTheCompactOutlookAndAnAbsoluteWindow) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  EXPECT_NE(findTextOperation(canvas, "12:55 lichte regen"), nullptr)
+      << "the outlook names the absolute clock the rain starts at";
+  EXPECT_NE(findTextOperation(canvas, "13:15"), nullptr) << "the strip's window ends at 11:15 + two hours";
+  EXPECT_NE(findTextOperation(canvas, "STOKEN KAN"), nullptr);
+  EXPECT_NE(findIconOperation(canvas, 3), nullptr) << "the rain icon marks what the message is about";
+
+  int shadesInRainBand = 0;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind == Operation::Kind::Shade && operation.bounds.y >= 62 && operation.bounds.y < 102) {
+      ++shadesInRainBand;
+    }
+  }
+  EXPECT_GT(shadesInRainBand, 0) << "the four wet buckets draw at least one intensity segment";
+}
+
+TEST(DashboardV3Renderer8A, UnknownRainDrawsNoStripAndNeverClaimsDry) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, empty8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  EXPECT_NE(findTextOperation(canvas, "regen -"), nullptr) << "an absent forecast says so with a dash";
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind == Operation::Kind::Text) {
+      EXPECT_EQ(operation.text.find("droog"), std::string::npos) << "no dry claim without data: " << operation.text;
+    }
+    EXPECT_NE(operation.kind, Operation::Kind::Shade) << "an absent forecast draws no strip";
+  }
+}
+
+TEST(DashboardV3Renderer8A, APackageWithoutATimestampInventsNoDateAndNoCountdown) {
+  auto package = agenda8APackage();
+  package.generatedAt = 0;
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+
+  EXPECT_NE(findTextOperation(canvas, "-"), nullptr) << "the header date is a dash";
+  EXPECT_EQ(findTextOperation(canvas, "ZO 13 SEP"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "hierna"), nullptr) << "the hero still says which event comes next";
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Text) continue;
+    EXPECT_EQ(operation.text.find("over "), std::string::npos)
+        << "a countdown needs a reference to count from: " << operation.text;
+    EXPECT_EQ(operation.text.find("ververst"), std::string::npos) << operation.text;
+  }
+  // The agenda still says what is scheduled and how much of it; only the dates
+  // it would have to derive from the timestamp become dashes.
+  EXPECT_NE(findTextOperation(canvas, "- \xc2\xb7 2 AFSPRAKEN"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "Theaterles"), nullptr);
+}
+
+TEST(DashboardV3Renderer8A, HeroShowsTheFirstEventTimeAndTheCountdown) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/8 * 60);
+
+  const dashboard::v3::Agenda8ARects agenda = dashboard::v3::computeAgenda8ALayout(528, 792, {});
+  const dashboard::v3::Rect focus = focusRowBounds(agenda);
+
+  const Operation* clock = findTextOperation(canvas, "19:00");
+  ASSERT_NE(clock, nullptr);
+  EXPECT_EQ(clock->font, dashboard::v3::FontRole::Hero) << "the next event's time is the loudest thing here";
+  EXPECT_GE(clock->bounds.y, focus.y) << "the focus row's clock lives in the focus row";
+  EXPECT_LT(clock->bounds.y + clock->bounds.height, focus.y + focus.height);
+
+  const Operation* caption = findTextOperation(canvas, "hierna \xc2\xb7 over 7u45");
+  ASSERT_NE(caption, nullptr) << "11:15 to 19:00 is seven hours and a quarter";
+  EXPECT_LT(caption->bounds.y + caption->bounds.height, focus.y + focus.height);
+  EXPECT_LT(focus.y + focus.height, agenda.content.y + agenda.content.height)
+      << "the focus row stays inside the agenda";
+
+  // The countdown is measured from the package's reference minute, so the
+  // device's own clock must not move it.
+  RecordingCanvas laterCanvas;
+  dashboard::v3::renderDashboardV3(laterCanvas, agenda8APackage(), /*minuteOfDay=*/21 * 60);
+  EXPECT_NE(findTextOperation(laterCanvas, "hierna \xc2\xb7 over 7u45"), nullptr);
+}
+
+TEST(DashboardV3Renderer8A, FocusRowDrawsItsLargeTextInBlackOnWhite) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  const dashboard::v3::Rect focus = focusRowBounds(dashboard::v3::computeAgenda8ALayout(528, 792, {}));
+
+  // The focus row is no longer inverted: the same Hero time and Body title keep
+  // their size and their places, but they are black ink on the row's white.
+  const Operation* time = findTextOperation(canvas, "19:00");
+  ASSERT_NE(time, nullptr);
+  EXPECT_EQ(time->font, dashboard::v3::FontRole::Hero) << "the focus time keeps the Hero rung";
+  EXPECT_TRUE(time->bold);
+  EXPECT_TRUE(time->black) << "the focus time is black on white, not white on black";
+  EXPECT_FALSE(time->dithered) << "the loudest thing on the row is solid";
+
+  const Operation* title = findTextOperation(canvas, "Verhalenhuis 3");
+  ASSERT_NE(title, nullptr);
+  EXPECT_EQ(title->font, dashboard::v3::FontRole::Body) << "the title keeps the Body rung";
+  EXPECT_TRUE(title->bold);
+  EXPECT_TRUE(title->black);
+  EXPECT_FALSE(title->dithered);
+  EXPECT_GE(title->bounds.y, focus.y);
+  EXPECT_LT(title->bounds.y, focus.y + focus.height);
+
+  // The hairline the row splits its time and title with is black too.
+  bool hairline = false;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Line || !operation.black) continue;
+    if (operation.bounds.width != 1 || operation.bounds.height < 20) continue;
+    if (operation.bounds.x <= focus.x || operation.bounds.x >= focus.x + focus.width) continue;
+    if (operation.bounds.y != focus.y + 12) continue;
+    hairline = true;
+  }
+  EXPECT_TRUE(hairline) << "a black hairline splits the focus time from its title";
+
+  // The caption stays the secondary line: dithered, never solid black.
+  const Operation* caption = findTextOperation(canvas, "hierna \xc2\xb7 over 7u45");
+  ASSERT_NE(caption, nullptr);
+  EXPECT_EQ(caption->font, dashboard::v3::FontRole::Micro);
+  EXPECT_TRUE(caption->dithered) << "the caption is dithered, not a solid black line";
+}
+
+TEST(DashboardV3Renderer8A, FocusRowCaptionLeadsWithTheLocationWhenTheWireCarriesOne) {
+  auto package = agenda8APackage();
+  copyText(package.agenda[0].detail, package.agenda[0].detailLength, "Teams");
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+
+  // 11:15 to 19:00 is seven hours and a quarter; the appointment's location
+  // leads that countdown, separated by the same middle dot the day headings use.
+  const Operation* caption = findTextOperation(canvas, "Teams \xc2\xb7 over 7u45");
+  ASSERT_NE(caption, nullptr) << "the location is the caption prefix, ahead of the countdown";
+  EXPECT_TRUE(caption->dithered) << "the location caption is still the secondary line";
+  EXPECT_EQ(findTextOperation(canvas, "hierna \xc2\xb7 over 7u45"), nullptr)
+      << "the location replaces the bare \"hierna\" prefix";
+
+  // On a later day the location still leads, and the countdown it leads is the
+  // same day-aware one the row would have printed on its own.
+  auto tomorrow = agenda8APackage();
+  setAgenda8A(tomorrow, 0, 1, 16 * 60, "Theaterles", 60);  // the first event is tomorrow at 16:00
+  copyText(tomorrow.agenda[0].detail, tomorrow.agenda[0].detailLength, "Teams");
+  RecordingCanvas tomorrowCanvas;
+  dashboard::v3::renderDashboardV3(tomorrowCanvas, tomorrow, /*minuteOfDay=*/11 * 60 + 15);
+  EXPECT_NE(findTextOperation(tomorrowCanvas, "Teams \xc2\xb7 over 1d 4u45"), nullptr)
+      << "the location leads the day-aware countdown, not just the today case";
+}
+
+TEST(DashboardV3Renderer8A, FocusRowCaptionFallsBackToHiernaWhenTheEventHasNoLocation) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  // No location on the wire: the row keeps the honest "hierna · ..." it always
+  // had, so an appointment without a room still says what it is counting to.
+  const Operation* caption = findTextOperation(canvas, "hierna \xc2\xb7 over 7u45");
+  ASSERT_NE(caption, nullptr);
+  EXPECT_TRUE(caption->dithered) << "a caption with no location is still the secondary line";
+
+  // A detail that is only padding is not a location either: the phone trims it,
+  // before sending, but a stray space on the wire must not become a leading gap
+  // or a bare middle dot.
+  auto padded = agenda8APackage();
+  copyText(padded.agenda[0].detail, padded.agenda[0].detailLength, "   ");
+  RecordingCanvas paddedCanvas;
+  dashboard::v3::renderDashboardV3(paddedCanvas, padded, /*minuteOfDay=*/11 * 60 + 15);
+  EXPECT_NE(findTextOperation(paddedCanvas, "hierna \xc2\xb7 over 7u45"), nullptr)
+      << "whitespace-only padding is not a location";
+  for (const auto& operation : paddedCanvas.operations) {
+    if (operation.kind != Operation::Kind::Text) continue;
+    EXPECT_NE(operation.text.rfind("\xc2\xb7", 0), 0U) << "a caption never starts at the separator: " << operation.text;
+  }
+}
+
+TEST(DashboardV3Renderer8A, HeroCountdownNeverRunsBackwardsOnAStalePackage) {
+  auto package = agenda8APackage();
+  package.generatedAt = 1789298100ULL + 10 * 3600;  // composed at 21:15, the 19:00 event has passed
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/21 * 60 + 15);
+
+  EXPECT_NE(findTextOperation(canvas, "hierna \xc2\xb7 nu"), nullptr);
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind == Operation::Kind::Text) {
+      EXPECT_EQ(operation.text.find("over -"), std::string::npos) << operation.text;
+    }
+  }
+}
+
+TEST(DashboardV3Renderer8A, HeroAllDayEventSaysHeleDagWithoutAClockTime) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, allDay8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  const Operation* hero = findTextOperation(canvas, "hele dag");
+  ASSERT_NE(hero, nullptr) << "an all-day event has no clock, so the hero says what it is";
+  EXPECT_EQ(hero->font, dashboard::v3::FontRole::Hero);
+  EXPECT_NE(findTextOperation(canvas, "hierna \xc2\xb7 hele dag"), nullptr);
+  EXPECT_EQ(findTextOperation(canvas, "00:00"), nullptr) << "the wire never said 00:00";
+  EXPECT_NE(findTextOperation(canvas, "00:05"), nullptr) << "a real five past midnight is still shown";
+  EXPECT_NE(findTextOperation(canvas, "23:30"), nullptr);
+}
+
+TEST(DashboardV3Renderer8A, HeroNamesTheDayWhenTheFirstEventIsNotToday) {
+  auto package = agenda8APackage();
+  setAgenda8A(package, 0, 1, 16 * 60, "Theaterles", 60);  // first event is tomorrow at 16:00
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+
+  EXPECT_NE(findTextOperation(canvas, "morgen \xc2\xb7 over 1d 4u45"), nullptr)
+      << "11:15 today to 16:00 tomorrow, and the caption says which day that is";
+  EXPECT_EQ(findTextOperation(canvas, "hierna \xc2\xb7 over 1d 4u45"), nullptr)
+      << "\"hierna\" alone would hide that this is not today";
+
+  // Beyond tomorrow the caption names the weekday instead of counting days.
+  auto laterPackage = agenda8APackage();
+  setAgenda8A(laterPackage, 0, 2, 8 * 60, "AI doc", 60);
+  RecordingCanvas laterCanvas;
+  dashboard::v3::renderDashboardV3(laterCanvas, laterPackage, /*minuteOfDay=*/11 * 60 + 15);
+  EXPECT_NE(findTextOperation(laterCanvas, "di 15 \xc2\xb7 over 1d 20u45"), nullptr)
+      << "11:15 Sunday to 08:00 Tuesday is one day and twenty hours";
+}
+
+TEST(DashboardV3Renderer8A, HeroOwnsTheFirstEventAndTheListDoesNotRepeatIt) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  // The focus row shows the first event; the day's list rows below it start at
+  // the second one and must not draw the hero's event again.
+  const dashboard::v3::Agenda8ARects agenda = dashboard::v3::computeAgenda8ALayout(528, 792, {});
+  const int listTop = focusRowBounds(agenda).y + FOCUS_ROW_8A_HEIGHT;
+  EXPECT_EQ(countTextOperations(canvas, "Verhalenhuis 3"), 1) << "once in the hero, never again in the list";
+  for (const Operation* operation : textOperationsInBand(canvas, listTop, 554)) {
+    EXPECT_NE(operation->text, "Verhalenhuis 3") << "the hero's event is not repeated in the agenda list";
+  }
+
+  // The hero's own day keeps its later events in the list; only the first one
+  // moved up into the hero.
+  RecordingCanvas allDayCanvas;
+  dashboard::v3::renderDashboardV3(allDayCanvas, allDay8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+  EXPECT_EQ(countTextOperations(allDayCanvas, "Feestdag Koningsdag"), 1);
+  const std::vector<const Operation*> rows = textOperationsInBand(allDayCanvas, listTop, 554);
+  int listed = 0;
+  for (const Operation* operation : rows) {
+    if (operation->text == "Nachtdienst" || operation->text == "Laat slapen") ++listed;
+  }
+  EXPECT_EQ(listed, 2) << "the hero's day still lists the events that follow it";
+}
+
+TEST(DashboardV3Renderer8A, AgendaRowsShowTheEncodedDurationAndNotTheLegacyDetail) {
+  auto package = agenda8APackage();
+  // The legacy free-text detail often holds a room or a platform. On the 8A row
+  // it sits right where a duration would, so it is not drawn at all.
+  copyText(package.agenda[2].detail, package.agenda[2].detailLength, "MAARSSEN");
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+
+  EXPECT_NE(findTextOperation(canvas, "1u30"), nullptr) << "the encoded 90 minutes are drawn as 1u30";
+  EXPECT_NE(findTextOperation(canvas, "45m"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "30m"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "2u"), nullptr);
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Text) continue;
+    EXPECT_EQ(operation.text.find("MAARSSEN"), std::string::npos)
+        << "a free-text detail must not be mistaken for a duration: " << operation.text;
+  }
+  const Operation* detail = findTextOperation(canvas, "1u30");
+  ASSERT_NE(detail, nullptr);
+  EXPECT_GT(detail->bounds.x, 440) << "the duration sits in its own right-hand column";
+}
+
+TEST(DashboardV3Renderer8A, RibbonDrawsRealDurationsAndAPointForAnUnknownOne) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, ribbon8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  const Operation* ribbon = findDayRibbon(canvas);
+  ASSERT_NE(ribbon, nullptr);
+  const dashboard::v3::Rect bounds = ribbon->bounds;
+  const int innerLeft = bounds.x + 1;
+  const int innerWidth = bounds.width - 2;
+  const auto xForMinute = [&](const int minute) {
+    return innerLeft + (minute - 7 * 60) * innerWidth / (23 * 60 - 7 * 60);
+  };
+
+  int sixty = 0;
+  int oneTwenty = 0;
+  int point = 0;
+  int pointX = -1;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Fill || operation.bounds.height != bounds.height - 2) continue;
+    if (operation.bounds.y != bounds.y + 1) continue;  // stays inside the outline
+    if (operation.bounds.x < innerLeft || operation.bounds.x > bounds.x + bounds.width) continue;
+    if (operation.bounds.width == 2) {
+      ++point;
+      pointX = operation.bounds.x;
+    }
+    if (operation.bounds.width >= 25 && operation.bounds.width <= 35) sixty = operation.bounds.width;
+    if (operation.bounds.width >= 55 && operation.bounds.width <= 70) oneTwenty = operation.bounds.width;
+  }
+
+  // 07:00..23:00 is sixteen hours across 498 px: a quarter of an hour is about
+  // 7.8 px, so 60 and 120 minutes must draw as intervals, not as marks.
+  EXPECT_NEAR(sixty * 2, oneTwenty, 3) << "the ribbon is proportional to duration";
+  EXPECT_EQ(sixty, xForMinute(10 * 60) - xForMinute(9 * 60));
+  EXPECT_EQ(oneTwenty, xForMinute(11 * 60) - xForMinute(9 * 60));
+  EXPECT_EQ(point, 1) << "an unknown duration is one mark";
+  EXPECT_EQ(pointX, xForMinute(12 * 60)) << "the mark sits where the event starts";
+}
+
+TEST(DashboardV3Renderer8A, RibbonDithersSoftBlocksAndTicksTheHours) {
+  auto package = ribbon8APackage();
+  // One of the three listed rows is a soft block, so the day still draws every
+  // row it has and the dithered interval is on the strip.
+  package.agenda[2].isSoftBlock = true;  // "Lang"
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+
+  const Operation* ribbon = findDayRibbon(canvas);
+  ASSERT_NE(ribbon, nullptr);
+  int shaded = 0;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Shade) continue;
+    ++shaded;
+    EXPECT_GE(operation.bounds.x, ribbon->bounds.x);
+    EXPECT_LE(operation.bounds.x + operation.bounds.width, ribbon->bounds.x + ribbon->bounds.width);
+  }
+  EXPECT_EQ(shaded, 1) << "the soft block is the only dithered interval";
+
+  int ticks = 0;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Line) continue;
+    if (operation.bounds.y != ribbon->bounds.y + ribbon->bounds.height || operation.bounds.height != 4) continue;
+    ++ticks;
+  }
+  EXPECT_EQ(ticks, 3) << "08:00, 12:00 and 18:00 get a tick under the strip";
+
+  // Each tick carries the hour it stands for, and the label sits below the tick
+  // but above the first agenda row, so it never collides with either.
+  const int stripBottom = ribbon->bounds.y + ribbon->bounds.height;
+  for (const char* const hour : {"8", "12", "18"}) {
+    const Operation* hourLabel = findTextOperation(canvas, hour);
+    ASSERT_NE(hourLabel, nullptr) << "the tick labels its hour: " << hour;
+    EXPECT_GT(hourLabel->bounds.y, stripBottom) << hour << " is below the strip";
+    EXPECT_EQ(hourLabel->align, dashboard::v3::TextAlign::Center);
+  }
+  // The first listed row, so the hour labels can be checked against the rows
+  // that follow them.
+  const Operation* firstRow = findTextOperation(canvas, "Kort");
+  ASSERT_NE(firstRow, nullptr);
+  for (const char* const hour : {"8", "12", "18"}) {
+    const Operation* hourLabel = findTextOperation(canvas, hour);
+    ASSERT_NE(hourLabel, nullptr);
+    EXPECT_LE(hourLabel->bounds.y + hourLabel->bounds.height, firstRow->bounds.y)
+        << "the hour label stays clear of the day's rows";
+  }
+}
+
+TEST(DashboardV3Renderer8A, RibbonClipsAnIntervalThatRunsPastTheWindow) {
+  auto package = ribbon8APackage();
+  setAgenda8A(package, 3, 0, 22 * 60 + 30, "Nacht", 240);  // 22:30 for four hours
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+
+  const Operation* ribbon = findDayRibbon(canvas);
+  ASSERT_NE(ribbon, nullptr);
+  const dashboard::v3::Rect bounds = ribbon->bounds;
+  const int innerLeft = bounds.x + 1;
+  const int innerWidth = bounds.width - 2;
+  const int windowMinutes = 23 * 60 - 7 * 60;
+  const auto xForMinute = [&](const int minute) {
+    return innerLeft + (minute - 7 * 60) * innerWidth / windowMinutes;
+  };
+
+  bool found = false;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Fill) continue;
+    if (operation.bounds.y != bounds.y + 1 || operation.bounds.height != bounds.height - 2) continue;
+    if (operation.bounds.x != xForMinute(22 * 60 + 30)) continue;
+    found = true;
+    // Half an hour is all of the four-hour block that still fits before 23:00,
+    // and the mark stops at the strip's own edge.
+    EXPECT_EQ(operation.bounds.width, xForMinute(23 * 60) - xForMinute(22 * 60 + 30));
+    EXPECT_LE(operation.bounds.x + operation.bounds.width, innerLeft + innerWidth);
+  }
+  EXPECT_TRUE(found) << "the late event is clipped to the window, not dropped";
+}
+
+TEST(DashboardV3Renderer8A, AgendaRowRulerSeparatesTheClockFromTheTitle) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  // Rows only, so the rule that is checked belongs to a list row and not to the
+  // hairline the focus row draws between its time and its title.
+  const dashboard::v3::Agenda8ARects agenda = dashboard::v3::computeAgenda8ALayout(528, 792, {});
+  const int listTop = focusRowBounds(agenda).y + FOCUS_ROW_8A_HEIGHT;
+  const Operation* clock = nullptr;
+  const Operation* title = nullptr;
+  const Operation* rule = nullptr;
+  for (const auto& operation : canvas.operations) {
+    if (operation.bounds.y < listTop) continue;
+    if (operation.kind == Operation::Kind::Text) {
+      if (operation.text == "18:30" && clock == nullptr) clock = &operation;
+      if (operation.text == "Padel") title = &operation;
+    }
+    if (operation.kind == Operation::Kind::Line && operation.bounds.height > 8 && operation.bounds.width == 1) {
+      if (rule == nullptr || operation.bounds.x < rule->bounds.x) rule = &operation;
+    }
+  }
+  ASSERT_NE(clock, nullptr);
+  ASSERT_NE(title, nullptr);
+  ASSERT_NE(rule, nullptr) << "each row separates its clock column from its title";
+  EXPECT_GT(rule->bounds.x, clock->bounds.x) << "the rule is right of the clock";
+  EXPECT_LT(rule->bounds.x, title->bounds.x) << "and left of the title";
+}
+
+TEST(DashboardV3Renderer8A, DayHeadingsCountTheHeroDayAndEveryEncodedEvent) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  // The hero's own day still heads the first group with its exact count, even
+  // though the only event it has is the one the hero band carries.
+  const Operation* sunday = findTextOperation(canvas, "ZO 13 SEP \xc2\xb7 1 AFSPRAAK");
+  ASSERT_NE(sunday, nullptr) << "the hero's day gets a heading like any other";
+  EXPECT_TRUE(sunday->black);
+  EXPECT_EQ(sunday->bounds.y, dashboard::v3::computeAgenda8ALayout(528, 792, {}).content.y)
+      << "and it heads the agenda band";
+  EXPECT_NE(findTextOperation(canvas, "MA 14 SEP \xc2\xb7 2 AFSPRAKEN"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "DI 15 SEP \xc2\xb7 4 AFSPRAKEN"), nullptr);
+  // The band has room for all six events after the hero, so nothing is
+  // summarised and Tuesday's fourth event is listed like the rest.
+  EXPECT_NE(findTextOperation(canvas, "AI doc"), nullptr) << "a row the old three-row cap folded away is listed";
+  for (const Operation* operation : textOperationsInBand(canvas, 102, 554)) {
+    EXPECT_EQ(operation->text.find(" meer "), std::string::npos)
+        << "the demonstration day fits, so nothing is summarised: " << operation->text;
+  }
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Text) continue;
+    EXPECT_EQ(operation.text.find("werkdag"), std::string::npos) << "the wire carries no work calendar";
+    EXPECT_EQ(operation.text.find("ochtend"), std::string::npos);
+  }
+}
+
+TEST(DashboardV3Renderer8A, OverflowAccountsForEveryEncodedEvent) {
+  RecordingCanvas canvas;
+  const dashboard::v3::DashboardV3Package package = extreme8APackage();
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+
+  // The hero carries the package's first event; every other encoded event is
+  // either a listed row or inside a "+N meer" line, and each line's N counts the
+  // events it really hides.
+  EXPECT_EQ(countTextOperations(canvas, "Eerste afspraak"), 1) << "the first event is the hero's";
+  int rowEvents = 0;
+  int summarisedEvents = 0;
+  int summarisedLines = 0;
+  for (const auto* operation : textOperationsInBand(canvas, 160, 554)) {
+    if (operation->text.rfind("+", 0) == 0 && operation->text.find(" meer") != std::string::npos) {
+      ++summarisedLines;
+      summarisedEvents += std::atoi(operation->text.c_str() + 1);
+    } else if (operation->text == "Kwartaalreview Fiberforce Nederl") {
+      ++rowEvents;
+    }
+  }
+  EXPECT_GT(summarisedLines, 0);
+  EXPECT_EQ(1 + rowEvents + summarisedEvents, static_cast<int>(package.agendaCount))
+      << "every encoded event is either a row or inside a summary";
+}
+
+TEST(DashboardV3Renderer8A, AgendaBandListsEveryRowOfASingleDayWithoutASummary) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, singleDayAgenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  // The hero owns the first event; the six that follow must all be listed. A
+  // fixed three-rows-per-day cap would have folded the last three into a
+  // "+N meer" line even though the band has room for them.
+  EXPECT_EQ(countTextOperations(canvas, "Eerste"), 1) << "the hero still carries the first event exactly once";
+  for (const char* const title : {"Tweede", "Derde", "Vierde", "Vijfde", "Zesde", "Zevende"}) {
+    EXPECT_EQ(countTextOperations(canvas, title), 1) << title << " is listed once in the agenda";
+  }
+  for (const Operation* operation : textOperationsInBand(canvas, 160, 554)) {
+    EXPECT_EQ(operation->text.find(" meer "), std::string::npos)
+        << "nothing is summarised when every row fits: " << operation->text;
+  }
+}
+
+TEST(DashboardV3Renderer8A, DayGroupsDrawNoBlackSeparatorBelowTheHeading) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  const dashboard::v3::Dashboard8ARects bands = dashboard::v3::computeDashboard8ALayout(528, 792, {});
+
+  // No day group draws a full-width black band any more: the focus row sits on
+  // the same white as the rows, and a heading separator would be its own band.
+  int fullWidthBlackFills = 0;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Fill || !operation.black) continue;
+    const dashboard::v3::Rect bounds = operation.bounds;
+    if (bounds.y < bands.agenda.y || bounds.y + bounds.height > bands.agenda.y + bands.agenda.height) continue;
+    if (bounds.x != bands.agenda.x || bounds.width != bands.agenda.width) continue;
+    ++fullWidthBlackFills;
+  }
+  EXPECT_EQ(fullWidthBlackFills, 0) << "neither the focus row nor a heading separator is a black band";
+
+  for (const char* const heading : {"ZO 13 SEP \xc2\xb7 1 AFSPRAAK", "MA 14 SEP \xc2\xb7 2 AFSPRAKEN",
+                                    "DI 15 SEP \xc2\xb7 4 AFSPRAKEN"}) {
+    const Operation* text = findTextOperation(canvas, heading);
+    ASSERT_NE(text, nullptr);
+    EXPECT_TRUE(text->black) << "every heading is black text on white";
+  }
+}
+
+TEST(DashboardV3Renderer8A, FocusRowDrawsOnWhiteWithNoBlackFill) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  const dashboard::v3::Agenda8ARects agenda = dashboard::v3::computeAgenda8ALayout(528, 792, {});
+  const dashboard::v3::Rect focus = focusRowBounds(agenda);
+
+  // The focus row is a row, not a band: nothing fills its rectangle with ink,
+  // so its own time and title have to be the black on white.
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Fill || !operation.black) continue;
+    const dashboard::v3::Rect bounds = operation.bounds;
+    const bool overlapsFocus = bounds.x < focus.x + focus.width && bounds.x + bounds.width > focus.x &&
+                               bounds.y < focus.y + focus.height && bounds.y + bounds.height > focus.y;
+    EXPECT_FALSE(overlapsFocus) << "the focus row must not be filled black";
+  }
+}
+
+TEST(DashboardV3Renderer8A, FirstDayGroupRunsHeadingRibbonFocusRowThenTheRestOfItsRows) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, singleDayAgenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  const dashboard::v3::Agenda8ARects agenda = dashboard::v3::computeAgenda8ALayout(528, 792, {});
+
+  const Operation* heading = findTextOperation(canvas, "ZO 13 SEP \xc2\xb7 7 AFSPRAKEN");
+  ASSERT_NE(heading, nullptr) << "the first group heads on white before its ribbon";
+  EXPECT_TRUE(heading->black);
+  EXPECT_EQ(heading->bounds.y, agenda.content.y);
+
+  // The day's own ribbon comes first, so the day's shape reads before its list:
+  // every day is heading, ribbon, then rows.
+  const Operation* ribbon = nullptr;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Rect || operation.bounds.height != agenda.ribbonHeight) continue;
+    if (operation.bounds.width != agenda.content.width) continue;
+    if (ribbon == nullptr || operation.bounds.y < ribbon->bounds.y) ribbon = &operation;
+  }
+  ASSERT_NE(ribbon, nullptr);
+  EXPECT_EQ(ribbon->bounds.y, agenda.content.y + agenda.headingHeight)
+      << "the ribbon sits directly under the day heading, ahead of the focus row";
+
+  // The 58 px focus row is the first entry of that day's list, not a band above
+  // the ribbon.
+  const dashboard::v3::Rect focus = focusRowBounds(agenda);
+  EXPECT_EQ(focus.y, ribbon->bounds.y + agenda.ribbonHeight + agenda.ribbonGap);
+  const Operation* focusTime = findTextOperation(canvas, "Eerste");
+  ASSERT_NE(focusTime, nullptr) << "the focus row carries row 0's own title";
+  EXPECT_EQ(focusTime->font, dashboard::v3::FontRole::Body);
+  EXPECT_GE(focusTime->bounds.y, focus.y);
+  EXPECT_LT(focusTime->bounds.y, focus.y + focus.height);
+
+  const Operation* firstRow = findTextOperation(canvas, "Tweede");
+  ASSERT_NE(firstRow, nullptr) << "the rows after the focus row are listed normally";
+  EXPECT_GE(firstRow->bounds.y, focus.y + focus.height) << "those rows start below the focus row";
+
+  // Row 0 is the focus row and only the focus row.
+  EXPECT_EQ(countTextOperations(canvas, "Eerste"), 1);
+}
+
+TEST(DashboardV3Renderer8A, ASingleAppointmentStillDrawsItsHeadingHeroAndRibbon) {
+  dashboard::v3::DashboardV3Package package{};
+  package.formatVersion = dashboard::v3::FORMAT_VERSION_DAY_TOTALS;
+  package.generatedAt = 1789298100ULL;
+  setAgenda8A(package, 0, 0, 9 * 60, "Enige afspraak", 60, false, false, 1, 0);
+  package.agendaCount = 1;
+
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+
+  // The one appointment is the hero's, and its day still heads the group with
+  // the exact count the phone sent.
+  EXPECT_NE(findTextOperation(canvas, "ZO 13 SEP \xc2\xb7 1 AFSPRAAK"), nullptr);
+  EXPECT_EQ(countTextOperations(canvas, "Enige afspraak"), 1) << "drawn once, in the focus row";
+
+  const dashboard::v3::Agenda8ARects agenda = dashboard::v3::computeAgenda8ALayout(528, 792, {});
+  const dashboard::v3::Rect focus = focusRowBounds(agenda);
+  const Operation* focusTitle = findTextOperation(canvas, "Enige afspraak");
+  ASSERT_NE(focusTitle, nullptr) << "one appointment still gets the 58 px focus row";
+  EXPECT_GE(focusTitle->bounds.y, focus.y);
+  EXPECT_LT(focusTitle->bounds.y, focus.y + focus.height);
+  bool ribbon = false;
+  for (const auto& operation : canvas.operations) {
+    ribbon |= operation.kind == Operation::Kind::Rect && operation.bounds.height == agenda.ribbonHeight &&
+              operation.bounds.width == agenda.content.width;
+  }
+  EXPECT_TRUE(ribbon) << "and the day's own outlined ribbon";
+  for (const Operation* operation : textOperationsInBand(canvas, 102, 554)) {
+    EXPECT_EQ(operation->text.find("meer"), std::string::npos) << "one appointment hides nothing";
+  }
+}
+
+TEST(DashboardV3Renderer8A, OneWireRowWithATruncatedDayTotalHeadsHeroesAndSummarises) {
+  dashboard::v3::DashboardV3Package package{};
+  package.formatVersion = dashboard::v3::FORMAT_VERSION_DAY_TOTALS;
+  package.generatedAt = 1789298100ULL;
+  // The wire carried one row but the calendar holds five: the hero draws the one
+  // row, the heading shows the phone's exact five, and the other four ride in
+  // one standalone line. The hero's own row is counted in that total, not added
+  // on top of it.
+  setAgenda8A(package, 0, 0, 9 * 60, "Enige afspraak", 60, false, false, 5, 0);
+  package.agendaCount = 1;
+
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+
+  EXPECT_NE(findTextOperation(canvas, "ZO 13 SEP \xc2\xb7 5 AFSPRAKEN"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "+4 meer"), nullptr)
+      << "five total minus the hero's row leaves the four the wire never sent";
+  EXPECT_EQ(countTextOperations(canvas, "Enige afspraak"), 1);
+  const dashboard::v3::Rect focus =
+      focusRowBounds(dashboard::v3::computeAgenda8ALayout(528, 792, {}));
+  const Operation* focusTitle = findTextOperation(canvas, "Enige afspraak");
+  ASSERT_NE(focusTitle, nullptr) << "the focus row is still drawn for the one row that exists";
+  EXPECT_GE(focusTitle->bounds.y, focus.y);
+  EXPECT_LT(focusTitle->bounds.y, focus.y + focus.height);
+}
+
+TEST(DashboardV3Renderer8A, LaterDayGroupsDrawHeadingRibbonAndRowsWithoutAHero) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, threeDayAgenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  // The hero's group plus two later groups fit; the day after them is what the
+  // standalone "+N meer" line stands in for.
+  const dashboard::v3::Rect focus =
+      focusRowBounds(dashboard::v3::computeAgenda8ALayout(528, 792, {}));
+  const Operation* focusTitle = findTextOperation(canvas, "Verhalenhuis 3");
+  ASSERT_NE(focusTitle, nullptr);
+  EXPECT_GE(focusTitle->bounds.y, focus.y) << "only the first day group carries a focus row";
+  EXPECT_LT(focusTitle->bounds.y, focus.y + focus.height);
+  ASSERT_NE(findDayRibbon(canvas), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "MA 14 SEP \xc2\xb7 2 AFSPRAKEN"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "DI 15 SEP \xc2\xb7 2 AFSPRAKEN"), nullptr);
+  EXPECT_EQ(findTextOperation(canvas, "WO 16 SEP \xc2\xb7 2 AFSPRAKEN"), nullptr)
+      << "the day that does not fit is named by the summary, not headed";
+
+  const Operation* summary = nullptr;
+  for (const Operation* operation : textOperationsInBand(canvas, 102, 554)) {
+    if (operation->text.rfind("+", 0) == 0 && operation->text.find("meer") != std::string::npos) summary = operation;
+  }
+  ASSERT_NE(summary, nullptr);
+  EXPECT_EQ(summary->text, "+2 meer") << "the omitted day's two rows ride in one standalone line";
+  EXPECT_EQ(summary->text.find("\xc2\xb7"), std::string::npos);
+
+  // Only the first day group ever draws a focus row, so the later days' own
+  // titles are ordinary rows and nothing else draws the Hero rung.
+  int heroRungInk = 0;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind == Operation::Kind::Text && operation.font == dashboard::v3::FontRole::Hero) ++heroRungInk;
+  }
+  EXPECT_EQ(heroRungInk, 1) << "later groups are heading, ribbon and rows only";
+  EXPECT_NE(findTextOperation(canvas, "Theaterles"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "Padel"), nullptr);
+}
+
+TEST(DashboardV3Renderer8A, OverflowSummaryCoversEveryEventTheRowsCouldNotShow) {
+  RecordingCanvas canvas;
+  const dashboard::v3::DashboardV3Package package = extreme8APackage();
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+
+  // When the list cannot hold everything it still ends in a single "+N meer"
+  // line, and that final line counts every event the rows left out -- not just
+  // the last day's. The hero holds the first event, so it is not in the list.
+  int listedRows = 0;
+  const Operation* finalSummary = nullptr;
+  for (const Operation* operation : textOperationsInBand(canvas, 160, 554)) {
+    if (operation->text.rfind("+", 0) == 0 && operation->text.find(" meer") != std::string::npos) {
+      finalSummary = operation;
+    } else if (operation->text == "Kwartaalreview Fiberforce Nederl") {
+      ++listedRows;
+    }
+  }
+  ASSERT_NE(finalSummary, nullptr) << "the events that do not fit are summarised";
+  EXPECT_EQ(finalSummary->text.find("\xc2\xb7"), std::string::npos)
+      << "the summary is standalone and never names an omitted appointment";
+  const int listedEvents = 1 + listedRows;
+  EXPECT_EQ(listedEvents + std::atoi(finalSummary->text.c_str() + 1), static_cast<int>(package.agendaCount))
+      << "the final summary counts every event the rows could not show";
+}
+
+TEST(DashboardV3Renderer8A, ExactDayTotalDrivesHeadingAndStandaloneOverflowSummary) {
+  dashboard::v3::DashboardV3Package package{};
+  package.formatVersion = 5;
+  package.generatedAt = 1789298100ULL;
+  setAgenda8A(package, 0, 0, 9 * 60, "Hero", 30, false, false, 20, 0);
+  for (size_t index = 1; index < 13; ++index) {
+    setAgenda8A(package, index, 0, static_cast<uint16_t>(9 * 60 + index * 20), "Vandaag", 20,
+                false, false, 20, 0);
+  }
+  package.agendaCount = 13;
+
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+
+  EXPECT_NE(findTextOperation(canvas, "ZO 13 SEP \xc2\xb7 20 AFSPRAKEN"), nullptr);
+  EXPECT_NE(findTextOperation(canvas, "+8 meer"), nullptr);
+}
+
+TEST(DashboardV3Renderer8A, PortfolioBarGrowsFromTheCentreInBothDirections) {
+  // The left KPI column's four bars share one track geometry; the portfolio's is
+  // the last of them.
+  const auto barFor = [](const RecordingCanvas& canvas) -> dashboard::v3::Rect {
+    dashboard::v3::Rect last{};
+    for (const auto& operation : canvas.operations) {
+      if (operation.kind == Operation::Kind::Rect && operation.bounds.x < 264 && operation.bounds.height == 10 &&
+          operation.bounds.width > 100) {
+        last = operation.bounds;
+      }
+    }
+    return last;
+  };
+  // The zero mark is drawn first and the fill may cover it, so the fill is the
+  // widest thing drawn inside the track.
+  const auto fillIn = [](const RecordingCanvas& canvas, const dashboard::v3::Rect bar) {
+    dashboard::v3::Rect widest{};
+    for (const auto& operation : canvas.operations) {
+      if (operation.kind != Operation::Kind::Fill || operation.bounds.y != bar.y + 1) continue;
+      if (operation.bounds.x < bar.x || operation.bounds.x >= bar.x + bar.width) continue;
+      if (operation.bounds.height != bar.height - 2) continue;
+      if (operation.bounds.width > widest.width) widest = operation.bounds;
+    }
+    return widest;
+  };
+
+  auto gainPackage = agenda8APackage();
+  RecordingCanvas gainCanvas;
+  dashboard::v3::renderDashboardV3(gainCanvas, gainPackage, /*minuteOfDay=*/11 * 60 + 15);
+  const dashboard::v3::Rect gainBar = barFor(gainCanvas);
+  ASSERT_GT(gainBar.width, 0);
+  const int center = gainBar.x + 1 + (gainBar.width - 2) / 2;
+  const dashboard::v3::Rect gainFill = fillIn(gainCanvas, gainBar);
+  const int half = (gainBar.width - 2) / 2;
+  EXPECT_EQ(gainFill.x, center) << "+0,9% grows to the right of zero";
+  EXPECT_EQ(gainFill.width, half * 90 / 800);
+  EXPECT_EQ(gainFill.height, gainBar.height - 2);
+
+  auto lossPackage = agenda8APackage();
+  lossPackage.portfolioChangeBasisPoints = -400;
+  RecordingCanvas lossCanvas;
+  dashboard::v3::renderDashboardV3(lossCanvas, lossPackage, /*minuteOfDay=*/11 * 60 + 15);
+  const dashboard::v3::Rect lossBar = barFor(lossCanvas);
+  const dashboard::v3::Rect lossFill = fillIn(lossCanvas, lossBar);
+  const int lossCenter = lossBar.x + 1 + (lossBar.width - 2) / 2;
+  EXPECT_EQ(lossFill.x + lossFill.width, lossCenter) << "-4,0% grows to the left of zero";
+  EXPECT_EQ(lossFill.width, (lossBar.width - 2) / 2 * 400 / 800);
+  EXPECT_LT(lossFill.x, lossCenter);
+
+  auto unknownPackage = agenda8APackage();
+  unknownPackage.portfolioChangeBasisPoints = INT16_MIN;
+  RecordingCanvas unknownCanvas;
+  dashboard::v3::renderDashboardV3(unknownCanvas, unknownPackage, /*minuteOfDay=*/11 * 60 + 15);
+  const dashboard::v3::Rect unknownBar = barFor(unknownCanvas);
+  const dashboard::v3::Rect unknownFill = fillIn(unknownCanvas, unknownBar);
+  EXPECT_EQ(unknownFill.width, 1) << "an unknown change leaves the track empty but for the zero mark";
+  EXPECT_EQ(unknownFill.x, unknownBar.x + 1 + (unknownBar.width - 2) / 2);
+  EXPECT_NE(findTextOperation(unknownCanvas, "-"), nullptr) << "and its value is a dash";
+}
+
+TEST(DashboardV3Renderer8A, PortfolioBarClampsAtEightPercent) {
+  const auto barFor = [](const RecordingCanvas& canvas) -> dashboard::v3::Rect {
+    dashboard::v3::Rect last{};
+    for (const auto& operation : canvas.operations) {
+      if (operation.kind == Operation::Kind::Rect && operation.bounds.x < 264 && operation.bounds.height == 10 &&
+          operation.bounds.width > 100) {
+        last = operation.bounds;
+      }
+    }
+    return last;
+  };
+
+  auto package = agenda8APackage();
+  package.portfolioChangeBasisPoints = 5000;  // +50%, well past the bar's range
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+  const dashboard::v3::Rect bar = barFor(canvas);
+  ASSERT_GT(bar.width, 0);
+  int widest = 0;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Fill || operation.bounds.y != bar.y + 1) continue;
+    widest = std::max(widest, operation.bounds.width);
+    EXPECT_LE(operation.bounds.x + operation.bounds.width, bar.x + bar.width - 1)
+        << "the fill never leaves its track";
+  }
+  EXPECT_LE(widest, (bar.width - 2) / 2) << "the fill stops at half the track, the +/-8% end";
+  EXPECT_GE(widest, (bar.width - 2) / 2 - 1);
+}
+
+TEST(DashboardV3Renderer8A, MarketLineDrawsAllFourIndicesAndTheMover) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  for (const char* const label : {"AEX", "S&P", "NDX", "BTC"}) {
+    const Operation* operation = findTextOperation(canvas, label);
+    ASSERT_NE(operation, nullptr) << "the primary indices are never dropped: " << label;
+    EXPECT_GE(operation->bounds.y, 694) << label << " belongs on the single market line";
+    EXPECT_LT(operation->bounds.y, 728);
+  }
+  for (const char* const change : {"+0,5%", "+0,3%", "+0,7%", "+1,2%"}) {
+    expectTextFitsItsBox(canvas, change, "an index change must not be clipped");
+  }
+  EXPECT_NE(findTextOperation(canvas, "ASML"), nullptr);
+  expectTextFitsItsBox(canvas, "+6,1%", "the strongest mover's own change");
+  EXPECT_NE(findTextOperation(canvas, "+2"), nullptr) << "three movers means two besides the strongest";
+  // One line: every market string shares the same row.
+  const Operation* asml = findTextOperation(canvas, "ASML");
+  const Operation* aex = findTextOperation(canvas, "AEX");
+  ASSERT_NE(asml, nullptr);
+  ASSERT_NE(aex, nullptr);
+  EXPECT_EQ(asml->bounds.y, aex->bounds.y);
+  // The design asks for daily percentage moves and nothing else: no euro
+  // amounts, and no currency glyph at all on this line.
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Text) continue;
+    EXPECT_EQ(operation.text.find("\xe2\x82\xac"), std::string::npos) << operation.text;
+    EXPECT_EQ(operation.text.find("\x24"), std::string::npos) << operation.text;
+  }
+}
+
+TEST(DashboardV3Renderer8A, MarketMoverNeedsMoreThanThreePercent) {
+  auto package = agenda8APackage();
+  package.moverCount = 2;
+  package.strongestMover.changeBasisPoints = 300;  // exactly three percent
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+  EXPECT_EQ(findTextOperation(canvas, "ASML"), nullptr) << "three percent is not a mover";
+  EXPECT_EQ(findTextOperation(canvas, "+2"), nullptr);
+
+  package.strongestMover.changeBasisPoints = 301;
+  RecordingCanvas aboveCanvas;
+  dashboard::v3::renderDashboardV3(aboveCanvas, package, /*minuteOfDay=*/11 * 60 + 15);
+  EXPECT_NE(findTextOperation(aboveCanvas, "ASML"), nullptr);
+}
+
+TEST(DashboardV3Renderer8A, MarketMoverIsOptionalButIndicesAreNot) {
+  auto package = agenda8APackage();
+  package.moverCount = 0;
+  package.strongestMover = {};
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+  EXPECT_EQ(findTextOperation(canvas, "ASML"), nullptr);
+  for (const char* const label : {"AEX", "S&P", "NDX", "BTC"}) {
+    EXPECT_NE(findTextOperation(canvas, label), nullptr);
+  }
+}
+
+TEST(DashboardV3Renderer8A, IndicesSurviveEvenWhenTheCanvasCannotMeasure) {
+  auto package = agenda8APackage();
+  RecordingCanvas canvas;
+  canvas.canMeasure = false;  // the character-count fallback, with its margins
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+
+  for (const char* const label : {"AEX", "S&P", "NDX", "BTC"}) {
+    const Operation* operation = findTextOperation(canvas, label);
+    ASSERT_NE(operation, nullptr) << "a wider guess drops the optional mover, never an index: " << label;
+  }
+  for (const char* const change : {"+0,5%", "+0,3%", "+0,7%", "+1,2%"}) {
+    expectTextFitsItsBox(canvas, change, "no measurement must not clip an index value");
+  }
+  expectOperationsInsideCanvas(canvas);
+}
+
+TEST(DashboardV3Renderer8A, ExtremeLabelsShrinkTheCaptionNotTheNumber) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, extreme8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  int changes = 0;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Text || operation.text != "-12,3%") continue;
+    ++changes;
+    EXPECT_GE(operation.bounds.width, nominalWidth(operation.font, operation.text.c_str()))
+        << "four twelve-byte labels still leave every number whole";
+  }
+  EXPECT_EQ(changes, 4) << "the four indices are all still on the line";
+}
+
+TEST(DashboardV3Renderer8A, KpiValuesStayIntactWhileCaptionsMayShorten) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  expectTextFitsItsBox(canvas, "76%", "the X3 battery reading");
+  expectTextFitsItsBox(canvas, "49%", "the car battery reading");
+  expectTextFitsItsBox(canvas, "23%", "the home battery reading");
+  expectTextFitsItsBox(canvas, "+0,9%", "the portfolio change");
+  expectTextFitsItsBox(canvas, "43 min", "the travel time");
+  expectTextFitsItsBox(canvas, "128 km", "the national jam");
+  expectTextFitsItsBox(canvas, "24", "the unread count");
+  expectTextFitsItsBox(canvas, "7.850", "the step count");
+
+  // Every KPI row sits in one of the two equal columns, and the four left-hand
+  // bars share one column of gauges.
+  std::vector<dashboard::v3::Rect> bars;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind == Operation::Kind::Rect && operation.bounds.height == 10 && operation.bounds.width > 100 &&
+        operation.bounds.y >= 554 && operation.bounds.y < 694) {
+      bars.push_back(operation.bounds);
+    }
+  }
+  ASSERT_EQ(bars.size(), 4u);
+  for (const dashboard::v3::Rect& bar : bars) {
+    EXPECT_EQ(bar.x, bars.front().x) << "the four bars are aligned";
+    EXPECT_EQ(bar.width, bars.front().width);
+    EXPECT_LT(bar.x, 264) << "they belong to the left column";
+  }
+}
+
+TEST(DashboardV3Renderer8A, KpiLeftRowsShareOneLineAndCarryNoCaptions) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  // The captions that used to strike a line through the bars are gone.
+  for (const char* const caption : {"X3", "AUTO", "THUIS", "PORT."}) {
+    EXPECT_EQ(findTextOperation(canvas, caption), nullptr) << caption << " is no longer drawn in the KPI band";
+  }
+
+  std::vector<dashboard::v3::Rect> bars;
+  std::vector<dashboard::v3::Rect> icons;
+  for (const auto& operation : canvas.operations) {
+    if (operation.bounds.x >= 264 || operation.bounds.y < 554) continue;
+    if (operation.kind == Operation::Kind::Rect && operation.bounds.height == 10 && operation.bounds.width > 100) {
+      bars.push_back(operation.bounds);
+    }
+    if (operation.kind == Operation::Kind::Icon) icons.push_back(operation.bounds);
+  }
+  ASSERT_EQ(bars.size(), 4u);
+  ASSERT_EQ(icons.size(), 4u);
+
+  // Each bar shares its row with the icon and the value to its left.
+  for (const dashboard::v3::Rect& bar : bars) {
+    const int center = bar.y + bar.height / 2;
+    bool iconOnRow = false;
+    bool valueOnRow = false;
+    for (const auto& operation : canvas.operations) {
+      if (operation.bounds.y + operation.bounds.height < center - 8 || operation.bounds.y > center + 8) continue;
+      if (operation.kind == Operation::Kind::Icon && operation.bounds.x >= 0 && operation.bounds.x < bar.x) {
+        iconOnRow = true;
+      }
+      if (operation.kind == Operation::Kind::Text && operation.font == dashboard::v3::FontRole::Body &&
+          operation.bounds.x < bar.x) {
+        valueOnRow = true;
+      }
+    }
+    EXPECT_TRUE(iconOnRow) << "the icon is on the bar's own row";
+    EXPECT_TRUE(valueOnRow) << "the value is on the bar's own row, left of the bar";
+  }
+}
+
+TEST(DashboardV3Renderer8A, KpiColumnsAreSplitByARuleOnTheHalfwayLine) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  bool rule = false;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Line) continue;
+    rule |= operation.bounds.x == 264 && operation.bounds.width == 1 && operation.bounds.y >= 554 &&
+            operation.bounds.y + operation.bounds.height <= 694;
+  }
+  EXPECT_TRUE(rule) << "the two KPI columns are separated on the halfway line";
+}
+
+TEST(DashboardV3Renderer8A, MarketMoverExtraCountIsInkOnPaper) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  const Operation* extra = findTextOperation(canvas, "+2");
+  ASSERT_NE(extra, nullptr) << "three movers means two besides the strongest";
+  EXPECT_TRUE(extra->black) << "the \"+2\" sits on the white market band, so it must be drawn in black";
+  EXPECT_GE(extra->bounds.width, nominalWidth(extra->font, extra->text.c_str())) << "and never clipped";
+}
+
+TEST(DashboardV3Renderer8A, MarketLineAlwaysDrawsFourFixedSlots) {
+  auto package = agenda8APackage();
+  package.marketCount = 0;
+  package.moverCount = 0;
+  package.strongestMover = {};
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/11 * 60 + 15);
+
+  for (const char* const label : {"AEX", "S&P", "NDX", "BTC"}) {
+    const Operation* operation = findTextOperation(canvas, label);
+    ASSERT_NE(operation, nullptr) << "the fixed slot label is drawn even with no package rows: " << label;
+    EXPECT_GE(operation->bounds.y, 694);
+    EXPECT_LT(operation->bounds.y, 728);
+  }
+
+  int dashes = 0;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind == Operation::Kind::Text && operation.text == "-" && operation.bounds.y >= 694 &&
+        operation.bounds.y < 728) {
+      ++dashes;
+    }
+  }
+  EXPECT_EQ(dashes, 4) << "with no package rows every change is a dash";
+
+  // No mover means no divider and no extra count on the line.
+  EXPECT_EQ(findTextOperation(canvas, "+2"), nullptr);
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind != Operation::Kind::Line || operation.bounds.width != 1) continue;
+    EXPECT_FALSE(operation.bounds.y >= 694 && operation.bounds.y < 728) << "no mover means no divider";
+  }
+}
+
+TEST(DashboardV3Renderer8A, RainBandFitsOutlookStripEndAndAdviceOnOneRow) {
+  RecordingCanvas canvas;
+  dashboard::v3::renderDashboardV3(canvas, agenda8APackage(), /*minuteOfDay=*/11 * 60 + 15);
+
+  const Operation* outlook = findTextOperation(canvas, "12:55 lichte regen");
+  const Operation* endTime = findTextOperation(canvas, "13:15");
+  const Operation* advice = findTextOperation(canvas, "STOKEN KAN");
+  ASSERT_NE(outlook, nullptr) << "the compact outlook keeps its absolute start clock";
+  ASSERT_NE(endTime, nullptr) << "the window's end clock is on the row";
+  ASSERT_NE(advice, nullptr);
+  for (const Operation* operation : {outlook, endTime, advice}) {
+    EXPECT_GE(operation->bounds.y, 62);
+    EXPECT_LT(operation->bounds.y + operation->bounds.height, 102) << "the rain band is 40 px tall";
+  }
+
+  // The outlined 10 px strip is on the same row, between the outlook and the end
+  // clock, and the advice is to the right of all of it.
+  const Operation* strip = nullptr;
+  for (const auto& operation : canvas.operations) {
+    if (operation.kind == Operation::Kind::Rect && operation.bounds.height == 10 && operation.bounds.y >= 62 &&
+        operation.bounds.y < 102) {
+      strip = &operation;
+    }
+  }
+  ASSERT_NE(strip, nullptr) << "the intensity strip shares the row";
+  const int center = strip->bounds.y + strip->bounds.height / 2;
+  for (const Operation* operation : {outlook, endTime, advice}) {
+    EXPECT_LE(operation->bounds.y, center);
+    EXPECT_GE(operation->bounds.y + operation->bounds.height, center);
+  }
+  // The outlook's box is reserved wider than its text; what must clear the strip
+  // is the drawn string, not the box.
+  EXPECT_LT(outlook->bounds.x + nominalWidth(outlook->font, outlook->text.c_str()), strip->bounds.x + 1);
+  EXPECT_LE(strip->bounds.x + strip->bounds.width, endTime->bounds.x + 1);
+  EXPECT_LE(endTime->bounds.x + endTime->bounds.width, advice->bounds.x);
+
+  expectTextFitsItsBox(canvas, "12:55 lichte regen", "the outlook is never clipped");
+  expectTextFitsItsBox(canvas, "STOKEN KAN", "the advice is never clipped");
+  expectOperationsInsideCanvas(canvas);
+}
+
+TEST(DashboardV3Renderer8A, LegacyFormatsKeepTheLegacyRenderer) {
+  for (const uint8_t version : {dashboard::v3::FORMAT_VERSION_V2, dashboard::v3::FORMAT_VERSION}) {
+    auto package = maximumContentPackage();
+    package.formatVersion = version;
+    RecordingCanvas canvas;
+    dashboard::v3::renderDashboardV3(canvas, package, /*minuteOfDay=*/12 * 60);
+    EXPECT_NE(findTextOperation(canvas, "KOMENDE AFSPRAKEN"), nullptr) << "format " << int(version);
+    EXPECT_NE(findTextOperation(canvas, "STATUS"), nullptr);
+    EXPECT_EQ(findTextOperation(canvas, "PORT."), nullptr) << "the 8A bands must not leak into a legacy package";
+  }
+}
+
 struct TestGlyph {
   uint16_t codePoint;
   std::array<uint16_t, 7> columns;  // column-major; bit row r = row r (9 rows used)
@@ -1477,6 +2939,16 @@ class PbmCanvas final : public dashboard::v3::DashboardV3Canvas {
     }
     for (int index = 0; index < count; ++index) {
       drawGlyph(codePoints[index], x + index * kAdvance * scale, spec.bounds.y, scale, spec.black);
+    }
+    // A dithered spec (the focus row's caption) is knocked back to a half-tone
+    // so the artifact shows the secondary line the panel would draw.
+    if (spec.dithered) {
+      const int height = 9 * scale;
+      for (int yy = spec.bounds.y; yy < spec.bounds.y + height; ++yy) {
+        for (int xx = x; xx < x + textWidth; ++xx) {
+          if (!dashboard::v3::shadeCoversPixel(dashboard::v3::Shade::Half, xx, yy)) setPixel(xx, yy, false);
+        }
+      }
     }
   }
 

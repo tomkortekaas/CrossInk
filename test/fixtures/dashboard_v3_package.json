@@ -1,0 +1,9 @@
+{
+  "fixture": "dashboard_v3_package.bin",
+  "sha256": "2d463e7bf73c3f9feee2bc0b4af33b5a6b1c3c7370239797a32ad28cfe1d613f",
+  "lengthBytes": 915,
+  "payloadFormat": 5,
+  "templateId": 5,
+  "generator": "ios/Tests/DashboardCoreTests/V3GoldenPackage.swift",
+  "regenerate": "X3_V3_FIXTURE_OUT=/tmp/x3-format5-golden.bin swift test --filter V3GoldenPackageTests"
+}

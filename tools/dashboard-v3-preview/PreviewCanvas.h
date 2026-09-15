@@ -15,11 +15,11 @@
 namespace dashboard::preview {
 
 struct TextObservation {
-  std::string requested;   ///< what the renderer asked for
-  std::string drawn;       ///< what fitted, ellipsis included
+  std::string requested;  ///< what the renderer asked for
+  std::string drawn;      ///< what fitted, ellipsis included
   int fontId = 0;
   int boundsWidth = 0;
-  int measuredWidth = 0;   ///< width of `requested` at this font
+  int measuredWidth = 0;  ///< width of `requested` at this font
   bool bold = false;
   bool truncated = false;
   bool missingGlyph = false;  ///< `drawn` contains a codepoint this font lacks
@@ -35,6 +35,7 @@ class PreviewCanvas final : public dashboard::v3::DashboardV3Canvas {
   void line(int x1, int y1, int x2, int y2, bool black) override;
   void rect(dashboard::v3::Rect rect, bool black) override;
   void text(const dashboard::v3::TextSpec& spec, const char* value) override;
+  int measureText(const dashboard::v3::TextSpec& spec, const char* value) const override;
   void icon(uint8_t iconId, dashboard::v3::Rect bounds, bool black) override;
   void shade(dashboard::v3::Rect bounds, dashboard::v3::Shade level) override;
 

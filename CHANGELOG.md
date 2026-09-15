@@ -2,6 +2,27 @@
 
 ### Added
 
+- The dashboard's approved new design reaches the panel. Packages the phone
+  composes in the newer format are drawn the way the mock-up was drawn: a
+  compact header with the date, the day's range and the moment the card was
+  refreshed, a single-row rain band whose icon, plain-language outlook ("droog
+  tot 13:15"), two-hour strip, window end and heating advice share one line, the
+  full-width agenda where each day gets a 07:00–23:00 bar, marked at 08:00,
+  12:00 and 18:00, showing how long every appointment actually lasts. The first
+  day heading is followed by that day's bar and then the next appointment in a
+  large focus row — its clock in black, with the appointment's location and how
+  long until it starts on a quieter second line — and the remaining appointments
+  follow without repeating it. Below
+  the agenda sit four gauges — icon, reading
+  and bar on one line, including the portfolio's change, drawn as a bar growing
+  left or right from zero — and one line with the four primary indices (AEX,
+  S&P, NDX and BTC), each slot kept even when the phone sent no value for it,
+  plus the day's strongest mover. An appointment whose length the phone does not
+  know is marked rather than given an invented end time, a day with more
+  appointments than the band can hold is summarised as "+N meer" instead of
+  dropping them, and an all-day appointment says so rather than claiming 00:00.
+  Packages composed for the earlier design keep their earlier layout.
+
 - The dashboard's daily quote now comes from a full year of 365 Dutch and
   English entries instead of repeating every eight days. The phone app and the
   device keep the same list in the same order, so a given day shows the same
@@ -30,7 +51,7 @@
 
 - Putting the device down now refreshes the dashboard. The quarter-hour update cycle only runs while the device sleeps, so an hour of reading was an hour without updates and the card left on the panel was whichever one happened to arrive before you picked the device up. A session that ends on a card older than the refresh interval now opens one update window before going to sleep, so the panel you glance at was composed at the moment you set it down — away from home as much as at it, since the phone remains the source. A short look costs nothing: a card that is still fresh is left alone. An attempt the phone does not answer keeps the old card and waits for the normal cycle rather than trying again.
 - The V3 dashboard now shows the values it previously left blank: whether the wood burner may be lit, the car and home battery levels, and up to three market movements, each read from a Home Assistant entity you pick under Instellingen → Gegevensbronnen → Dashboard V3. A source that cannot be reached keeps its last known reading rather than falling back to a dash.
-- The V3 dashboard carries up to eight appointments and seven WhatsApp conversations, matching the design it was drawn from; it previously stopped at five and three.
+- The V3 dashboard carries up to thirteen appointments and seven WhatsApp conversations; it previously stopped at five and three.
 - The rain band shows the next two hours as a single strip whose blocks darken with the expected intensity, replacing the bar chart. It reads in one glance and gives the space it saves back to the agenda.
 - A desktop tool renders the dashboard with the device's own fonts and reports every line it had to shorten, so text that does not fit is found before flashing rather than after photographing the panel.
 - A new sleep-screen mode, "Font Test", shows a single print/ink test sheet on the panel: the agenda's text at every typeface and weight from size 8 to 28 (the smallest sizes 8 and 9 are added to firmware purely for this card), plus a draft-quality gauge of 1-, 2- and 3-pixel rules and a mock value tile with a thin label. By photographing the panel you read off, in one shot, the smallest size and thinnest rule that stay legible — the basis for deciding whether agenda, messages and dashboard values can be set smaller.
@@ -41,6 +62,15 @@
 - A dashboard tile can show the date, read from the device's own clock. In the phone app you pick what it shows — the day, the weekday, the month, the year or the week number — or let it choose a layout to suit its size, from a bare day number on the smallest tile up to a full calendar sheet with month, weekday and week number. Because the date itself is never sent, the tile turns over at midnight on its own and keeps telling the truth while the phone is away. A device whose clock has never been set shows a dash rather than an invented date.
 
 ### Fixed
+
+- The dashboard's agenda band fills the room it has instead of stopping at
+  three rows per day. Its first day group now heads the day on white, draws the
+  day's bar, and only then draws the next appointment as a large focus row; that
+  row is neither a separate band above the calendar nor a black one, and it
+  leads with the appointment's location when the phone sends one. Later days keep
+  plain headings without empty black separators. Every remaining appointment is
+  listed when the band can hold it, and only the events that genuinely do not fit
+  are named by the final "+N meer" line.
 
 - Navigator map loading keeps a single SD handle open for each draw instead of reopening and seeking the regional file for every small read. Back can cancel map reads; target timings still require hardware measurement.
 

@@ -17,6 +17,8 @@ constexpr uint8_t TEMPLATE_DASHBOARD_V3 = 5;
 // anything else is rejected as UnsupportedVersion.
 constexpr uint8_t FORMAT_VERSION_V2 = 2;
 constexpr uint8_t FORMAT_VERSION = 3;
+constexpr uint8_t FORMAT_VERSION_8A = 4;
+constexpr uint8_t FORMAT_VERSION_DAY_TOTALS = 5;
 // The rain buckets carry one nibble each. The nibble is the Buienradar
 // intensity band shared with the iOS composer, not a rescaled byte:
 //   0 = dry (< 0.1 mm/u), 1 = light (0.1..1), 2 = moderate (1..5),
@@ -28,8 +30,8 @@ constexpr size_t RAIN_BUCKET_COUNT = 24;
 // height for. Raising a ceiling is backwards compatible in this direction —
 // the sections are count-prefixed, so a phone still sending fewer rows decodes
 // unchanged.
-constexpr size_t MAX_AGENDA_ROWS = 8;
-constexpr size_t MAX_MARKETS = 3;
+constexpr size_t MAX_AGENDA_ROWS = 13;
+constexpr size_t MAX_MARKETS = 4;
 constexpr size_t MAX_CHATS = 7;
 constexpr size_t MAX_DESTINATION_BYTES = 16;
 constexpr size_t MAX_AGENDA_TITLE_BYTES = 32;
@@ -66,6 +68,13 @@ struct StatusValues {
 };
 
 struct AgendaRow {
+  uint16_t durationMinutes = UINT16_MAX;
+  bool isAllDay = false;
+  bool isSoftBlock = false;
+  /// Exact source totals for this calendar day. Format 5 carries these on
+  /// every row; older formats derive them from the encoded rows.
+  uint8_t dayTotalCount = 0;
+  uint8_t dayAllDayCount = 0;
   uint8_t dayOffset = 0;
   uint16_t minuteOfDay = 0;
   std::array<uint8_t, MAX_AGENDA_TITLE_BYTES> title{};
@@ -88,6 +97,11 @@ struct ChatRow {
 };
 
 struct DashboardV3Package {
+  // Legacy packages retain their legacy layout until the phone sends format 4.
+  uint8_t formatVersion = FORMAT_VERSION;
+  int16_t portfolioChangeBasisPoints = INT16_MIN;
+  uint8_t moverCount = 0;
+  MarketRow strongestMover{};
   uint8_t schema = SCHEMA_V2;
   uint8_t templateId = TEMPLATE_DASHBOARD_V3;
   uint32_t packageId = 0;
