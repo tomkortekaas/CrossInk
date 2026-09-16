@@ -102,8 +102,14 @@ constexpr uint64_t STANDBY_REFRESH_DELAY_US = 2ULL * 1000ULL * 1000ULL;
 // renders an accepted package sleeps through this same rule (main.cpp calls
 // enterDeepSleepInternal after rendering), and by then the package is seconds
 // old - so one put-down buys exactly one window, with no flag to keep in step.
+// `lastStandbyRefreshGeneratedAt` is the `generatedAt` of the card the previous
+// standby refresh already asked about, or 0 when none has. It is what bounds the
+// loop: a phone with no network answers every window from its cache, so the card
+// that comes back carries the timestamp it already had, and asking again cannot
+// produce anything the last ask did not.
 bool shouldRefreshAtStandby(bool agendaSleep, bool clockAvailable, uint64_t nowEpochSeconds,
-                            uint64_t packageGeneratedAt, uint32_t intervalMinutes);
+                            uint64_t packageGeneratedAt, uint32_t intervalMinutes,
+                            uint64_t lastStandbyRefreshGeneratedAt);
 
 // What the reader does once an in-process agenda window has closed.
 //

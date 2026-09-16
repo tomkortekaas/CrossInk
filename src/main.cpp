@@ -370,6 +370,29 @@ constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
 constexpr uint32_t SILENT_READER_PAGE_BUILD_MAGIC = 0xC1EAB017;
+#ifdef CROSSINK_STANDBY_REFRESH
+// The card a standby refresh has already asked a window for. Only this image
+// ever reads or writes it, and only across its own deep sleeps, so RTC_NOINIT is
+// enough - the receiver result needs an RTC scratch register instead because a
+// second app image has to read it. Unix seconds still fit in 32 bits until 2106,
+// so the truncation is exact for every timestamp this will ever see.
+RTC_NOINIT_ATTR uint32_t standbyRefreshMagic;
+RTC_NOINIT_ATTR uint32_t standbyRefreshCard;
+constexpr uint32_t STANDBY_REFRESH_MAGIC = 0xC1EAB027;
+
+// Zero - "no ask to remember" - after a power loss, when RTC memory holds
+// whatever it held, which is exactly when the device should be allowed one ask.
+uint64_t lastStandbyRefreshGeneratedAt() {
+  return standbyRefreshMagic == STANDBY_REFRESH_MAGIC ? standbyRefreshCard : 0;
+}
+
+void retainStandbyRefreshGeneratedAt(const uint64_t generatedAt) {
+  standbyRefreshCard = static_cast<uint32_t>(generatedAt);
+  standbyRefreshMagic = STANDBY_REFRESH_MAGIC;
+}
+
+void clearStandbyRefreshGeneratedAt() { standbyRefreshMagic = 0; }
+#endif
 constexpr uint32_t SILENT_READER_PAGE_BUILD_AUTO_TURN = 1U << 0;
 constexpr uint32_t NETWORK_RENDER_TASK_STACK_BYTES = 8192;
 constexpr uint32_t READER_RENDER_TASK_STACK_BYTES = 16384;
@@ -862,6 +885,7 @@ void enterDeepSleepInternal(const bool fromTimeout, const bool preserveLastReade
   // is back down by then.
   dashboard::WakeSettings wakeSettings{};
   bool refreshAtStandby = false;
+  uint64_t standbyRefreshCardGeneratedAt = 0;
   {
     dashboard::PersistedPackage persisted;
     const bool packageRead = dashboard::readLastKnownGood(persisted) == dashboard::PersistStatus::Ok;
@@ -882,15 +906,22 @@ void enterDeepSleepInternal(const bool fromTimeout, const bool preserveLastReade
         halClock.isAvailable() && halClock.getDateTime(year, month, day, utcHour, utcMinute);
     const uint64_t nowEpochSeconds =
         clockAvailable ? dashboard::utcEpochSecondsFromCivil(year, month, day, utcHour, utcMinute) : 0;
+    standbyRefreshCardGeneratedAt = packageRead ? persisted.header.generatedAt : 0;
     refreshAtStandby =
         dashboard::shouldRefreshAtStandby(agendaSleep, clockAvailable, nowEpochSeconds,
-                                          packageRead ? persisted.header.generatedAt : 0,
-                                          wakeSettings.intervalMinutes);
+                                          standbyRefreshCardGeneratedAt, wakeSettings.intervalMinutes,
+                                          lastStandbyRefreshGeneratedAt());
 #endif
   }
 
   if (refreshAtStandby) {
     LOG_INF("BLEPAY", "Stale card at standby; asking for one window before the grid resumes");
+    // Before sleeping, not after the window: this boot may never come back
+    // (the window can end in a sleep that does not return here), and an ask
+    // that is not recorded is an ask that repeats every two seconds.
+#ifdef CROSSINK_STANDBY_REFRESH
+    retainStandbyRefreshGeneratedAt(standbyRefreshCardGeneratedAt);
+#endif
     dashboard::appendBootTrace(static_cast<uint8_t>(HalGPIO::WakeupReason::Other),
                                dashboard::ReceiverResult::AwaitingWindow,
                                dashboard::BootTraceStage::StandbyRefreshRequested, "standby", true);
@@ -1170,6 +1201,13 @@ void setup() {
 #endif
         powerManager.startDeepSleep(gpio);
       }
+#ifdef CROSSINK_STANDBY_REFRESH
+      // Someone picked the device up, so the next put-down is a deliberate
+      // gesture and earns its own window even for the card the last ask already
+      // covered. The wake loop this bounds never gets here - every one of its
+      // wakes is a timer wake - so clearing on a real press costs it nothing.
+      clearStandbyRefreshGeneratedAt();
+#endif
 #if defined(CROSSINK_BLE_HANDOFF_READER) && defined(CROSSINK_IN_PROCESS_RECEIVER)
       // Only an Agenda sleep that actually armed a window can answer a long
       // power-hold with a manual one. Ordinary non-Agenda power wakes skip this

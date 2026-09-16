@@ -220,51 +220,66 @@ namespace {
 constexpr uint64_t NOW = 1788091200ULL;
 }  // namespace
 
+TEST(ShouldRefreshAtStandby, AsksOnlyOnceForTheCardItAlreadyAskedAbout) {
+  // The loop this closes: a phone with no network answers every window from its
+  // cache, so the card that comes back carries the same generatedAt it just
+  // had. Asking again cannot produce anything new, and asking again every two
+  // seconds costs ~38 mAh an hour - a full battery in about sixteen hours.
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 3600, 15, NOW - 3600));
+}
+
+TEST(ShouldRefreshAtStandby, AsksAgainForACardItHasNotAskedAboutYet) {
+  // A different stale card is a different situation: the phone did deliver
+  // something new, it is simply older than the interval. That earns its own
+  // single window.
+  EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 3600, 15, NOW - 7200));
+}
+
 TEST(ShouldRefreshAtStandby, RefreshesWhenTheCardIsOlderThanTheInterval) {
-  EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 3600, 15));
+  EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 3600, 15, 0));
 }
 
 TEST(ShouldRefreshAtStandby, RefreshesExactlyAtTheInterval) {
-  EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 15 * 60, 15));
+  EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 15 * 60, 15, 0));
 }
 
 TEST(ShouldRefreshAtStandby, LeavesAFreshCardAlone) {
   // A glance: picked up and put down again well inside the interval.
-  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 14 * 60, 15));
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 14 * 60, 15, 0));
 }
 
 TEST(ShouldRefreshAtStandby, DoesNotRefreshAfterAJustAcceptedPackage) {
   // This is what stops the loop: the boot that renders an accepted package
   // sleeps through this same rule, seconds after the package was generated.
-  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 5, 15));
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 5, 15, 0));
 }
 
 TEST(ShouldRefreshAtStandby, NeverRefreshesOnANonAgendaSleep) {
-  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(false, true, NOW, NOW - 3600, 15));
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(false, true, NOW, NOW - 3600, 15, 0));
 }
 
 TEST(ShouldRefreshAtStandby, NeverRefreshesWithoutAClock) {
-  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, false, NOW, NOW - 3600, 15));
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, false, NOW, NOW - 3600, 15, 0));
 }
 
 TEST(ShouldRefreshAtStandby, NeverRefreshesWithoutAPackage) {
-  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, 0, 15));
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, 0, 15, 0));
 }
 
 TEST(ShouldRefreshAtStandby, NeverRefreshesWhenTheClockIsBehindThePackage) {
   // An unset RTC reads 2000-01-01, which is before any package it holds.
-  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, 946684800ULL, NOW, 15));
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, 946684800ULL, NOW, 15, 0));
 }
 
 TEST(ShouldRefreshAtStandby, NeverRefreshesOnAZeroInterval) {
-  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 3600, 0));
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 3600, 0, 0));
 }
 
 TEST(ShouldRefreshAtStandby, RespectsAPhoneSuppliedInterval) {
   // clampWakeSettings allows 1-60 minutes; a 60-minute interval means a
   // 30-minute-old card is still fresh.
-  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 30 * 60, 60));
-  EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 61 * 60, 60));
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 30 * 60, 60, 0));
+  EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 61 * 60, 60, 0));
 }
 
 TEST(ActionAfterInProcessWindow, AnAcceptedPackageEarnsAFullBoot) {

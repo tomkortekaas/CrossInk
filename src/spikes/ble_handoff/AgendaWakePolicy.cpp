@@ -89,10 +89,14 @@ uint64_t utcEpochSecondsFromCivil(const uint16_t year, const uint8_t month, cons
 }
 
 bool shouldRefreshAtStandby(const bool agendaSleep, const bool clockAvailable, const uint64_t nowEpochSeconds,
-                            const uint64_t packageGeneratedAt, const uint32_t intervalMinutes) {
+                            const uint64_t packageGeneratedAt, const uint32_t intervalMinutes,
+                            const uint64_t lastStandbyRefreshGeneratedAt) {
   if (!agendaSleep || !clockAvailable) return false;
   if (packageGeneratedAt == 0 || intervalMinutes == 0) return false;
   if (nowEpochSeconds < packageGeneratedAt) return false;
+  // One window per card. The ask already happened and brought back this same
+  // card, so repeating it buys nothing and costs a wake every two seconds.
+  if (packageGeneratedAt == lastStandbyRefreshGeneratedAt) return false;
   return (nowEpochSeconds - packageGeneratedAt) >= static_cast<uint64_t>(intervalMinutes) * 60ULL;
 }
 
