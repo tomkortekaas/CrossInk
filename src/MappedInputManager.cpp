@@ -993,7 +993,13 @@ namespace {
 
 bool isRightToLeftUiLanguage() {
   const auto language = I18N.getLanguage();
-  return language == Language::AR || language == Language::HE;
+#if defined(CROSSINK_I18N_HAS_LANGUAGE_AR)
+  if (language == Language::AR) return true;
+#endif
+#if defined(CROSSINK_I18N_HAS_LANGUAGE_HE)
+  if (language == Language::HE) return true;
+#endif
+  return false;
 }
 
 }  // namespace

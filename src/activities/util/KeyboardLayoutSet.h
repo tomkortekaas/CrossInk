@@ -16,14 +16,46 @@ struct LayoutInfo {
 // SDK enum changes cannot reinterpret an existing settings file.
 inline constexpr LayoutInfo ALL[] = {
     {freeink::ui::KeyboardLayoutId::QwertyEn, Language::EN},
+#if defined(CROSSINK_I18N_HAS_LANGUAGE_FR)
     {freeink::ui::KeyboardLayoutId::AzertyFr, Language::FR},
+#else
+    {freeink::ui::KeyboardLayoutId::AzertyFr, Language::EN},
+#endif
+#if defined(CROSSINK_I18N_HAS_LANGUAGE_DE)
     {freeink::ui::KeyboardLayoutId::QwertzDe, Language::DE},
+#else
+    {freeink::ui::KeyboardLayoutId::QwertzDe, Language::EN},
+#endif
+#if defined(CROSSINK_I18N_HAS_LANGUAGE_ES)
     {freeink::ui::KeyboardLayoutId::SpanishEs, Language::ES},
+#else
+    {freeink::ui::KeyboardLayoutId::SpanishEs, Language::EN},
+#endif
+#if defined(CROSSINK_I18N_HAS_LANGUAGE_RU)
     {freeink::ui::KeyboardLayoutId::CyrillicRu, Language::RU},
+#else
+    {freeink::ui::KeyboardLayoutId::CyrillicRu, Language::EN},
+#endif
+#if defined(CROSSINK_I18N_HAS_LANGUAGE_UK)
     {freeink::ui::KeyboardLayoutId::CyrillicUk, Language::UK},
+#else
+    {freeink::ui::KeyboardLayoutId::CyrillicUk, Language::EN},
+#endif
+#if defined(CROSSINK_I18N_HAS_LANGUAGE_BE)
     {freeink::ui::KeyboardLayoutId::CyrillicBe, Language::BE},
+#else
+    {freeink::ui::KeyboardLayoutId::CyrillicBe, Language::EN},
+#endif
+#if defined(CROSSINK_I18N_HAS_LANGUAGE_KK)
     {freeink::ui::KeyboardLayoutId::CyrillicKk, Language::KK},
+#else
+    {freeink::ui::KeyboardLayoutId::CyrillicKk, Language::EN},
+#endif
+#if defined(CROSSINK_I18N_HAS_LANGUAGE_HE)
     {freeink::ui::KeyboardLayoutId::HebrewIl, Language::HE},
+#else
+    {freeink::ui::KeyboardLayoutId::HebrewIl, Language::EN},
+#endif
 };
 inline constexpr uint8_t COUNT = sizeof(ALL) / sizeof(ALL[0]);
 static_assert(COUNT <= 16, "keyboard layout mask is uint16_t");

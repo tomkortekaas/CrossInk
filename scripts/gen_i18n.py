@@ -506,6 +506,11 @@ def generate_keys_header(
     lines.append("};")
     lines.append("")
 
+    lines.append("// Compile-time availability for reduced-language builds")
+    for lang in languages:
+        lines.append(f"#define CROSSINK_I18N_HAS_LANGUAGE_{lang} 1")
+    lines.append("")
+
     # Extern declarations
     lines.append("// Language codes (defined in I18nStrings.cpp)")
     lines.append("extern const char* const LANGUAGE_CODES[];")
