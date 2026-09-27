@@ -359,8 +359,10 @@ const char* wakeupRouteName(const HalGPIO::WakeupReason reason) {
   switch (reason) {
     case HalGPIO::WakeupReason::PowerButton:
       return "PowerButton";
+#ifndef SIMULATOR
     case HalGPIO::WakeupReason::Timer:
       return "Timer";
+#endif
     case HalGPIO::WakeupReason::AfterFlash:
       return "AfterFlash";
     case HalGPIO::WakeupReason::AfterUSBPower:
@@ -1321,7 +1323,11 @@ void enterDeepSleepInternal(const bool fromTimeout, const bool preserveLastReade
   display.deepSleep();
   LOG_DBG("MAIN", "Entering deep sleep");
 
+#ifdef SIMULATOR
+  powerManager.startDeepSleep(gpio);
+#else
   powerManager.startDeepSleep(gpio, timerWakeUs);
+#endif
 }
 
 void enterDeepSleep(const bool fromTimeout) { enterDeepSleepInternal(fromTimeout, false); }
@@ -1633,8 +1639,10 @@ void setup() {
       // Normal behavior is to go back to sleep when USB power causes a cold boot.
       LOG_INF("BOOT", "AfterUSBPower route: TEMP continuing boot instead of deep sleep");
       break;
+#ifndef SIMULATOR
     case HalGPIO::WakeupReason::Timer:
       break;
+#endif
     case HalGPIO::WakeupReason::AfterFlash:
       // After flashing, just proceed to boot
       LOG_INF("BOOT", "AfterFlash route: continuing boot");
