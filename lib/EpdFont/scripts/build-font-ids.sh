@@ -22,7 +22,19 @@ emit_hash_define() {
   echo "#define ${name} (${hash})"
 }
 
+# Keep IDs for font families that are no longer part of the firmware catalog
+# but are still referenced by fork-side preview tooling or older settings.
+emit_legacy_define() {
+  local name="$1"
+  local value="$2"
+  echo "#define ${name} (${value})"
+}
+
 # Reading fonts
+emit_hash_define LEXENDDECA_8_FONT_ID \
+  ./lexenddeca_8_regular.h ./lexenddeca_8_bold.h ./lexenddeca_8_bolditalic.h ./lexenddeca_8_italic.h
+emit_hash_define LEXENDDECA_9_FONT_ID \
+  ./lexenddeca_9_regular.h ./lexenddeca_9_bold.h ./lexenddeca_9_bolditalic.h ./lexenddeca_9_italic.h
 emit_hash_define LEXENDDECA_10_FONT_ID \
   ./lexenddeca_10_regular.h ./lexenddeca_10_bold.h ./lexenddeca_10_bolditalic.h ./lexenddeca_10_italic.h
 emit_hash_define LEXENDDECA_12_FONT_ID \
@@ -31,6 +43,22 @@ emit_hash_define LEXENDDECA_14_FONT_ID \
   ./lexenddeca_14_regular.h ./lexenddeca_14_bold.h ./lexenddeca_14_bolditalic.h ./lexenddeca_14_italic.h
 emit_hash_define LEXENDDECA_16_FONT_ID \
   ./lexenddeca_16_regular.h ./lexenddeca_16_bold.h ./lexenddeca_16_bolditalic.h ./lexenddeca_16_italic.h
+emit_legacy_define LEXENDDECA_18_FONT_ID 1302402945
+emit_legacy_define LEXENDDECA_20_FONT_ID -1459152267
+
+emit_legacy_define CHAREINK_8_FONT_ID 312370057
+emit_legacy_define CHAREINK_9_FONT_ID 631165824
+emit_legacy_define CHAREINK_10_FONT_ID -944299713
+emit_legacy_define CHAREINK_12_FONT_ID 562864807
+emit_legacy_define CHAREINK_14_FONT_ID -1176545950
+emit_legacy_define CHAREINK_16_FONT_ID -1477679466
+emit_legacy_define CHAREINK_18_FONT_ID -787708407
+emit_legacy_define CHAREINK_20_FONT_ID -390579825
+
+emit_hash_define BITTER_8_FONT_ID \
+  ./bitter_8_regular.h ./bitter_8_bold.h ./bitter_8_bolditalic.h ./bitter_8_italic.h
+emit_hash_define BITTER_9_FONT_ID \
+  ./bitter_9_regular.h ./bitter_9_bold.h ./bitter_9_bolditalic.h ./bitter_9_italic.h
 emit_hash_define BITTER_10_FONT_ID \
   ./bitter_10_regular.h ./bitter_10_bold.h ./bitter_10_bolditalic.h ./bitter_10_italic.h
 emit_hash_define BITTER_12_FONT_ID \
@@ -39,6 +67,14 @@ emit_hash_define BITTER_14_FONT_ID \
   ./bitter_14_regular.h ./bitter_14_bold.h ./bitter_14_bolditalic.h ./bitter_14_italic.h
 emit_hash_define BITTER_16_FONT_ID \
   ./bitter_16_regular.h ./bitter_16_bold.h ./bitter_16_bolditalic.h ./bitter_16_italic.h
+emit_legacy_define BITTER_18_FONT_ID -1308817601
+emit_legacy_define BITTER_20_FONT_ID 1392022129
+
+# Dashboard gauge fonts are bold-only families.
+emit_hash_define LEXENDDECA_18_BOLD_DASH_FONT_ID ./lexenddeca_18_bold_dash.h
+emit_hash_define LEXENDDECA_22_BOLD_DASH_FONT_ID ./lexenddeca_22_bold_dash.h
+emit_hash_define LEXENDDECA_28_BOLD_DASH_FONT_ID ./lexenddeca_28_bold_dash.h
+emit_hash_define LEXENDDECA_34_BOLD_DASH_FONT_ID ./lexenddeca_34_bold_dash.h
 
 # UI fonts
 emit_hash_define UI_10_FONT_ID ./inter_10_regular.h ./inter_10_bold.h ./ui_symbols_10.h
@@ -49,8 +85,14 @@ echo ""
 echo "// Font ID 0 is reserved as the \"not found\" sentinel."
 echo "// Guard against any hash accidentally producing 0."
 for id in \
-  LEXENDDECA_10_FONT_ID LEXENDDECA_12_FONT_ID LEXENDDECA_14_FONT_ID LEXENDDECA_16_FONT_ID \
-  BITTER_10_FONT_ID BITTER_12_FONT_ID BITTER_14_FONT_ID BITTER_16_FONT_ID \
+  LEXENDDECA_8_FONT_ID LEXENDDECA_9_FONT_ID LEXENDDECA_10_FONT_ID LEXENDDECA_12_FONT_ID \
+  LEXENDDECA_14_FONT_ID LEXENDDECA_16_FONT_ID LEXENDDECA_18_FONT_ID LEXENDDECA_20_FONT_ID \
+  CHAREINK_8_FONT_ID CHAREINK_9_FONT_ID CHAREINK_10_FONT_ID CHAREINK_12_FONT_ID \
+  CHAREINK_14_FONT_ID CHAREINK_16_FONT_ID CHAREINK_18_FONT_ID CHAREINK_20_FONT_ID \
+  BITTER_8_FONT_ID BITTER_9_FONT_ID BITTER_10_FONT_ID BITTER_12_FONT_ID \
+  BITTER_14_FONT_ID BITTER_16_FONT_ID BITTER_18_FONT_ID BITTER_20_FONT_ID \
+  LEXENDDECA_18_BOLD_DASH_FONT_ID LEXENDDECA_22_BOLD_DASH_FONT_ID \
+  LEXENDDECA_28_BOLD_DASH_FONT_ID LEXENDDECA_34_BOLD_DASH_FONT_ID \
   UI_10_FONT_ID UI_12_FONT_ID SMALL_FONT_ID; do
   echo "static_assert(${id} != 0, \"Font ID collision with sentinel\");"
 done

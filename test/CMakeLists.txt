@@ -39,6 +39,12 @@ target_compile_options(crosspoint_test_common INTERFACE
 enable_testing()
 include(GoogleTest)
 
+add_test(
+  NAME FontIds.GeneratedFileIsCurrent
+  COMMAND /bin/bash -c
+          "\"${REPO_ROOT}/lib/EpdFont/scripts/build-font-ids.sh\" | cmp - \"${REPO_ROOT}/src/fontIds.h\""
+)
+
 add_subdirectory(streaming_json_parser)
 add_subdirectory(release_json_parser)
 add_subdirectory(differential_rounding)
