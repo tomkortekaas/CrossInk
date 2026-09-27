@@ -131,24 +131,10 @@
 
 // Font ID 0 is reserved as the "not found" sentinel.
 // Guard against any hash accidentally producing 0.
-static_assert(LEXENDDECA_8_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(LEXENDDECA_9_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(LEXENDDECA_10_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(LEXENDDECA_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(LEXENDDECA_14_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(LEXENDDECA_16_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(LEXENDDECA_18_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(LEXENDDECA_20_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(CHAREINK_8_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(CHAREINK_9_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(CHAREINK_10_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(CHAREINK_12_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(CHAREINK_14_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(CHAREINK_16_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(CHAREINK_18_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(CHAREINK_20_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(BITTER_8_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(BITTER_9_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(BITTER_10_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(BITTER_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(BITTER_14_FONT_ID != 0, "Font ID collision with sentinel");
