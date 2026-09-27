@@ -1166,18 +1166,41 @@ void renderHeader8A(DashboardV3Canvas& canvas, const Rect rect, const DashboardV
   label(canvas, textBox(left, captionY, leftWidth, FontRole::Micro), caption, FontRole::Micro, false, false);
 }
 
-/// The rain band: one line. An icon, the compact outlook, the outlined intensity
-/// strip, the window's end clock and the heating advice all share the 40 px
-/// band's middle, so the band reads as one sentence about the next two hours
-/// instead of a caption with a chart under it. Every clock here is absolute
-/// (rainStartMinute plus the bucket offset), so the band says the same thing a
+/// A strong diagonal through `bounds`: the "not this" mark the heating verdict
+/// wears when the stove may not go on. Drawn as a filled band a few pixels thick
+/// rather than a hairline, because a one-pixel line disappears into a 24 px
+/// glyph's own strokes on a one-bit panel. Every run stays inside `bounds`.
+void strikeDiagonal(DashboardV3Canvas& canvas, const Rect bounds) {
+  if (bounds.width <= 0 || bounds.height <= 0) return;
+  const int thickness = std::min(3, bounds.width);
+  const int span = std::max(1, bounds.height - 1);
+  for (int row = 0; row < bounds.height; ++row) {
+    const int center = row * (bounds.width - 1) / span;
+    const int left = std::clamp(center - thickness / 2, 0, bounds.width - thickness);
+    canvas.fill({bounds.x + left, bounds.y + row, thickness, 1}, true);
+  }
+}
+
+/// The rain band: one line, now drawn directly under the agenda. The rain icon,
+/// the compact outlook, the outlined intensity strip and the window's two
+/// clocks all share the 40 px band's middle, so the band reads as a sentence
+/// about the next two hours with its own labelled axis instead of a caption with
+/// a chart under it. Every clock here is absolute (rainStartMinute, or
+/// rainStartMinute plus the two-hour window), so the band says the same thing a
 /// quarter of an hour after the package was composed.
 ///
+/// The far right carries the stove verdict as exactly one icon and no text: a
+/// flame when heating is allowed, the same flame struck through when it is not,
+/// and nothing at all when the package does not say. A word beside it would be a
+/// second, slower way to read the same fact, and the icon is the one the band
+/// already had.
+///
 /// The widths are measured, not assumed: the right-hand group is placed from the
-/// right edge inwards and the strip takes what is left between it and the
-/// outlook. When that is not enough for the full "HH:MM lichte regen" the
-/// leading clock is dropped first — the strip already shows where the rain sits,
-/// so the severity word is the part worth keeping. Nothing is ever clipped.
+/// right edge inwards and the strip takes what is left between the outlook's
+/// start clock and the end clock. When that is not enough for the full
+/// "HH:MM lichte regen" the leading clock is dropped first — the window's own
+/// start clock sits right beside the strip, so the severity word is the part
+/// worth keeping in the sentence. Nothing is ever clipped.
 [[gnu::noinline]]
 void renderRain8A(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3Package& package) {
   const int left = rect.x + PAD8A;
@@ -1187,10 +1210,6 @@ void renderRain8A(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3P
   char message[40];
   formatRainLine(package, message);
 
-  const char* const heating = !package.heatingKnown ? "VERWARMING -"
-                              : package.heatingAllowed ? "STOKEN KAN"
-                                                       : "NIET STOKEN";
-
   // The canvas centres a natural 32px bitmap in this box. Reserve enough
   // horizontal space for its overhang before starting either text label.
   constexpr int ICON_8A_RAIN = 24;
@@ -1198,33 +1217,47 @@ void renderRain8A(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3P
   constexpr int ITEM_GAP = 8;
   constexpr int STRIP_HEIGHT = 10;
   // The outlook text can give up its clock but the strip keeps a readable
-  // minimum, so the two never fight over the same pixels.
+  // minimum, so the two never fight over the same pixels. The window's start
+  // clock takes its own measured slot between them.
   constexpr int STRIP_MIN_WIDTH = 96;
   const int lineY = rect.y + (rect.height - ascenderFor(FontRole::Micro)) / 2;
   const TextSpec spec{{0, lineY, 0, ascenderFor(FontRole::Micro)}, FontRole::Micro, TextAlign::Left, true, true};
 
-  // Right-hand group, placed from the right edge inwards so the advice keeps its
-  // place and everything else gives way around it.
-  const int heatingWidth = std::max(8, measuredWidth(canvas, spec, heating));
-  const int heatingTextX = right - heatingWidth;
-  const int flameX = heatingTextX - ICON_GAP - ICON_8A_RAIN;
+  // Right-hand group, placed from the right edge inwards. The heating badge's
+  // 24 px slot is reserved whether or not the package carries a verdict, so the
+  // strip and the clocks keep the same place from package to package.
+  const int heatingX = right - ICON_8A_RAIN;
+  // A short rule in the gap before that slot marks where the rain sentence ends
+  // and the verdict begins, so the last clock and the flame cannot run together
+  // into one word. Like the slot itself it is drawn whether or not the package
+  // carries a verdict, so the band keeps its shape package to package.
+  constexpr int STOVE_DIVIDER_INSET = 8;
+  if (rect.height > 2 * STOVE_DIVIDER_INSET) {
+    const int dividerX = heatingX - ITEM_GAP / 2;
+    canvas.line(dividerX, rect.y + STOVE_DIVIDER_INSET, dividerX, rect.y + rect.height - STOVE_DIVIDER_INSET, true);
+  }
   char endLabel[8] = "";
+  char startLabel[8] = "";
   int endLabelWidth = 0;
+  int startLabelWidth = 0;
   if (hasRainData) {
+    formatMinute(package.rainStartMinute, startLabel);
     formatMinute(static_cast<uint16_t>((package.rainStartMinute + RAIN_BUCKET_COUNT * RAIN_MINUTES_PER_BUCKET) % 1440),
                  endLabel);
     endLabelWidth = std::max(8, measuredWidth(canvas, spec, endLabel));
+    startLabelWidth = std::max(8, measuredWidth(canvas, spec, startLabel));
   }
   // The end clock's right edge, then the strip's right edge one gap to its left.
-  const int endTimeRight = flameX - ITEM_GAP;
+  const int endTimeRight = heatingX - ITEM_GAP;
   const int endTimeX = endTimeRight - endLabelWidth;
   const int stripRight = endTimeX - ITEM_GAP;
 
   // The outlook: the full form, or the same sentence without its leading clock
-  // when the row cannot hold the strip and the clock at once.
+  // when the row cannot hold the start clock, the strip and the end clock at once.
   const int iconX = left;
   const int messageX = iconX + ICON_8A_RAIN + ICON_GAP;
-  const int messageBudget = std::max(0, stripRight - (hasRainData ? STRIP_MIN_WIDTH + ITEM_GAP : 0) - messageX);
+  const int clockSlot = hasRainData ? startLabelWidth + ITEM_GAP : 0;
+  const int messageBudget = std::max(0, stripRight - STRIP_MIN_WIDTH - ITEM_GAP - clockSlot - messageX);
   char terse[40] = "";
   if (std::strlen(message) > 6 && message[2] == ':' && message[5] == ' ') {
     std::snprintf(terse, sizeof(terse), "%s", message + 6);
@@ -1243,17 +1276,28 @@ void renderRain8A(DashboardV3Canvas& canvas, const Rect rect, const DashboardV3P
   // than the budget pushes the strip to the right instead of being clipped.
   label(canvas, textBox(messageX, lineY, std::max(8, std::max(messageBudget, drawnWidth)), FontRole::Micro),
         drawnMessage, FontRole::Micro, true);
-  canvas.icon(ICON_FLAME, {flameX, lineY, ICON_8A_RAIN, ICON_8A_RAIN}, true);
-  label(canvas, textBox(heatingTextX, lineY, heatingWidth, FontRole::Micro), heating, FontRole::Micro, true);
+
+  // The stove verdict: one icon, no words. The strike is the same flame plus a
+  // strong diagonal, which is what "not allowed" looks like without a second
+  // symbol or a label; an unknown verdict draws nothing at all.
+  if (package.heatingKnown) {
+    const Rect badge{heatingX, lineY, ICON_8A_RAIN, ICON_8A_RAIN};
+    canvas.icon(ICON_FLAME, badge, true);
+    if (!package.heatingAllowed) strikeDiagonal(canvas, badge);
+  }
 
   if (!hasRainData) return;  // the outlook already said there is nothing to draw
-  if (endLabel[0] != '\0') {
-    label(canvas, textBox(endTimeX, lineY, endLabelWidth, FontRole::Micro), endLabel, FontRole::Micro, true, true);
-  }
+
+  // The window's own start clock, then the strip, then its end clock: the three
+  // read as one labelled axis whatever the outlook says.
+  int cursor = messageX + drawnWidth + ITEM_GAP;
+  label(canvas, textBox(cursor, lineY, startLabelWidth, FontRole::Micro), startLabel, FontRole::Micro, true, true);
+  cursor += startLabelWidth + ITEM_GAP;
+  label(canvas, textBox(endTimeX, lineY, endLabelWidth, FontRole::Micro), endLabel, FontRole::Micro, true, true);
 
   // 10 px strip, one pixel of outline and one pixel of white between segments so
   // two neighbouring intensities cannot read as one block.
-  const int ribbonX = messageX + drawnWidth + ITEM_GAP;
+  const int ribbonX = cursor;
   const Rect ribbon{ribbonX, lineY + (ascenderFor(FontRole::Micro) - STRIP_HEIGHT) / 2, stripRight - ribbonX,
                     STRIP_HEIGHT};
   if (ribbon.width <= 2) return;
@@ -1314,7 +1358,11 @@ void renderFocusRow8A(DashboardV3Canvas& canvas, const Rect rect, const Dashboar
   copyField(row.title, row.titleLength, title);
   const int textX = ruleX + 14;
   const int textWidth = right - textX;
-  label(canvas, textBox(textX, rect.y + 8, textWidth, FontRole::Body), title, FontRole::Body, true);
+  // Regular weight: the Hero clock is the row's loudest mark, so the title names
+  // the appointment without competing with it. The box is bounded by the band's
+  // own right pad, so a full-width title is truncated by the canvas rather than
+  // spilling past the panel.
+  label(canvas, textBox(textX, rect.y + 8, textWidth, FontRole::Body), title, FontRole::Body, false);
 
   // "Teams · over 7u45" when the wire carried a location, else "hierna · over
   // 7u45" on the day itself. A later day's day reference takes the place of
@@ -1406,10 +1454,13 @@ void drawAgenda8ARibbon(DashboardV3Canvas& canvas, const Agenda8ARects& agenda, 
   }
 }
 
-/// One agenda row: right-aligned clock, a vertical rule, the title, the encoded
-/// duration on the right. The legacy free-text `detail` is deliberately absent —
-/// on the phone it often holds a room or a platform, and beside a duration
-/// column it reads like one.
+/// One agenda row: right-aligned clock, the title, the encoded duration on the
+/// right. There is no vertical ruler any more: the clock column and the fixed
+/// title left edge already separate the two, and a full-width zebra stripe
+/// (drawn by renderAgenda8A under the row) carries the eye across it. The clock
+/// stays bold and the title regular, so the time reads first. The legacy
+/// free-text `detail` is deliberately absent — on the phone it often holds a
+/// room or a platform, and beside a duration column it reads like one.
 void drawAgenda8ARow(DashboardV3Canvas& canvas, const Agenda8ARects& agenda, const AgendaRow& row, const int y) {
   const int right = agenda.content.x + agenda.content.width;
   const int durationX = right - agenda.durationWidth;
@@ -1427,8 +1478,9 @@ void drawAgenda8ARow(DashboardV3Canvas& canvas, const Agenda8ARects& agenda, con
     label(canvas, textBox(agenda.content.x, y, agenda.timeColumnWidth, FontRole::Micro), time, FontRole::Micro, true,
           true, TextAlign::Right);
   }
-  canvas.line(agenda.ruleX, y + 2, agenda.ruleX, y + ascenderFor(FontRole::Body) - 4, true);
-  label(canvas, textBox(agenda.titleX, y, durationX - agenda.titleX - 6, FontRole::Body), title, FontRole::Body, true);
+  // The title box stops a gap short of the duration column, so a long title is
+  // bounded (and truncated by the canvas) before it can run under the duration.
+  label(canvas, textBox(agenda.titleX, y, durationX - agenda.titleX - 6, FontRole::Body), title, FontRole::Body, false);
   if (!row.isAllDay) {
     char duration[12];
     if (formatDuration(row.durationMinutes, duration)) {
@@ -1582,6 +1634,14 @@ void renderAgenda8A(DashboardV3Canvas& canvas, const DashboardV3Package& package
     // The focus row already shows row 0, so the list starts at the row after it.
     const size_t firstListRow = static_cast<size_t>(days[day].first) + static_cast<size_t>(heroCredit);
     for (int rowIndex = 0; rowIndex < shown; ++rowIndex) {
+      // The zebra, reset at every day heading: the first ordinary row is paper
+      // and every second one after it takes the light quarter-tone, so a reader
+      // can follow one row across the fixed time/title/duration columns. The
+      // focus row, the headings, the ribbon and the "+N meer" line never shade,
+      // and the stripe is drawn before the row so the ink stays on top of it.
+      if (rowIndex % 2 == 1) {
+        canvas.shade({agenda.content.x, y, agenda.content.width, agenda.rowHeight}, Shade::Quarter);
+      }
       drawAgenda8ARow(canvas, agenda, package.agenda[firstListRow + static_cast<size_t>(rowIndex)], y);
       y += agenda.rowHeight;
     }
@@ -1939,10 +1999,12 @@ void renderDashboard8A(DashboardV3Canvas& canvas, const DashboardV3Package& pack
   const uint64_t localGenerated = localGeneratedAt(package.generatedAt, utcOffsetQ);
   canvas.fill({0, 0, canvas.width(), canvas.height()}, false);
   renderHeader8A(canvas, bands.header, package, minuteOfDay, localGenerated);
-  renderRain8A(canvas, bands.rain, package);
   // No standalone hero call: renderAgenda8A draws the focus row inside its
   // first day group, after that day's ribbon.
   renderAgenda8A(canvas, package, localGenerated);
+  // The refinement draws the rain band directly under the agenda, above the KPI
+  // band, so the two calls follow the band order the layout hands out.
+  renderRain8A(canvas, bands.rain, package);
   renderKpiLeft8A(canvas, bands.kpiLeft, package);
   renderKpiRight8A(canvas, bands.kpiRight, package);
   // A rule on the halfway line separates the gauges from the four readings.
@@ -1950,7 +2012,8 @@ void renderDashboard8A(DashboardV3Canvas& canvas, const DashboardV3Package& pack
   renderMarkets8A(canvas, bands.markets, package);
   renderQuote8A(canvas, bands.quote, package);
   // Hairlines between the light bands: the black header separates itself, the
-  // four paper bands would otherwise read as one tall column.
+  // five paper bands would otherwise read as one tall column.
+  canvas.line(0, bands.rain.y, canvas.width() - 1, bands.rain.y, true);
   canvas.line(0, bands.kpi.y, canvas.width() - 1, bands.kpi.y, true);
   canvas.line(0, bands.markets.y, canvas.width() - 1, bands.markets.y, true);
   canvas.line(0, bands.quote.y, canvas.width() - 1, bands.quote.y, true);

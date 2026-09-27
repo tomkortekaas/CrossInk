@@ -885,7 +885,8 @@ void enterDeepSleepInternal(const bool fromTimeout, const bool preserveLastReade
     refreshAtStandby =
         dashboard::shouldRefreshAtStandby(agendaSleep, clockAvailable, nowEpochSeconds,
                                           packageRead ? persisted.header.generatedAt : 0,
-                                          wakeSettings.intervalMinutes);
+                                          wakeSettings.intervalMinutes, agendaWakeHour, agendaWakeMinute,
+                                          wakeSettings.windowStartHour, wakeSettings.windowEndHour);
 #endif
   }
 
@@ -903,6 +904,7 @@ void enterDeepSleepInternal(const bool fromTimeout, const bool preserveLastReade
   dashboard::retainReceiverResult(agendaSleep ? dashboard::ReceiverResult::AwaitingWindow
                                               : dashboard::ReceiverResult::None);
 #endif
+  Storage.shutdown();
   powerManager.startDeepSleep(gpio, timerWakeUs);
 }
 
@@ -1215,10 +1217,23 @@ void setup() {
   } else if (wakeupReason == HalGPIO::WakeupReason::PowerButton) {
     wakeSource = dashboard::WakeSource::PowerButton;
   }
+  bool agendaWakeWindowOpen = true;
+  if (wakeSource == dashboard::WakeSource::Timer) {
+    uint8_t agendaWakeHour = 12;
+    uint8_t agendaWakeMinute = 0;
+    resolveAgendaWakeLocalTime(agendaWakeHour, agendaWakeMinute, readClockUtcOffsetQFromNvs());
+    const dashboard::WakeSettings wakeSettings = resolveWakeSettings();
+    agendaWakeWindowOpen = dashboard::isWakeWindowOpen(agendaWakeHour, agendaWakeMinute,
+                                                        wakeSettings.windowStartHour, wakeSettings.windowEndHour);
+  }
   const dashboard::AgendaBootRoute agendaRoute =
       dashboard::chooseAgendaBootRoute(retainedResult == dashboard::ReceiverResult::AwaitingWindow, wakeSource,
-                                       inProcessAvailable, manualReceiverHoldDetected);
-  if (agendaRoute == dashboard::AgendaBootRoute::Receiver) {
+                                       inProcessAvailable, manualReceiverHoldDetected, agendaWakeWindowOpen);
+  if (agendaRoute == dashboard::AgendaBootRoute::PowerOff) {
+    LOG_INF("BLEPAY", "Agenda timer reached the closed wake window; powering off until button wake");
+    dashboard::retainReceiverResult(dashboard::ReceiverResult::None);
+    powerManager.startDeepSleep(gpio, 0);
+  } else if (agendaRoute == dashboard::AgendaBootRoute::Receiver) {
     LOG_INF("BLEPAY", "Agenda timer wake; switching to isolated dashboard receiver");
     // Written before the hand-off, not after it: this is the one line that says
     // a timer wake happened at all. If the switch fails, or the receiver hangs

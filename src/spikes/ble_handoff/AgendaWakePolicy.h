@@ -5,7 +5,7 @@
 namespace dashboard {
 
 enum class WakeSource : uint8_t { Other, PowerButton, Timer };
-enum class AgendaBootRoute : uint8_t { NormalReader, Receiver, InProcessReceiver, ManualInProcessReceiver };
+enum class AgendaBootRoute : uint8_t { NormalReader, Receiver, InProcessReceiver, ManualInProcessReceiver, PowerOff };
 enum class ReceiverResult : uint8_t { None, AwaitingWindow, Accepted, TimedOut, Cancelled };
 enum class InProcessWindowAction : uint8_t { ContinueBoot, SleepToNextTick };
 
@@ -43,9 +43,9 @@ struct WakeSettings {
 // local time. Wakes land on a fixed grid of `intervalMinutes` anchored at
 // midnight — :00, :15, :30, :45 at the default — between `windowStartHour` and
 // `windowEndHour`, with the last tick of the day capped at the window end.
-// Outside the window, sleeps in one block straight through to the next
-// `windowStartHour`. The three settings default to the compiled-in fallback so
-// every existing call site keeps working unchanged.
+// Outside the window, returns zero so the X3 releases its battery latch and
+// stays fully off until a power-button wake. The three settings default to the
+// compiled-in fallback.
 //
 // The grid is anchored to the clock rather than to the moment of falling
 // asleep, because a button press wakes the device mid-interval and counting
@@ -56,6 +56,13 @@ uint64_t sleepTimerIntervalUs(bool agendaSleep, uint8_t currentHour, uint8_t cur
                                uint32_t intervalMinutes = AGENDA_WAKE_INTERVAL_MINUTES,
                                uint8_t windowStartHour = AGENDA_WAKE_WINDOW_START_HOUR,
                                uint8_t windowEndHour = AGENDA_WAKE_WINDOW_END_HOUR);
+
+// The automatic receiver window is start-inclusive and end-exclusive. Outside
+// it the X3 must release its battery latch instead of holding the main rail up
+// for a timer wake the next morning.
+bool isWakeWindowOpen(uint8_t currentHour, uint8_t currentMinute,
+                      uint8_t windowStartHour = AGENDA_WAKE_WINDOW_START_HOUR,
+                      uint8_t windowEndHour = AGENDA_WAKE_WINDOW_END_HOUR);
 
 // Clamps raw, phone-supplied settings into a safe range: 1-60 minutes for the
 // interval, a same-day, in-range hour pair for the window. An invalid value
@@ -103,7 +110,9 @@ constexpr uint64_t STANDBY_REFRESH_DELAY_US = 2ULL * 1000ULL * 1000ULL;
 // enterDeepSleepInternal after rendering), and by then the package is seconds
 // old - so one put-down buys exactly one window, with no flag to keep in step.
 bool shouldRefreshAtStandby(bool agendaSleep, bool clockAvailable, uint64_t nowEpochSeconds,
-                            uint64_t packageGeneratedAt, uint32_t intervalMinutes);
+                            uint64_t packageGeneratedAt, uint32_t intervalMinutes, uint8_t currentHour = 12,
+                            uint8_t currentMinute = 0, uint8_t windowStartHour = AGENDA_WAKE_WINDOW_START_HOUR,
+                            uint8_t windowEndHour = AGENDA_WAKE_WINDOW_END_HOUR);
 
 // What the reader does once an in-process agenda window has closed.
 //
@@ -125,15 +134,16 @@ bool manualReceiverHoldMet(uint32_t powerButtonHeldMs);
 
 // Chooses what the boot does with an armed Agenda cycle.
 //
-// NormalReader unless a timer wake (or a manual power-hold request) earns a
-// receiver window. A manual request - a deliberate ~1s power-button hold during
+// NormalReader unless an in-window timer wake (or a manual power-hold request)
+// earns a receiver window. A timer at or beyond the window end returns PowerOff.
+// A manual request - a deliberate ~1s power-button hold during
 // an armed Agenda sleep - opens the in-process receiver immediately, but only
 // when one is linked: without it the long hold falls back to the normal reader
 // wake (a partition switch from a button press is out of scope). `holdQualified`
 // only ever matters for a PowerButton wake; timer and other wake sources ignore
 // it, keeping the automatic schedule unchanged.
 AgendaBootRoute chooseAgendaBootRoute(bool agendaCycleArmed, WakeSource wakeSource, bool inProcessAvailable = false,
-                                      bool holdQualified = false);
+                                      bool holdQualified = false, bool wakeWindowOpen = true);
 uint32_t encodeReceiverResultWord(ReceiverResult result);
 ReceiverResult decodeReceiverResultWord(uint32_t word);
 

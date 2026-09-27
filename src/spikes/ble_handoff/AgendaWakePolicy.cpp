@@ -36,15 +36,11 @@ uint64_t sleepTimerIntervalUs(const bool agendaSleep, const uint8_t currentHour,
                                const uint32_t intervalMinutes, const uint8_t windowStartHour,
                                const uint8_t windowEndHour) {
   if (!agendaSleep) return 0;
-  const uint32_t windowStartMinute = static_cast<uint32_t>(windowStartHour) * 60U;
   const uint32_t windowEndMinute = static_cast<uint32_t>(windowEndHour) * 60U;
   const uint32_t nowMinute = static_cast<uint32_t>(currentHour) * 60U + currentMinute;
+  if (!isWakeWindowOpen(currentHour, currentMinute, windowStartHour, windowEndHour)) return 0;
   uint32_t sleepMinutes;
-  if (nowMinute < windowStartMinute) {
-    sleepMinutes = windowStartMinute - nowMinute;
-  } else if (nowMinute >= windowEndMinute) {
-    sleepMinutes = (MINUTES_PER_DAY - nowMinute) + windowStartMinute;
-  } else {
+  {
     // Sleep to the next point on a fixed grid anchored at midnight, not for a
     // whole interval from now. Those are the same thing only when the device
     // fell asleep on a grid point, and it usually does not: a button press
@@ -64,6 +60,14 @@ uint64_t sleepTimerIntervalUs(const bool agendaSleep, const uint8_t currentHour,
     sleepMinutes = minutesUntilWindowEnd < minutesUntilGrid ? minutesUntilWindowEnd : minutesUntilGrid;
   }
   return static_cast<uint64_t>(sleepMinutes) * 60ULL * 1000000ULL;
+}
+
+bool isWakeWindowOpen(const uint8_t currentHour, const uint8_t currentMinute, const uint8_t windowStartHour,
+                      const uint8_t windowEndHour) {
+  const uint32_t nowMinute = static_cast<uint32_t>(currentHour) * 60U + currentMinute;
+  const uint32_t windowStartMinute = static_cast<uint32_t>(windowStartHour) * 60U;
+  const uint32_t windowEndMinute = static_cast<uint32_t>(windowEndHour) * 60U;
+  return nowMinute >= windowStartMinute && nowMinute < windowEndMinute;
 }
 
 WakeSettings clampWakeSettings(const uint8_t rawIntervalMinutes, const uint8_t rawWindowStartHour,
@@ -89,8 +93,13 @@ uint64_t utcEpochSecondsFromCivil(const uint16_t year, const uint8_t month, cons
 }
 
 bool shouldRefreshAtStandby(const bool agendaSleep, const bool clockAvailable, const uint64_t nowEpochSeconds,
-                            const uint64_t packageGeneratedAt, const uint32_t intervalMinutes) {
-  if (!agendaSleep || !clockAvailable) return false;
+                            const uint64_t packageGeneratedAt, const uint32_t intervalMinutes,
+                            const uint8_t currentHour, const uint8_t currentMinute, const uint8_t windowStartHour,
+                            const uint8_t windowEndHour) {
+  if (!agendaSleep || !clockAvailable ||
+      !isWakeWindowOpen(currentHour, currentMinute, windowStartHour, windowEndHour)) {
+    return false;
+  }
   if (packageGeneratedAt == 0 || intervalMinutes == 0) return false;
   if (nowEpochSeconds < packageGeneratedAt) return false;
   return (nowEpochSeconds - packageGeneratedAt) >= static_cast<uint64_t>(intervalMinutes) * 60ULL;
@@ -113,7 +122,8 @@ uint16_t localMinuteOfDay(const uint8_t utcHour, const uint8_t utcMinute, const 
 bool manualReceiverHoldMet(const uint32_t powerButtonHeldMs) { return powerButtonHeldMs >= MANUAL_RECEIVER_HOLD_MS; }
 
 AgendaBootRoute chooseAgendaBootRoute(const bool agendaCycleArmed, const WakeSource wakeSource,
-                                      const bool inProcessAvailable, const bool holdQualified) {
+                                      const bool inProcessAvailable, const bool holdQualified,
+                                      const bool wakeWindowOpen) {
   if (!agendaCycleArmed) return AgendaBootRoute::NormalReader;
   if (wakeSource == WakeSource::PowerButton) {
     // A deliberate ~1s hold during an armed Agenda sleep is a manual request for
@@ -124,6 +134,7 @@ AgendaBootRoute chooseAgendaBootRoute(const bool agendaCycleArmed, const WakeSou
                                                : AgendaBootRoute::NormalReader;
   }
   if (wakeSource != WakeSource::Timer) return AgendaBootRoute::NormalReader;
+  if (!wakeWindowOpen) return AgendaBootRoute::PowerOff;
   return inProcessAvailable ? AgendaBootRoute::InProcessReceiver : AgendaBootRoute::Receiver;
 }
 

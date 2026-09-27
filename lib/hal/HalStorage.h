@@ -15,6 +15,9 @@ class HalStorage {
   HalStorage();
   bool begin();
   bool ready() const;
+  // Flush and stop storage after all file users have finished, immediately
+  // before deep sleep. The next boot mounts it again through begin().
+  void shutdown();
   uint64_t totalBytes() const;
   uint64_t usedBytes();
   std::vector<String> listFiles(const char* path = "/", int maxFiles = 200);

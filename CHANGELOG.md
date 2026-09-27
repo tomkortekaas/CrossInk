@@ -5,15 +5,18 @@
 - The dashboard's approved new design reaches the panel. Packages the phone
   composes in the newer format are drawn the way the mock-up was drawn: a
   compact header with the date, the day's range and the moment the card was
-  refreshed, a single-row rain band whose icon, plain-language outlook ("droog
-  tot 13:15"), two-hour strip, window end and heating advice share one line, the
-  full-width agenda where each day gets a 07:00–23:00 bar, marked at 08:00,
-  12:00 and 18:00, showing how long every appointment actually lasts. The first
+  refreshed, the full-width agenda, and — directly under it — a single-row rain
+  band whose icon, plain-language outlook ("droog tot 13:15"), two-hour strip,
+  the window's start and end clocks either side of that strip and one heating
+  icon with no words share one line. Each day in the agenda gets a 07:00–23:00
+  bar, marked at 08:00, 12:00 and 18:00, showing how long every appointment
+  actually lasts, and its rows alternate a light stripe so one appointment can
+  be followed across the fixed clock, title and duration columns. The first
   day heading is followed by that day's bar and then the next appointment in a
   large focus row — its clock in black, with the appointment's location and how
   long until it starts on a quieter second line — and the remaining appointments
   follow without repeating it. Below
-  the agenda sit four gauges — icon, reading
+  the rain band sit four gauges — icon, reading
   and bar on one line, including the portfolio's change, drawn as a bar growing
   left or right from zero — and one line with the four primary indices (AEX,
   S&P, NDX and BTC), each slot kept even when the phone sent no value for it,
@@ -84,6 +87,26 @@
 - The X3 no longer switches itself off when it goes to sleep with a scheduled wake-up pending, so a dashboard left on battery keeps refreshing instead of going dark until the power button is pressed. Its power latch and its SD-card power switch turn out to be the same pin, and releasing it for sleep cut the battery rail; on USB the device stayed powered through the cable and the problem was invisible.
 
 ### Changed
+
+- The X3 dashboard keeps its quarter-hour refresh schedule only inside the
+  configured daytime window. At the window end it now releases the battery
+  latch and remains fully off until the power button is pressed the next
+  morning; a stale dashboard can no longer start an extra overnight refresh.
+  Storage is flushed and stopped immediately before every deep-sleep entry, so
+  the SD card and its bus are not left active while the display is asleep.
+
+- The dashboard's agenda is easier to read, and the rain band has moved out of
+  its way. The rain band now sits directly below the agenda rather than between
+  the header and the calendar, so the day's rows get the full column and the
+  two-hour chart no longer crowds them. Its window is labelled with both of its
+  clocks, one on each side of the strip, and the heating advice is a single
+  icon: a flame when the stove may go on, the same flame struck through when it
+  may not, and nothing at all when the phone does not say. Ordinary agenda rows
+  carry a light stripe on every second row, restarted at every day, so one
+  appointment can be followed across the columns; the clock, title and duration
+  columns line up on fixed edges, the clock is set heavier than the title, and
+  the thin ruler beside each clock is gone, which gives a long title more room
+  before the duration column.
 
 - The X3 walking navigator's calm grayscale map now also backs the whole-route
   Overview, not only the close GPS view. From the moment a route opens you see

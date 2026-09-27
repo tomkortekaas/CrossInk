@@ -81,8 +81,10 @@ constexpr int AGENDA_8A_DAY_GAP = 8;
 constexpr int AGENDA_8A_DAY_PAD = 8;          // top and bottom of the content box
 
 constexpr int AGENDA_8A_TIME_COLUMN = 52;  // "00:00" measures 47 px at Micro
-constexpr int AGENDA_8A_RULE_GAP = 4;
-constexpr int AGENDA_8A_TITLE_GAP = 10;
+// The ruler that used to split the clock from the title is gone; its 4 px went
+// into the clock/title gap, which the refinement opens further so the fixed
+// title column reads as its own column rather than as a continuation of the time.
+constexpr int AGENDA_8A_TITLE_GAP = 16;
 constexpr int AGENDA_8A_DURATION_COLUMN = 56;
 
 /// Reference metrics scaled onto the real band, never below one pixel: a
@@ -116,13 +118,17 @@ Dashboard8ARects computeDashboard8ALayout(const int width, const int height, con
   int y = safe.top;
   result.header = {safe.left, y, usableWidth, headerHeight};
   y += headerHeight;
-  result.rain = {safe.left, y, usableWidth, rainHeight};
-  y += rainHeight;
-  // Zero-height marker where the old standalone hero band began, kept so callers
-  // that still name `hero` keep working; nothing is drawn there any more.
+  // The agenda runs from directly under the header to the rain band, and the
+  // zero-height hero marker rides the seam at its top so callers that still name
+  // `hero` keep working; nothing is drawn there any more.
   result.hero = {safe.left, y, usableWidth, 0};
   result.agenda = {safe.left, y, usableWidth, agendaHeight};
   y += agendaHeight;
+  // The rain band follows the agenda: the refined order is header, agenda, rain,
+  // KPI, markets, quote, so the agenda's rows get the full width of the canvas
+  // without the rain band's chart directly above them.
+  result.rain = {safe.left, y, usableWidth, rainHeight};
+  y += rainHeight;
   result.kpi = {safe.left, y, usableWidth, kpiHeight};
   y += kpiHeight;
   result.markets = {safe.left, y, usableWidth, marketsHeight};
@@ -153,7 +159,6 @@ Agenda8ARects computeAgenda8ALayout(const int width, const int height, const Ins
   result.summaryHeight = scaledMetric(scaleHeight, AGENDA_8A_SUMMARY_HEIGHT);
   result.dayGap = scaledMetric(scaleHeight, AGENDA_8A_DAY_GAP);
   result.timeColumnWidth = AGENDA_8A_TIME_COLUMN;
-  result.ruleX = result.content.x + result.timeColumnWidth + AGENDA_8A_RULE_GAP;
   result.titleX = result.content.x + result.timeColumnWidth + AGENDA_8A_TITLE_GAP;
   result.durationWidth = AGENDA_8A_DURATION_COLUMN;
   if (result.content.width <= 0 || result.content.height <= 0) return {};

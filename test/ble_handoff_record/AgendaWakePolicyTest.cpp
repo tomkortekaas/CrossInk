@@ -12,13 +12,16 @@ TEST(AgendaWakePolicy, ArmsRelativeTimerOnlyForAgendaSleep) {
   EXPECT_EQ(dashboard::sleepTimerIntervalUs(false, 12, 0), 0ULL);
 }
 
-TEST(AgendaWakePolicy, SleepsThroughTheNightOutsideTheWakeWindow) {
-  // 23:00 -> sleep 8 hours straight to 07:00, not another 15-minute tick.
-  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 23, 0), 8ULL * 60ULL * 60ULL * 1000000ULL);
-  // 03:30 -> sleep the remaining 3.5 hours to 07:00.
-  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 3, 30), (3ULL * 60ULL + 30ULL) * 60ULL * 1000000ULL);
-  // Exactly at the window end (22:00) counts as outside the window.
-  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 22, 0), 9ULL * 60ULL * 60ULL * 1000000ULL);
+TEST(AgendaWakePolicy, PowersOffOutsideTheWakeWindow) {
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 6, 59), 0ULL);
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 22, 0), 0ULL);
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 23, 0), 0ULL);
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 3, 30), 0ULL);
+}
+
+TEST(AgendaWakePolicy, ResumesTheTimerAtTheWindowStart) {
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 7, 0),
+            static_cast<uint64_t>(CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES) * 60ULL * 1000000ULL);
 }
 
 TEST(AgendaWakePolicy, CapsTheLastTickOfTheDayAtTheWindowEnd) {
@@ -62,11 +65,11 @@ TEST(AgendaWakePolicy, FallsBackToUtcForAnOutOfRangeOffset) {
 // waking every 15 minutes until 22:00 UTC, two hours past the window end,
 // because the timeout path had no offset and read 20:00 UTC as 20:00 local.
 TEST(AgendaWakePolicy, ClosesTheWindowOnLocalTimeNotUtc) {
-  // 20:00 UTC is 22:00 in Amsterdam: the window has closed, sleep to 07:00.
+  // 20:00 UTC is 22:00 in Amsterdam: the window has closed, power off.
   const uint16_t local = dashboard::localMinuteOfDay(20, 0, 56);
   EXPECT_EQ(local, 22U * 60U);
   EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, static_cast<uint8_t>(local / 60), static_cast<uint8_t>(local % 60)),
-            9ULL * 60ULL * 60ULL * 1000000ULL);
+            0ULL);
   // What it did instead: treat it as 20:00 local and take another 15-minute tick.
   EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 20, 0),
             static_cast<uint64_t>(CROSSINK_AGENDA_WAKE_INTERVAL_MINUTES) * 60ULL * 1000000ULL);
@@ -125,6 +128,11 @@ TEST(AgendaWakePolicy, RoutesOnlyTimerWakeToReceiver) {
             dashboard::AgendaBootRoute::NormalReader);
 }
 
+TEST(AgendaWakePolicy, PowersOffATimerWakeWhenTheWindowHasClosed) {
+  EXPECT_EQ(dashboard::chooseAgendaBootRoute(true, dashboard::WakeSource::Timer, true, false, false),
+            dashboard::AgendaBootRoute::PowerOff);
+}
+
 TEST(AgendaWakePolicy, PrefersTheInProcessReceiverWhenAvailable) {
   EXPECT_EQ(dashboard::chooseAgendaBootRoute(true, dashboard::WakeSource::Timer, true),
             dashboard::AgendaBootRoute::InProcessReceiver);
@@ -155,8 +163,8 @@ TEST(AgendaWakePolicy, UsesPhoneSuppliedIntervalAndWindow) {
   EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 8, 0, 10, 8, 20), 10ULL * 60ULL * 1000000ULL);
   // At 19:55 with a 10-minute interval, only 5 minutes are left before 20:00.
   EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 19, 55, 10, 8, 20), 5ULL * 60ULL * 1000000ULL);
-  // At 21:00, outside the narrowed window, sleep straight through to 08:00 (11 hours).
-  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 21, 0, 10, 8, 20), 11ULL * 60ULL * 60ULL * 1000000ULL);
+  // At 21:00, outside the narrowed window, fully power off.
+  EXPECT_EQ(dashboard::sleepTimerIntervalUs(true, 21, 0, 10, 8, 20), 0ULL);
 }
 
 TEST(ClampWakeSettings, PassesThroughValidValues) {
@@ -265,6 +273,13 @@ TEST(ShouldRefreshAtStandby, RespectsAPhoneSuppliedInterval) {
   // 30-minute-old card is still fresh.
   EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 30 * 60, 60));
   EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 61 * 60, 60));
+}
+
+TEST(ShouldRefreshAtStandby, OnlyRefreshesInsideTheWakeWindow) {
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 3600, 15, 6, 59, 7, 22));
+  EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 3600, 15, 7, 0, 7, 22));
+  EXPECT_TRUE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 3600, 15, 21, 59, 7, 22));
+  EXPECT_FALSE(dashboard::shouldRefreshAtStandby(true, true, NOW, NOW - 3600, 15, 22, 0, 7, 22));
 }
 
 TEST(ActionAfterInProcessWindow, AnAcceptedPackageEarnsAFullBoot) {

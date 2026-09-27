@@ -41,13 +41,15 @@ DashboardV3Rects computeDashboardV3Layout(int width, int height, Insets safe);
 // reuses or re-tunes them.
 //
 // The reference bands tile 0..792 exactly:
-//   header  0..62   rain  62..102   agenda 102..554
+//   header  0..62   agenda  62..514  rain  514..554
 //   kpi   554..694  markets 694..728 quote 728..792
 // The focus row has no band of its own: the agenda's first day group draws the
-// 58 px focus row for its first row, so the agenda starts right after the rain
-// and absorbs the 58 px the old 102..160 band held. Each band except the last is
-// scaled by the usable height and the quote band absorbs the remainder, so an
-// unusual canvas still tiles exactly.
+// 58 px focus row for its first row, so the agenda starts right under the header
+// and absorbs the 58 px the old 102..160 band held. The readability refinement
+// moves the rain band (still 40 px) below the agenda, directly above the KPI
+// band, where the agenda's rows cannot be crowded by it. Each band except the
+// last is scaled by the usable height and the quote band absorbs the remainder,
+// so an unusual canvas still tiles exactly.
 constexpr int AGENDA_8A_REFERENCE_WIDTH = 528;
 constexpr int AGENDA_8A_REFERENCE_HEIGHT = 792;
 /// Text margin inside every 8A band. The renderer takes it from here so the
@@ -77,19 +79,20 @@ struct Agenda8ARects {
   int ribbonStartMinute = 7 * 60;
   int ribbonEndMinute = 23 * 60;
   int timeColumnWidth = 0;  ///< right-aligned clock column at the left of a row
-  int ruleX = 0;            ///< the vertical rule between clock and title
   int titleX = 0;           ///< left edge of the title/duration column
   int durationWidth = 0;    ///< right-aligned duration column
 };
 
 struct Dashboard8ARects {
   Rect header{};
+  Rect agenda{};
+  /// The rain band, directly under the agenda and above the KPI band. Its 40 px
+  /// no longer sits between the header and the agenda.
   Rect rain{};
   /// Always zero-height: the 8A focus row is drawn by the agenda's first day
-  /// group, so this rect only marks the seam between rain and agenda for
-  /// callers that still name it.
+  /// group, so this rect only marks the seam at the agenda's top for callers
+  /// that still name it.
   Rect hero{};
-  Rect agenda{};
   Rect kpi{};
   Rect kpiLeft{};
   Rect kpiRight{};

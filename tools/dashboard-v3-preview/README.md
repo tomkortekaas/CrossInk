@@ -20,13 +20,27 @@ fixtures exercise the 8A design:
   bands populated and one soft agenda block.
 - `agenda-8a-allday` — the same day plus an all-day row and one agenda row with
   an unknown duration, so the ribbon draws a mark instead of an interval.
+- `agenda-8a-fill` — six appointments today and seven tomorrow, so the last rows
+  fold into the standalone `+N meer` line.
+- `agenda-8a-one`, `agenda-8a-six`, `agenda-8a-eleven` — one day holding that
+  many appointments, the counts the readability refinement calls out: the zebra
+  pattern and the band's fit at each.
+- `agenda-8a-long-title` — a full-width wire title in both the focus row and an
+  ordinary row, the longest thing those two boxes ever have to set.
+- `agenda-8a-same-start` — a double booking: two appointments at one minute, each
+  keeping its own row.
+- `agenda-8a-no-stove` / `agenda-8a-no-heating` — the stove verdict withheld
+  (nothing drawn) and forbidden (the flame with a strong diagonal strike), both
+  with no text on the badge.
 - `empty-8a` — every missing marker the wire format has.
 - `missing-8a` — every band present but one value in each band missing.
 - `no-movers-8a` — the demonstration day without the strongest-mover block.
 - `extreme-8a` — the wire maximums (longest labels/durations, biggest counts,
   edge-of-range signed values).
 
-The normal-value 8A fixtures (`agenda-8a`, `agenda-8a-allday`,
+The normal-value 8A fixtures (`agenda-8a`, `agenda-8a-fill`, `agenda-8a-allday`,
+`agenda-8a-one`, `agenda-8a-six`, `agenda-8a-eleven`, `agenda-8a-long-title`,
+`agenda-8a-same-start`, `agenda-8a-no-stove`, `agenda-8a-no-heating`,
 `no-movers-8a`) must end with zero truncated strings; the tool prints that
 verdict per scenario and returns a non-zero exit status if one truncates.
 `extreme-8a` is expected to truncate and is reported without failing the run.
@@ -37,8 +51,9 @@ For every format-4-or-newer scenario the report also prints an explicit 8A measu
 section:
 
 - the rain band's single row: the outlook string `formatRainLine` returns, its
-  measured width against the budget the row leaves it, the window's end clock,
-  and the width the intensity strip gets (with the renderer's 96 px minimum);
+  measured width against the budget the row leaves it, both of the window's
+  clocks, the width the intensity strip gets (with the renderer's 96 px minimum),
+  and which heating badge the package asks for (flame, struck flame, or nothing);
 - the four fixed market slots (AEX, S&P, NDX, BTC) and the mover block at the
   Micro rung, their sum, and the market band's available width (the market band
   uses a 10 px pad, not the 14 px pad used elsewhere);

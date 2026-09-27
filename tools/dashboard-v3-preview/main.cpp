@@ -378,6 +378,71 @@ DashboardV3Package noMovers8APackage() {
   return withAgendaDayTotals(package);
 }
 
+// The demonstration day with the stove verdict withheld: the heating badge draws
+// nothing at all rather than a struck-through flame or a word.
+DashboardV3Package noStove8APackage() {
+  DashboardV3Package package = agenda8APackage();
+  package.heatingKnown = false;
+  return withAgendaDayTotals(package);
+}
+
+// The demonstration day with the stove forbidden: the same flame plus a strong
+// diagonal strike, and no text.
+DashboardV3Package noHeating8APackage() {
+  DashboardV3Package package = agenda8APackage();
+  package.heatingAllowed = false;
+  return withAgendaDayTotals(package);
+}
+
+// One, six and eleven appointments on a single day: the row counts the approval
+// named, so the zebra pattern and the band's fit can be inspected at each.
+DashboardV3Package appointmentCount8APackage(const size_t count) {
+  DashboardV3Package package{};
+  package.formatVersion = dashboard::v3::FORMAT_VERSION_DAY_TOTALS;
+  package.generatedAt = kAgenda8AGeneratedAt;
+  for (size_t index = 0; index < count; ++index) {
+    const std::string title = "AFSPRAAK " + std::to_string(index + 1);
+    package.agenda[index].dayOffset = 0;
+    package.agenda[index].minuteOfDay = static_cast<uint16_t>(9 * 60 + index * 30);
+    package.agenda[index].durationMinutes = 30;
+    setField(package.agenda[index].title, package.agenda[index].titleLength, title.c_str());
+  }
+  package.agendaCount = static_cast<uint8_t>(count);
+  return withAgendaDayTotals(package);
+}
+
+// The demonstration day with a full-width wire title in the focus row and in an
+// ordinary row: the longest thing those two boxes ever have to set.
+DashboardV3Package longTitle8APackage() {
+  DashboardV3Package package = agenda8APackage();
+  const char* const longTitle = "Kwartaalreview Fiberforce Nederl";
+  setField(package.agenda[0].title, package.agenda[0].titleLength, longTitle);  // the focus row
+  setField(package.agenda[1].title, package.agenda[1].titleLength, longTitle);  // Monday's first row
+  return withAgendaDayTotals(package);
+}
+
+// A double booking: two appointments starting at the same minute, both of which
+// must keep their own row and their own clock.
+DashboardV3Package sameStart8APackage() {
+  DashboardV3Package package{};
+  package.formatVersion = dashboard::v3::FORMAT_VERSION_DAY_TOTALS;
+  package.generatedAt = kAgenda8AGeneratedAt;
+  struct Fixture {
+    uint16_t minute;
+    uint16_t durationMinutes;
+    const char* title;
+  };
+  const Fixture rows[] = {{19 * 60, 60, "Eerste"}, {19 * 60, 30, "Tweede"}};
+  for (size_t index = 0; index < std::size(rows); ++index) {
+    package.agenda[index].dayOffset = 0;
+    package.agenda[index].minuteOfDay = rows[index].minute;
+    package.agenda[index].durationMinutes = rows[index].durationMinutes;
+    setField(package.agenda[index].title, package.agenda[index].titleLength, rows[index].title);
+  }
+  package.agendaCount = static_cast<uint8_t>(std::size(rows));
+  return withAgendaDayTotals(package);
+}
+
 // The wire maximums: longest labels and durations, biggest counts, and negative
 // changes at the edge of the signed bar's range.
 DashboardV3Package extreme8APackage() {
@@ -756,9 +821,10 @@ void report8AMarkets(const DashboardV3Package& package, const dashboard::preview
   std::printf("  8A markets   line used=%dpx available=%dpx -> %s\n", used, width, used <= width ? "fits" : "OVER");
 }
 
-// The rain band is one row: icon, outlook, strip, end clock, heating advice.
-// This mirrors renderRain8A's placement so the report shows the strip width the
-// panel actually gets and whether the outlook had to drop its leading clock.
+// The rain band is one row: icon, outlook, the window's start clock, strip, end
+// clock, and the single heating badge. This mirrors renderRain8A's placement so
+// the report shows the strip width the panel actually gets and whether the
+// outlook had to drop its leading clock.
 void report8ARain(const DashboardV3Package& package, const dashboard::preview::FontBook& fonts) {
   const dashboard::v3::Dashboard8ARects bands = dashboard::v3::computeDashboard8ALayout(528, 792, {});
   const dashboard::v3::Rect rect = bands.rain;
@@ -777,37 +843,46 @@ void report8ARain(const DashboardV3Package& package, const dashboard::preview::F
   char message[40];
   dashboard::v3::formatRainLine(package, message);
   const bool hasRainData = package.rainKnown && package.rainStartMinute != UINT16_MAX;
-  const char* const heating = !package.heatingKnown ? "VERWARMING -"
-                              : package.heatingAllowed ? "STOKEN KAN"
-                                                       : "NIET STOKEN";
 
-  const int heatingWidth = std::max(8, microWidth(heating));
-  const int heatingTextX = right - heatingWidth;
-  const int flameX = heatingTextX - kIconGap - kIcon;
+  // The heating badge reserves its 24 px slot whether or not the package carries
+  // a verdict, so the strip and the clocks keep one place from package to package.
+  const int heatingX = right - kIcon;
+  std::string startLabel;
   std::string endLabel;
+  int startLabelWidth = 0;
   int endLabelWidth = 0;
   if (hasRainData) {
+    startLabel = minuteString(package.rainStartMinute);
     endLabel = minuteString(static_cast<uint16_t>((package.rainStartMinute + kWindowMinutes) % 1440));
+    startLabelWidth = std::max(8, microWidth(startLabel));
     endLabelWidth = std::max(8, microWidth(endLabel));
   }
-  const int stripRight = flameX - kItemGap - endLabelWidth - kItemGap;
+  const int endTimeX = heatingX - kItemGap - endLabelWidth;
+  const int stripRight = endTimeX - kItemGap;
   const int messageX = left + kIcon + kIconGap;
-  const int messageBudget = std::max(0, stripRight - (hasRainData ? kStripMin + kItemGap : 0) - messageX);
+  const int clockSlot = hasRainData ? startLabelWidth + kItemGap : 0;
+  const int messageBudget = std::max(0, stripRight - kStripMin - kItemGap - clockSlot - messageX);
   const int messageWidth = std::max(8, microWidth(message));
   const std::string terse = std::strlen(message) > 6 && message[2] == ':' && message[5] == ' ' ? message + 6 : "";
   const bool useTerse = messageWidth > messageBudget && !terse.empty();
   const int drawnWidth = useTerse ? std::max(8, microWidth(terse)) : messageWidth;
-  const int stripWidth = hasRainData ? stripRight - (messageX + drawnWidth + kItemGap) : 0;
+  const int stripLeft = messageX + drawnWidth + kItemGap + clockSlot;
+  const int stripWidth = hasRainData ? stripRight - stripLeft : 0;
 
   std::printf("  8A rain      outlook=\"%s\"%s width=%3dpx budget=%3dpx -> %s\n", message,
               useTerse ? " (clock dropped)" : "", messageWidth, messageBudget,
               messageWidth <= messageBudget ? "fits" : "shortened");
   if (hasRainData) {
-    std::printf("  8A rain      end=%s width=%3dpx strip=%3dpx (min %dpx) -> %s\n", endLabel.c_str(), endLabelWidth,
-                stripWidth, kStripMin, stripWidth >= 8 ? "fits" : "OVER");
+    std::printf("  8A rain      window=%s..%s start=%3dpx end=%3dpx strip=%3dpx (min %dpx) -> %s\n", startLabel.c_str(),
+                endLabel.c_str(), startLabelWidth, endLabelWidth, stripWidth, kStripMin,
+                stripWidth >= 8 ? "fits" : "OVER");
   } else {
     std::printf("  8A rain      no forecast: outlook only, no strip\n");
   }
+  const char* const heating = !package.heatingKnown    ? "unknown: nothing drawn"
+                              : package.heatingAllowed ? "flame"
+                                                       : "flame struck through";
+  std::printf("  8A rain      heating badge=%s (one icon, no text)\n", heating);
 }
 
 void report8AMeasurements(const Scenario& scenario, const dashboard::preview::FontBook& fonts) {
@@ -881,6 +956,13 @@ int main(const int argc, char** argv) {
       {"agenda-8a", agenda8APackage(), kAgenda8AMinuteOfDay, true},
       {"agenda-8a-fill", agenda8AFillPackage(), kAgenda8AMinuteOfDay, true},
       {"agenda-8a-allday", agenda8AAllDayPackage(), kAgenda8AMinuteOfDay, true},
+      {"agenda-8a-one", appointmentCount8APackage(1), kAgenda8AMinuteOfDay, true},
+      {"agenda-8a-six", appointmentCount8APackage(6), kAgenda8AMinuteOfDay, true},
+      {"agenda-8a-eleven", appointmentCount8APackage(11), kAgenda8AMinuteOfDay, true},
+      {"agenda-8a-long-title", longTitle8APackage(), kAgenda8AMinuteOfDay, true},
+      {"agenda-8a-same-start", sameStart8APackage(), kAgenda8AMinuteOfDay, true},
+      {"agenda-8a-no-stove", noStove8APackage(), kAgenda8AMinuteOfDay, true},
+      {"agenda-8a-no-heating", noHeating8APackage(), kAgenda8AMinuteOfDay, true},
       {"empty-8a", empty8APackage(), kAgenda8AMinuteOfDay},
       {"missing-8a", missing8APackage(), kAgenda8AMinuteOfDay},
       {"no-movers-8a", noMovers8APackage(), kAgenda8AMinuteOfDay, true},

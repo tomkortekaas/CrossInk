@@ -39,19 +39,29 @@ TEST(DashboardV3Layout, InvalidInsetsProduceAnEmptyLayout) {
 TEST(DashboardV3Layout8A, ReferenceCanvasMatchesApprovedBandsAndColumns) {
   const auto layout = dashboard::v3::computeDashboard8ALayout(528, 792, {});
 
-  // The approved 528x792 mock-up tiles into six bands; quote takes the
-  // remainder so the bands always reach the bottom edge exactly.
+  // The readability refinement moves the rain band under the agenda: the six
+  // bands now run header, agenda, rain, KPI, markets, quote. The rain keeps its
+  // 40 px and sits directly between the agenda and the KPI band, and quote still
+  // takes the remainder so the bands always reach the bottom edge exactly.
   EXPECT_EQ(layout.header, (dashboard::v3::Rect{0, 0, 528, 62}));
-  EXPECT_EQ(layout.rain, (dashboard::v3::Rect{0, 62, 528, 40}));
-  // The standalone hero band is gone: the agenda starts right after the rain and
-  // absorbs the 58 px the hero used to occupy, so the old 102..160 band is only a
-  // zero-height marker at the seam and the KPI band keeps its 554 top.
-  EXPECT_EQ(layout.hero, (dashboard::v3::Rect{0, 102, 528, 0}));
+  EXPECT_EQ(layout.agenda, (dashboard::v3::Rect{0, 62, 528, 452}));
+  EXPECT_EQ(layout.rain, (dashboard::v3::Rect{0, 514, 528, 40}));
+  // The standalone hero band is gone: the agenda starts right under the header
+  // and absorbs the 58 px the hero used to occupy, so the old hero rect is only a
+  // zero-height marker at the agenda's top and the KPI band keeps its 554 top.
+  EXPECT_EQ(layout.hero, (dashboard::v3::Rect{0, 62, 528, 0}));
   EXPECT_EQ(layout.hero.height, 0) << "the hero consumes no band of its own";
-  EXPECT_EQ(layout.agenda, (dashboard::v3::Rect{0, 102, 528, 452}));
   EXPECT_EQ(layout.kpi, (dashboard::v3::Rect{0, 554, 528, 140}));
   EXPECT_EQ(layout.markets, (dashboard::v3::Rect{0, 694, 528, 34}));
   EXPECT_EQ(layout.quote, (dashboard::v3::Rect{0, 728, 528, 64}));
+
+  // The bands tile without a seam or an overlap, in that order.
+  EXPECT_EQ(layout.agenda.y, layout.header.y + layout.header.height);
+  EXPECT_EQ(layout.rain.y, layout.agenda.y + layout.agenda.height);
+  EXPECT_EQ(layout.rain.y + layout.rain.height, layout.kpi.y);
+  EXPECT_EQ(layout.kpi.y + layout.kpi.height, layout.markets.y);
+  EXPECT_EQ(layout.markets.y + layout.markets.height, layout.quote.y);
+  EXPECT_EQ(layout.quote.y + layout.quote.height, 792);
 
   EXPECT_EQ(layout.kpiLeft, (dashboard::v3::Rect{0, 554, 264, 140}));
   EXPECT_EQ(layout.kpiRight, (dashboard::v3::Rect{264, 554, 264, 140}));
@@ -72,18 +82,19 @@ TEST(DashboardV3Layout8A, SafeInsetsKeepEveryBandInsideTheUsableCanvas) {
 
   // The usable height shrinks from 792 to 768, so each scaled band height
   // below is 768 * reference / 792 (integer division) and quote absorbs the rest.
-  EXPECT_EQ(layout.rain.y, layout.header.y + layout.header.height);
-  EXPECT_EQ(layout.hero.y, layout.rain.y + layout.rain.height);
+  EXPECT_EQ(layout.agenda.y, layout.header.y + layout.header.height);
+  EXPECT_EQ(layout.hero.y, layout.agenda.y);
   EXPECT_EQ(layout.hero.height, 0);
-  EXPECT_EQ(layout.agenda.y, layout.rain.y + layout.rain.height);
-  EXPECT_EQ(layout.agenda.y, layout.hero.y + layout.hero.height);
-  EXPECT_EQ(layout.kpi.y, layout.agenda.y + layout.agenda.height);
+  EXPECT_EQ(layout.rain.y, layout.agenda.y + layout.agenda.height);
+  EXPECT_EQ(layout.kpi.y, layout.rain.y + layout.rain.height);
   EXPECT_EQ(layout.markets.y, layout.kpi.y + layout.kpi.height);
   EXPECT_EQ(layout.quote.y, layout.markets.y + layout.markets.height);
   EXPECT_EQ(layout.quote.y + layout.quote.height, 783);
 
-  // 768 * 452 / 792 = 438: the agenda grows by the 58 px hero band's share.
+  // 768 * 452 / 792 = 438: the agenda still carries the 58 px hero row's share,
+  // and the rain it moved past keeps its own scaled 38 px.
   EXPECT_EQ(layout.agenda.height, 438);
+  EXPECT_EQ(layout.rain.height, 38);
   EXPECT_EQ(layout.kpiLeft.width + layout.kpiRight.width, 510);
   EXPECT_EQ(layout.kpiLeft.width, layout.kpiRight.width);
 }
@@ -118,19 +129,23 @@ TEST(DashboardV3Layout8A, AgendaGeometryMatchesReference) {
   const auto agenda = dashboard::v3::computeAgenda8ALayout(528, 792, {});
   const auto bands = dashboard::v3::computeDashboard8ALayout(528, 792, {});
 
-  // agenda is {0,102,528,452}, so content is inset 14 horizontally and 8 vertically.
-  EXPECT_EQ(agenda.content, (dashboard::v3::Rect{14, 110, 500, 436}));
+  // agenda is {0,62,528,452}, so content is inset 14 horizontally and 8 vertically.
+  EXPECT_EQ(agenda.content, (dashboard::v3::Rect{14, 70, 500, 436}));
   // The band itself is carried too, so the day transition bar can span it.
   EXPECT_EQ(agenda.band, bands.agenda);
-  EXPECT_EQ(agenda.band.y, 102);
-  EXPECT_EQ(agenda.band.y + agenda.band.height, 554) << "the agenda ends at the unchanged KPI top";
+  EXPECT_EQ(agenda.band.y, 62);
+  EXPECT_EQ(agenda.band.y + agenda.band.height, 514) << "the agenda ends where the rain band starts";
   // The content box sits 8 px above the agenda band's bottom edge.
   EXPECT_EQ(agenda.content.y + agenda.content.height + 8, bands.agenda.y + bands.agenda.height);
 
-  EXPECT_GT(agenda.ruleX, agenda.content.x + agenda.timeColumnWidth);
-  EXPECT_LT(agenda.ruleX, agenda.titleX);
-  EXPECT_GT(agenda.titleX - agenda.content.x, agenda.timeColumnWidth);
+  // The time column is right-aligned and the title starts on one fixed x for
+  // every row; the gap between them is wider than the ruler it replaced, and
+  // there is no ruler anchor left in the layout at all.
+  EXPECT_EQ(agenda.timeColumnWidth, 52);
+  EXPECT_GT(agenda.titleX - (agenda.content.x + agenda.timeColumnWidth), 10)
+      << "the refinement opens the time/title gap rather than shrinking it";
   EXPECT_GT(agenda.durationWidth, 0);
+  EXPECT_EQ(agenda.durationWidth, 56);
   EXPECT_EQ(agenda.ribbonStartMinute, 420);
   EXPECT_EQ(agenda.ribbonEndMinute, 1380);
   // The first day group draws row 0 as the 58 px focus row, so the layout has to
@@ -194,10 +209,10 @@ TEST(DashboardV3Layout8A, HalfScaleCanvasStillTilesAndKeepsMetricsDrawable) {
 
   // 264x396 is exactly half of the reference canvas, so the bands scale in half
   // and the quote band still absorbs the remainder to reach the bottom edge.
-  EXPECT_EQ(layout.rain.y, layout.header.y + layout.header.height);
-  EXPECT_EQ(layout.hero.y, layout.rain.y + layout.rain.height);
-  EXPECT_EQ(layout.agenda.y, layout.hero.y + layout.hero.height);
-  EXPECT_EQ(layout.kpi.y, layout.agenda.y + layout.agenda.height);
+  EXPECT_EQ(layout.agenda.y, layout.header.y + layout.header.height);
+  EXPECT_EQ(layout.hero.y, layout.agenda.y);
+  EXPECT_EQ(layout.rain.y, layout.agenda.y + layout.agenda.height);
+  EXPECT_EQ(layout.kpi.y, layout.rain.y + layout.rain.height);
   EXPECT_EQ(layout.markets.y, layout.kpi.y + layout.kpi.height);
   EXPECT_EQ(layout.quote.y, layout.markets.y + layout.markets.height);
   EXPECT_EQ(layout.quote.y + layout.quote.height, 396);
