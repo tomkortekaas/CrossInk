@@ -2764,7 +2764,14 @@ static constexpr EpdFontData lexenddeca_9_bolditalic = {
     nullptr,
     lexenddeca_9_bolditalicKernLeftClasses,
     lexenddeca_9_bolditalicKernRightClasses,
+    nullptr,  // kernLeftCodepoints: legacy dense class map
+    nullptr,  // kernLeftClassIds
+    nullptr,  // kernRightCodepoints: legacy dense class map
+    nullptr,  // kernRightClassIds
     lexenddeca_9_bolditalicKernMatrix,
+    nullptr,  // kernRowOffsets: legacy dense matrix
+    nullptr,  // kernSparseCols
+    nullptr,  // kernSparseValues
     413,
     415,
     95,

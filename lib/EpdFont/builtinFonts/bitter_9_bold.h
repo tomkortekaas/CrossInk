@@ -3855,7 +3855,14 @@ static constexpr EpdFontData bitter_9_bold = {
     nullptr,
     bitter_9_boldKernLeftClasses,
     bitter_9_boldKernRightClasses,
+    nullptr,  // kernLeftCodepoints: legacy dense class map
+    nullptr,  // kernLeftClassIds
+    nullptr,  // kernRightCodepoints: legacy dense class map
+    nullptr,  // kernRightClassIds
     bitter_9_boldKernMatrix,
+    nullptr,  // kernRowOffsets: legacy dense matrix
+    nullptr,  // kernSparseCols
+    nullptr,  // kernSparseValues
     707,
     703,
     140,

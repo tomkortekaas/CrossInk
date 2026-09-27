@@ -2981,7 +2981,14 @@ static constexpr EpdFontData lexenddeca_9_regular = {
     nullptr,
     lexenddeca_9_regularKernLeftClasses,
     lexenddeca_9_regularKernRightClasses,
+    nullptr,  // kernLeftCodepoints: legacy dense class map
+    nullptr,  // kernLeftClassIds
+    nullptr,  // kernRightCodepoints: legacy dense class map
+    nullptr,  // kernRightClassIds
     lexenddeca_9_regularKernMatrix,
+    nullptr,  // kernRowOffsets: legacy dense matrix
+    nullptr,  // kernSparseCols
+    nullptr,  // kernSparseValues
     418,
     417,
     96,
