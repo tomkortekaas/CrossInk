@@ -122,7 +122,7 @@ system Python.
 
 ## X3 source identity (verified 2026-10-05)
 
-- `X3-actueel/firmware` still points at the old dashboard-v3-firmware checkout; do not infer the installed version from that alias.
+- `X3-actueel/firmware` was corrected on 2026-10-05 to CrossInk-library-x3-current. Check it against X3-actueel/deployment-state.json; do not infer installation identity from a map name.
 - The pre-Library device image exactly matched the full v1.6.0 candidate, source af65f5dd, SDK a9ab1ccd. Older version text was stale.
 - Current verified Library checkout: CrossInk-library-x3-current, branch feat/x3-current-library-v1.6.1; SDK commit 8480abf95121be45ca280d7330237237582fbb04 on tomkortekaas/freeink-sdk.
 - Check deployment source/artifact hashes before selecting a base. For hardware flashing, check fresh OTA metadata and candidate hash, preserve other partitions, and verify readback. See docs/library-v1.6.1/build-selection-investigation.md.

@@ -217,3 +217,7 @@ When new features are added or issues are fixed, make sure to add an entry to `C
 - Removed - for now removed features.
 - Fixed - for any bug fixes.
 - Security - in case of vulnerabilities.
+
+## Personal X3 version management
+
+Before selecting a source base or finishing commit/build/deployment work on Tom's X3, read `tools/version-management/SKILL.md` and run its state check against `/Volumes/2TB/Development/Projects/X3-actueel/deployment-state.json`. Keep built, pushed and installed states distinct. After verified installation, update the deployment registration and active symlink, then rerun the check. Preserve the previous target and historical sources.
