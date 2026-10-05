@@ -339,7 +339,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LYRA_CAROUSEL = 4,
     MINIMAL = 5,
     DASHBOARD = 6,
-    UI_THEME_COUNT = 7
+    COVER_GRID = 7,
+    UI_THEME_COUNT = 8
   };
   enum RECENT_BOOKS_VIEW { RECENT_BOOKS_LIST = 0, RECENT_BOOKS_GRID = 1, RECENT_BOOKS_VIEW_COUNT };
 
@@ -556,7 +557,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // UI Theme
   uint8_t uiTheme = LYRA;
   // Recent Books screen layout
-  uint8_t recentBooksView = RECENT_BOOKS_LIST;
+  uint8_t swapLibraryFileBrowser = 1;
+  bool supportsLibraryFileBrowserSwap() const { return uiTheme == MINIMAL || uiTheme == DASHBOARD; }
+  bool isLibraryFileBrowserSwapped() const { return supportsLibraryFileBrowserSwap() && swapLibraryFileBrowser; }
+  uint8_t recentBooksView = RECENT_BOOKS_GRID;
   // UI scale (list fonts + row heights); touch boards default one step larger
   uint8_t uiScale = defaultUiScale();
   // Sunlight fading compensation
@@ -581,6 +585,19 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t dictionaryFontPointSize = 0;
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
+  // Prefer embedded EPUB titles/authors in Library; disable for filename-only scans.
+  uint8_t libraryUseMetadata = 1;
+  uint8_t librarySortMethod = 1;
+  uint8_t librarySortDescending = 1;
+  uint8_t libraryListExpanded = 1;
+  uint8_t libraryShowSeries = 1;
+  uint8_t libraryShowGenre = 1;
+  uint8_t libraryShowEpub = 1;
+  uint8_t libraryShowXtc = 1;
+  uint8_t libraryShowTxt = 1;
+  uint8_t libraryShowMarkdown = 1;
+  uint8_t libraryHideFinishedBooks = 0;
+
   // Hide file extensions in the file browser right-side value column (0 = show, 1 = hide)
   uint8_t hideFileExtension = 0;
   // File browser display row style (0 = one-line theme list, 1 = two-line compact display)

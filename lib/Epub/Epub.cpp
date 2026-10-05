@@ -551,7 +551,7 @@ bool Epub::findContentOpfFile(std::string* contentOpfFile) const {
 }
 
 bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const bool writeSpineEntries,
-                           const bool collectCssFiles) {
+                           const bool collectCssFiles, const bool metadataOnly, std::string* seriesIndex) {
   std::string contentOpfFilePath;
   if (!findContentOpfFile(&contentOpfFilePath)) {
     LOG_ERR("EBP", "Could not find content.opf in zip");
@@ -567,7 +567,7 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   }
 
   ContentOpfParser opfParser(getCachePath(), getBasePath(), contentOpfSize,
-                             writeSpineEntries ? bookMetadataCache.get() : nullptr, collectCssFiles);
+                             writeSpineEntries ? bookMetadataCache.get() : nullptr, collectCssFiles, metadataOnly);
   if (!opfParser.setup()) {
     LOG_ERR("EBP", "Could not setup content.opf parser");
     if (opfParser.failedForLowMemory()) {
@@ -576,7 +576,7 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
     return false;
   }
 
-  if (!readItemContentsToStream(contentOpfFilePath, opfParser, 1024)) {
+  if (!readItemContentsToStream(contentOpfFilePath, opfParser, 1024, metadataOnly)) {
     LOG_ERR("EBP", "Could not read content.opf");
     if (opfParser.failedForLowMemory()) {
       lastLoadFailure = OpenFailure::OutOfMemory;
@@ -589,6 +589,10 @@ bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const 
   bookMetadata.title = utf8ComposeNfc(opfParser.title);
   bookMetadata.author = opfParser.author;
   bookMetadata.language = opfParser.language;
+  bookMetadata.series = utf8ComposeNfc(opfParser.series);
+  bookMetadata.subject = utf8ComposeNfc(opfParser.subject);
+  if (seriesIndex) *seriesIndex = std::move(opfParser.seriesIndex);
+  if (metadataOnly) return true;
   bookMetadata.coverItemHref = opfParser.coverItemHref;
 
   // Guide-based cover fallback: if no cover found via metadata/properties,
@@ -1095,6 +1099,42 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss, const XLoc
   }
 
   lastLoadFailure = OpenFailure::None;
+  return true;
+}
+
+bool Epub::loadMetadata(std::string& title, std::string& author, const bool allowCachedMetadata, std::string* series,
+                        std::string* genre, std::string* seriesIndex) {
+  title.clear();
+  author.clear();
+  if (series) series->clear();
+  if (genre) genre->clear();
+  if (seriesIndex) seriesIndex->clear();
+
+  // The reader cache holds title and author but not the Library's series and
+  // genre fields. Reuse it for callers that need only title/author; the Library
+  // parses OPF metadata once and then keeps the extra fields in its own index.
+  // This LOCAL reader does not alter the full load()/spine cache lifecycle.
+  if (allowCachedMetadata && !series && !genre && !seriesIndex) {
+    auto metadataCache = makeUniqueNoThrow<BookMetadataCache>(cachePath);
+    if (metadataCache && metadataCache->load()) {
+      title = metadataCache->coreMetadata.title;
+      author = metadataCache->coreMetadata.author;
+      return true;
+    }
+    if (!metadataCache) {
+      LOG_ERR("EBP", "Could not allocate metadata cache reader");
+    }
+  }
+
+  BookMetadataCache::BookMetadata metadata;
+  const bool loaded = parseContentOpf(metadata, /*writeSpineEntries=*/false, /*collectCssFiles=*/false,
+                                      /*metadataOnly=*/true, seriesIndex);
+  if (!loaded) return false;
+
+  title = std::move(metadata.title);
+  author = std::move(metadata.author);
+  if (series) *series = std::move(metadata.series);
+  if (genre) *genre = std::move(metadata.subject);
   return true;
 }
 

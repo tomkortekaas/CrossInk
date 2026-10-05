@@ -564,7 +564,7 @@ inline SettingInfo buildHomeButtonActionSetting(const StrId nameId, uint8_t Cros
 // ref), so none of them depend on the entries outliving the call. The rebuild
 // is ~102 push_backs on paths a user triggers by hand: loading or saving
 // settings, opening the settings screen, serving the web settings page.
-inline constexpr size_t BASE_SETTINGS_CAPACITY = 102;  // 100 regular entries plus two optional tilt entries.
+inline constexpr size_t BASE_SETTINGS_CAPACITY = 104;  // 102 regular entries plus two optional tilt entries.
 
 inline std::vector<SettingInfo> getBaseSettingsList() {
   const auto build = [] {
@@ -603,13 +603,13 @@ inline std::vector<SettingInfo> getBaseSettingsList() {
     add(SettingInfo::Enum(
             StrId::STR_UI_THEME, &CrossPointSettings::uiTheme,
             {StrId::STR_THEME_CLASSIC, StrId::STR_THEME_MINIMAL, StrId::STR_THEME_DASHBOARD, StrId::STR_THEME_LYRA,
-             StrId::STR_THEME_LYRA_EXTENDED, StrId::STR_THEME_LYRA_CAROUSEL, StrId::STR_THEME_ROUNDEDRAFF},
+             StrId::STR_THEME_LYRA_EXTENDED, StrId::STR_THEME_LYRA_CAROUSEL, StrId::STR_THEME_ROUNDEDRAFF, StrId::STR_THEME_COVER_GRID},
             "uiTheme", StrId::STR_CAT_DISPLAY)
             .withEnumRawValues({CrossPointSettings::UI_THEME::CLASSIC, CrossPointSettings::UI_THEME::MINIMAL,
                                 CrossPointSettings::UI_THEME::DASHBOARD, CrossPointSettings::UI_THEME::LYRA,
                                 CrossPointSettings::UI_THEME::LYRA_3_COVERS,
                                 CrossPointSettings::UI_THEME::LYRA_CAROUSEL,
-                                CrossPointSettings::UI_THEME::ROUNDEDRAFF}));
+                                CrossPointSettings::UI_THEME::ROUNDEDRAFF, CrossPointSettings::UI_THEME::COVER_GRID}));
     add(SettingInfo::Enum(StrId::STR_UI_SCALE, &CrossPointSettings::uiScale, {StrId::STR_SMALL, StrId::STR_LARGE},
                           "uiScale", StrId::STR_CAT_DISPLAY)
             .withEnumRawValues({CrossPointSettings::UI_SCALE_SMALL, CrossPointSettings::UI_SCALE_LARGE}));
@@ -629,6 +629,13 @@ inline std::vector<SettingInfo> getBaseSettingsList() {
     add(SettingInfo::Value16(StrId::STR_END, &CrossPointSettings::frontlightScheduleEnd,
                              {0, FrontlightSchedule::kUnsetTimeOfDay, 1}, "frontlightScheduleEnd",
                              StrId::STR_CAT_DISPLAY));
+
+
+
+    add(SettingInfo::Toggle(StrId::STR_SWAP_LIBRARY_FILE_BROWSER, &CrossPointSettings::swapLibraryFileBrowser,
+                            "swapLibraryFileBrowser", StrId::STR_CAT_DISPLAY));
+    add(SettingInfo::Toggle(StrId::STR_LIBRARY_USE_METADATA, &CrossPointSettings::libraryUseMetadata,
+                            "libraryUseMetadata", StrId::STR_CAT_DISPLAY));
 
     // --- Reader ---
     // Built-in font-family entry. Replaced per-call with a registry-aware

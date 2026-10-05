@@ -22,7 +22,6 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
  private:
   std::vector<RecentBook> recentBooks;
 
-  static constexpr int MAX_RECENT_BOOKS = 18;
 
   RecentBooksStore() = default;
   ~RecentBooksStore() = default;
@@ -31,6 +30,7 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   friend class PersistableStore<RecentBooksStore>;
 
  public:
+  static constexpr int MAX_RECENT_BOOKS = 18;
   static const char* getFilePath() { return "/.crosspoint/recent.json"; }
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);

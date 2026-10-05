@@ -281,11 +281,20 @@ class OptionPopup {
     GUI.drawOptionPopup(renderer, title.c_str(), ownedStrings, selectedIndex, confirmationMode, tr(STR_CANCEL),
                         tr(STR_SAVE), footerFocused, primaryOptionIndex, popupNote.boldLabel, popupNote.body,
                         disabledOptions, renderLayout.firstOptionIndex);
+    const int dividerRow = dividerAfterOption - renderLayout.firstOptionIndex;
+    if (dividerRow >= 0 && dividerRow + 1 < static_cast<int>(renderLayout.options.size())) {
+      const auto& row = renderLayout.options[dividerRow];
+      const auto& next = renderLayout.options[dividerRow + 1];
+      renderer.drawLine(row.x, (row.y + row.height + next.y) / 2, row.x + row.width, (row.y + row.height + next.y) / 2);
+    }
   }
+
+  void setDividerAfterOption(int index) { dividerAfterOption = index; }
 
   bool isActive() const { return active; }
 
  private:
+  int dividerAfterOption = -1;
   struct Layout {
     Rect dialog{0, 0, 0, 0};
     std::vector<Rect> options;

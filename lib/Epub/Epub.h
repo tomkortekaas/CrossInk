@@ -100,7 +100,7 @@ class Epub {
   void migrateLegacyCachePath(const std::string& cacheDir) const;
   bool findContentOpfFile(std::string* contentOpfFile) const;
   bool parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, bool writeSpineEntries = true,
-                       bool collectCssFiles = true);
+                       bool collectCssFiles = true, bool metadataOnly = false, std::string* seriesIndex = nullptr);
   bool parseTocNcxFile() const;
   bool parseTocNavFile() const;
   CssParseStatus parseCssFiles(bool forceRebuild = false) const;
@@ -126,6 +126,8 @@ class Epub {
   // Failure leaves normal size-based progress available.
   bool loadXLocations();
   OpenFailure getLastLoadFailure() const { return lastLoadFailure; }
+  bool loadMetadata(std::string& title, std::string& author, bool allowCachedMetadata = true,
+                    std::string* series = nullptr, std::string* genre = nullptr, std::string* seriesIndex = nullptr);
   bool clearCache() const;
   void setupCacheDir() const;
   const std::string& getCachePath() const;

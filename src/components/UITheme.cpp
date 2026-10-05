@@ -65,6 +65,8 @@ void UITheme::reload() {
   setTheme(themeType);
 }
 
+bool UITheme::hasCoverGridHome() { return SETTINGS.uiTheme == CrossPointSettings::UI_THEME::COVER_GRID; }
+
 void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
   switch (type) {
     case CrossPointSettings::UI_THEME::CLASSIC:
@@ -72,6 +74,7 @@ void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
       currentTheme = std::make_unique<BaseTheme>();
       currentMetrics = &BaseMetrics::values;
       break;
+    case CrossPointSettings::UI_THEME::COVER_GRID:
     case CrossPointSettings::UI_THEME::LYRA:
       LOG_DBG("UI", "Using Lyra theme");
       currentTheme = std::make_unique<LyraTheme>();

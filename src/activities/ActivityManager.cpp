@@ -25,6 +25,8 @@
 #include "home/FileBrowserActivity.h"
 #include "home/HomeActivity.h"
 #include "home/RecentBookProgress.h"
+#include <Memory.h>
+#include "library/LibraryActivity.h"
 #include "home/RecentBooksActivity.h"
 #include "home/RecentBooksGridActivity.h"
 #include "network/CrossPointWebServerActivity.h"
@@ -701,12 +703,12 @@ void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));
 }
 
-void ActivityManager::goToRecentBooks() {
-  if (SETTINGS.recentBooksView == CrossPointSettings::RECENT_BOOKS_GRID) {
-    replaceActivity(std::make_unique<RecentBooksGridActivity>(renderer, mappedInput));
-  } else {
-    replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
-  }
+void ActivityManager::goToRecentBooks() { goToLibrary(); }
+
+void ActivityManager::goToLibrary() {
+  auto library = makeUniqueNoThrow<LibraryActivity>(renderer, mappedInput);
+  if (!library) { LOG_ERR("ACT", "OOM opening Library"); return; }
+  replaceActivity(std::move(library));
 }
 
 void ActivityManager::goToBrowser() {
@@ -789,7 +791,7 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, const HalDisplay::Ref
     const auto& activityName = currentActivity->name;
     if (activityName == "FileBrowser") {
       initialMenuItem = HomeMenuItem::FILE_BROWSER;
-    } else if (activityName == "RecentBooks") {
+    } else if ((activityName == "RecentBooks" || activityName == "Library")) {
       initialMenuItem = HomeMenuItem::RECENTS;
     } else if (activityName == "OpdsBookBrowser") {
       initialMenuItem = HomeMenuItem::OPDS_BROWSER;
@@ -1017,15 +1019,12 @@ RequestUpdateResult ActivityManager::requestUpdateAndWait() {
 
 // RenderLock
 
-RenderLock::RenderLock() {
-  xSemaphoreTake(activityManager.renderingMutex, portMAX_DELAY);
-  isLocked = true;
+RenderLock::RenderLock(const Mode mode) {
+  isLocked = xSemaphoreTake(activityManager.renderingMutex, mode == Mode::Try ? 0 : portMAX_DELAY) == pdTRUE;
+  assert(mode == Mode::Try || isLocked);
 }
 
-RenderLock::RenderLock([[maybe_unused]] Activity&) {
-  xSemaphoreTake(activityManager.renderingMutex, portMAX_DELAY);
-  isLocked = true;
-}
+RenderLock::RenderLock([[maybe_unused]] Activity&, const Mode mode) : RenderLock(mode) {}
 
 RenderLock::~RenderLock() {
   if (isLocked) {

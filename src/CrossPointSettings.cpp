@@ -461,6 +461,18 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
     }
   }
 
+  // Library-local choices stay out of the resident settings catalog and Web Settings.
+  doc["librarySortMethod"] = librarySortMethod;
+  doc["librarySortDescending"] = librarySortDescending;
+  doc["libraryListExpanded"] = libraryListExpanded;
+  doc["libraryShowSeries"] = libraryShowSeries;
+  doc["libraryShowGenre"] = libraryShowGenre;
+  doc["libraryShowEpub"] = libraryShowEpub;
+  doc["libraryShowXtc"] = libraryShowXtc;
+  doc["libraryShowTxt"] = libraryShowTxt;
+  doc["libraryShowMarkdown"] = libraryShowMarkdown;
+  doc["libraryHideFinishedBooks"] = libraryHideFinishedBooks;
+
   doc["frontButtonBack"] = frontButtonBack;
   doc["frontButtonConfirm"] = frontButtonConfirm;
   doc["frontButtonLeft"] = frontButtonLeft;
@@ -697,6 +709,25 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc, bool importingCrossPoint
     sleepTimeoutMinutes = sleepTimeoutEnumToMinutes(legacyValue);
     needsResave = true;
   }
+
+  const auto readLibraryChoice = [&](const char* key, uint8_t& choice, const int optionCount) {
+    const int stored = doc[key] | static_cast<int>(choice);
+    if (stored < 0 || stored >= optionCount) {
+      needsResave = true;
+      return;
+    }
+    choice = static_cast<uint8_t>(stored);
+  };
+  readLibraryChoice("librarySortMethod", librarySortMethod, 7);
+  readLibraryChoice("librarySortDescending", librarySortDescending, 2);
+  readLibraryChoice("libraryListExpanded", libraryListExpanded, 2);
+  readLibraryChoice("libraryShowSeries", libraryShowSeries, 2);
+  readLibraryChoice("libraryShowGenre", libraryShowGenre, 2);
+  readLibraryChoice("libraryShowEpub", libraryShowEpub, 2);
+  readLibraryChoice("libraryShowXtc", libraryShowXtc, 2);
+  readLibraryChoice("libraryShowTxt", libraryShowTxt, 2);
+  readLibraryChoice("libraryShowMarkdown", libraryShowMarkdown, 2);
+  readLibraryChoice("libraryHideFinishedBooks", libraryHideFinishedBooks, 2);
 
   frontButtonBack =
       clamp(doc["frontButtonBack"] | static_cast<uint8_t>(FRONT_HW_BACK), FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_BACK);
