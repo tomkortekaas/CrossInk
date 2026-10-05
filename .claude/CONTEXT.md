@@ -119,3 +119,10 @@ system Python.
 
 - Build `dashboard-x3` for Tom's device, not `default`: the installed firmware uses the in-process BLE receiver plus standby dashboard refresh. Confirmed from the full flash backup on 2026-08-31. `default` can compile successfully while omitting these features.
 - Inspect actual OTA metadata before a direct serial app write; that backup booted app1 at `0x650000`, not app0 at `0x10000`. Preserve bootloader/partition table/NVS/OTA metadata/filesystem and retain a full backup. Opening USB serial can reboot this X3, so do not use serial polling to inspect interactive settings.
+
+## X3 source identity (verified 2026-10-05)
+
+- `X3-actueel/firmware` still points at the old dashboard-v3-firmware checkout; do not infer the installed version from that alias.
+- The pre-Library device image exactly matched the full v1.6.0 candidate, source af65f5dd, SDK a9ab1ccd. Older version text was stale.
+- Current verified Library checkout: CrossInk-library-x3-current, branch feat/x3-current-library-v1.6.1; SDK commit 8480abf95121be45ca280d7330237237582fbb04 on tomkortekaas/freeink-sdk.
+- Check deployment source/artifact hashes before selecting a base. For hardware flashing, check fresh OTA metadata and candidate hash, preserve other partitions, and verify readback. See docs/library-v1.6.1/build-selection-investigation.md.

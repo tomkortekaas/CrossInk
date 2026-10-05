@@ -1,0 +1,17 @@
+{
+  "installed_base": "CrossInk v1.6.0 candidate",
+  "installed_image_sha256": "e80e89abc3f7be4d459f9c069bb20328e180ce65ffa932a2044314b2de78f30f",
+  "installed_source": "af65f5ddcd6fd2d40c4c32e67965ecba0ad75a9f",
+  "checkout_base": "0e42b1af8ce6deb666f77ab35b92fc73c7eeec71",
+  "sdk_base": "a9ab1ccd61b52984413c05543873f37651dd8835",
+  "sdk_new": "8480abf95121be45ca280d7330237237582fbb04",
+  "candidate_bytes": 6240928,
+  "candidate_sha256": "fcdc51bb229107d51b9d4afa32ccdb42646930d73631d413013621f9e9911444",
+  "flash_offset": "0x10000",
+  "backup": "/Volumes/2TB/x3-flash-backups/2026-10-05-library/preflash-full.bin",
+  "new_source": "c41464654d020a9d4692d1eec09bc64dc69669c0",
+  "normal_build": {
+    "bytes": 6323152,
+    "ota_free_bytes": 230448
+  }
+}
