@@ -1,6 +1,7 @@
 #ifdef SIMULATOR
 
 #include "SimulatorSmokeTest.h"
+#include "SimulatorLibraryTest.h"
 
 #include <HalStorage.h>
 #include <Logging.h>
@@ -374,7 +375,12 @@ class SimulatorSmokeTest {
         verifyUpDownShortcutAvailability();
         verifyReaderControlsSettings();
         verifyMixedPageGestures();
-        applyRequestedTheme();
+        // Theme storage is read by the render task; follow SettingsActivity's
+        // locking contract when the smoke harness switches it during boot.
+        {
+          RenderLock lock;
+          applyRequestedTheme();
+        }
         activityManager.goHome();
         queueStep("Home", SmokeStep::Home);
         break;
@@ -931,6 +937,8 @@ SimulatorSmokeTest smokeTest;
 
 }  // namespace
 
-void runSimulatorSmokeTestTick() { smokeTest.tick(); }
+void runSimulatorSmokeTestTick() {
+  if (!runSimulatorLibraryTestTick()) smokeTest.tick();
+}
 
 #endif

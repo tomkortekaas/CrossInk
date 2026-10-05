@@ -18,5 +18,6 @@ class GfxRenderer {
     if (maxLines <= 0 || text == nullptr || text[0] == '\0') return {};
     return {text};
   }
+  void drawLine(int, int, int, int) const {}
   void displayBuffer() const {}
 };

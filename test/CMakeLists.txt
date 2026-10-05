@@ -101,3 +101,12 @@ add_subdirectory(koreader_xpath_resolver)
 add_subdirectory(fs_helpers)
 add_subdirectory(persistable_store_atomic)
 add_subdirectory(book_reading_stats_atomic)
+
+add_subdirectory(library_builder)
+add_subdirectory(library_format)
+add_subdirectory(library_index_file)
+add_subdirectory(library_input_buffer)
+add_subdirectory(library_recent_order)
+add_subdirectory(library_text)
+
+add_subdirectory(content_opf_parser)
