@@ -2,6 +2,11 @@
 
 ### Added
 
+- Port v1.6.1 Library and Cover Grid onto the verified installed v1.6.0 X3
+  candidate, preserving current dashboard readability, battery/wake behavior,
+  BLE, navigation, reader features and SD shutdown.
+
+
 - The dashboard's approved new design reaches the panel. Packages the phone
   composes in the newer format are drawn the way the mock-up was drawn: a
   compact header with the date, the day's range and the moment the card was
