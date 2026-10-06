@@ -10,3 +10,7 @@ endfunction()
 add_library_test(LibraryGridLayoutTest
   LibraryGridLayoutTest.cpp
   ${REPO_ROOT}/src/activities/library/LibraryGridLayout.cpp)
+
+add_library_test(LibrarySortTest
+  LibrarySortTest.cpp
+  ${REPO_ROOT}/src/activities/library/LibrarySort.cpp)
