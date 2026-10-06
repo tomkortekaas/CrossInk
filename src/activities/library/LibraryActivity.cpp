@@ -94,6 +94,19 @@ void drawCheckMark(const GfxRenderer& renderer, const int x, const int y, const 
   renderer.drawLine(x + size / 3, y + size, x + size, y, 2, true);
 }
 
+// Persistent "this book has no decodable cover" marker, kept next to the sized
+// thumbnail so the existing delete-cache action removes it with the rest of the
+// book's cache directory.
+bool hasNoCoverMarker(const std::string& thumbPath) {
+  return !thumbPath.empty() && Storage.exists((thumbPath + ".nocover").c_str());
+}
+
+void writeNoCoverMarker(const std::string& thumbPath) {
+  if (thumbPath.empty()) return;
+  FsFile marker;
+  if (Storage.openFileForWrite("LIB", thumbPath + ".nocover", marker)) marker.close();
+}
+
 int headerControlRightInset() {
   const auto& metrics = UITheme::getInstance().getMetrics();
   // Inline battery themes need a separate lane for the options button.
@@ -1338,7 +1351,7 @@ void LibraryActivity::buildGrid(UiApp::ScreenType& screen) {
       const RecentBook* recent = recentBookForPath(rowScratch.path);
       if (!recent || recent->coverState != RecentBook::CoverState::Missing) {
         const std::string path = gridCoverPath(rowScratch, coverWidth, coverHeight);
-        if (!path.empty() && Storage.exists(path.c_str())) {
+        if (!path.empty() && !hasNoCoverMarker(path) && Storage.exists(path.c_str())) {
           FsFile file;
           if (Storage.openFileForRead("LIB", path, file)) {
             Bitmap bitmap(file);
@@ -1350,9 +1363,10 @@ void LibraryActivity::buildGrid(UiApp::ScreenType& screen) {
       }
     }
     if (!drawn) {
-      renderer.fillRoundedRect(x, y, coverWidth, coverHeight, GRID_COVER_CORNER_RADIUS, Color::White);
-      if (coverWidth >= 36 && coverHeight >= 36)
-        drawLucideIcon(renderer, icon_book_marked_32, x + (coverWidth - 32) / 2, y + (coverHeight - 32) / 2);
+      if (available)
+        drawTextCover(rowScratch, x, y, coverWidth, coverHeight);
+      else
+        renderer.fillRoundedRect(x, y, coverWidth, coverHeight, GRID_COVER_CORNER_RADIUS, Color::White);
     }
     renderer.maskRoundedRectOutsideCorners(x, y, coverWidth, coverHeight, GRID_COVER_CORNER_RADIUS, Color::White);
     renderer.drawRoundedRect(x, y, coverWidth, coverHeight, 2, GRID_COVER_CORNER_RADIUS, true);
@@ -1401,6 +1415,30 @@ void LibraryActivity::drawGridProgress(const int slot, const int barX, const int
   }
 }
 
+void LibraryActivity::drawTextCover(const RecentBook& book, const int x, const int y, const int width,
+                                    const int height) {
+  renderer.fillRoundedRect(x, y, width, height, GRID_COVER_CORNER_RADIUS, Color::White);
+  constexpr int pad = 14;
+  const int maxWidth = width - 2 * pad;
+  const int titleLh = renderer.getLineHeight(UI_12_FONT_ID);
+  const auto titleLines = renderer.wrappedText(UI_12_FONT_ID, book.title.c_str(), maxWidth, 5, EpdFontFamily::BOLD);
+  int textY = y + height / 3 - (static_cast<int>(titleLines.size()) * titleLh) / 2;
+  for (const auto& line : titleLines) {
+    const int w = renderer.getTextWidth(UI_12_FONT_ID, line.c_str(), EpdFontFamily::BOLD);
+    renderer.drawText(UI_12_FONT_ID, x + (width - w) / 2, textY, line.c_str(), true, EpdFontFamily::BOLD);
+    textY += titleLh;
+  }
+  if (!book.author.empty()) {
+    textY += titleLh / 2;
+    const int authorLh = renderer.getLineHeight(UI_10_FONT_ID);
+    for (const auto& line : renderer.wrappedText(UI_10_FONT_ID, book.author.c_str(), maxWidth, 2)) {
+      const int w = renderer.getTextWidth(UI_10_FONT_ID, line.c_str());
+      renderer.drawText(UI_10_FONT_ID, x + (width - w) / 2, textY, line.c_str());
+      textY += authorLh;
+    }
+  }
+}
+
 void LibraryActivity::loadGridPageCovers() {
   if (!gridEnabled() || gridCoverWidth <= 0 || gridCoverHeight <= 0 || gridPageStart == loadedGridPageStart) return;
   const int pageEnd = std::min(gridPageStart + GRID_PAGE_SIZE, rowCount());
@@ -1420,6 +1458,9 @@ bool LibraryActivity::loadGridCover(const int row) {
   if (!FsHelpers::hasEpubExtension(book.path) && !FsHelpers::hasXtcExtension(book.path)) return false;
   const std::string thumbPath = gridCoverPath(book, gridCoverWidth, gridCoverHeight);
   if (hasValidGridThumb(thumbPath, gridCoverWidth, gridCoverHeight)) return false;
+  // A previous decode failure for this size is remembered next to the thumbnail,
+  // so books outside the recents are not re-parsed on every visit.
+  if (hasNoCoverMarker(thumbPath)) return false;
   if (FsHelpers::hasEpubExtension(book.path)) {
     Epub epub(book.path, "/.crosspoint");
     if (!epub.load(true, true, Epub::XLocationLoadMode::Skip)) {
@@ -1432,6 +1473,8 @@ bool LibraryActivity::loadGridCover(const int row) {
         LOG_ERR("LIB", "Cannot update EPUB cover path for %s", book.path.c_str());
       return true;
     }
+    LOG_ERR("LIB", "EPUB cover generation failed for %s; the book will show a text cover", book.path.c_str());
+    writeNoCoverMarker(thumbPath);
     if (!epub.hasCoverImage()) {
       if (recent &&
           !RECENT_BOOKS.updateBook(book.path, recent->title, recent->author, "", RecentBook::CoverState::Missing))
@@ -1444,7 +1487,11 @@ bool LibraryActivity::loadGridCover(const int row) {
     LOG_ERR("LIB", "Cannot load XTC cover for %s", book.path.c_str());
     return false;
   }
-  if (!xtc.generateThumbBmp(gridCoverWidth, gridCoverHeight)) return false;
+  if (!xtc.generateThumbBmp(gridCoverWidth, gridCoverHeight)) {
+    LOG_ERR("LIB", "XTC cover generation failed for %s; the book will show a text cover", book.path.c_str());
+    writeNoCoverMarker(thumbPath);
+    return false;
+  }
   if (recent &&
       !RECENT_BOOKS.updateBook(book.path, recent->title, recent->author, xtc.getThumbBmpPath(), recent->coverState))
     LOG_ERR("LIB", "Cannot update XTC cover path for %s", book.path.c_str());

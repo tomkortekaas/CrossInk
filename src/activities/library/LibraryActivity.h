@@ -132,6 +132,7 @@ class LibraryActivity final : public Activity {
   void loadGridPageProgress();
   void loadSelectedTimeLeft();
   void drawGridProgress(int slot, int barX, int barY, int barWidth);
+  void drawTextCover(const RecentBook& book, int x, int y, int width, int height);
   bool gridEnabled() const;
   void buildSortHeader(UiApp::ScreenType& screen);
   const char* sortLabel() const;
