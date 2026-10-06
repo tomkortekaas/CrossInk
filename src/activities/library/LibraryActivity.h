@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 
 #include "../Activity.h"
@@ -33,7 +34,8 @@ class LibraryActivity final : public Activity {
   int selectorIndex = 0;
   int preparedPage = NO_PAGE;  // page whose thumbnails/progress are loaded
   int shownPage = NO_PAGE;     // page currently on the panel, to pick FAST vs HALF refresh
-  bool indexReady = false;
+  // Written by the render task (in render()) and read by the main task (in loop()).
+  std::atomic<bool> indexReady{false};
   bool longPressFired = false;
 
   void refreshIndex();

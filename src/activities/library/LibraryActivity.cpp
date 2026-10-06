@@ -158,6 +158,7 @@ bool LibraryActivity::generateThumb(LibraryEntry& entry, const int width, const 
       return false;
     }
     if (epub.generateThumbBmp(width, height, &renderer, SETTINGS.getReaderFontId())) return true;
+    LOG_ERR("LIB", "Thumbnail generation failed: %s", entry.path.c_str());
     if (!epub.hasCoverImage()) entry.coverMissing = true;
     return false;
   }
@@ -167,7 +168,9 @@ bool LibraryActivity::generateThumb(LibraryEntry& entry, const int width, const 
       LOG_ERR("LIB", "XTC load failed for thumbnail: %s", entry.path.c_str());
       return false;
     }
-    return xtc.generateThumbBmp(static_cast<uint16_t>(width), static_cast<uint16_t>(height));
+    if (xtc.generateThumbBmp(static_cast<uint16_t>(width), static_cast<uint16_t>(height))) return true;
+    LOG_ERR("LIB", "Thumbnail generation failed: %s", entry.path.c_str());
+    return false;
   }
   return false;
 }
@@ -363,6 +366,7 @@ void LibraryActivity::render(RenderLock&&) {
 }
 
 void LibraryActivity::loop() {
+  if (!indexReady) return;  // index is still being built on the render task
   const int count = static_cast<int>(index.entries.size());
   if (longPressFired) {
     if (!mappedInput.isPressed(MappedInputManager::Button::Confirm)) longPressFired = false;
@@ -440,6 +444,7 @@ void LibraryActivity::showBookActionMenu(const int bookIndex) {
 
   // The library offers the actions that make sense when choosing a book, plus sorting.
   std::vector<FileBrowserActionActivity::MenuItem> items;
+  items.reserve(4);  // up to 3 filtered actions + SortLibrary
   for (const auto& item : BookActions::buildBookActionItems(book.path, /*includeRemoveFromRecents=*/false)) {
     if (item.action == FileBrowserAction::ToggleCompleted || item.action == FileBrowserAction::DeleteCache ||
         item.action == FileBrowserAction::Delete) {
