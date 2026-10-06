@@ -31,6 +31,8 @@ bool hasReadingStats(const std::string& path) {
   return FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path);
 }
 
+}  // namespace
+
 std::string bookStatsCachePath(const std::string& path) {
   if (FsHelpers::hasEpubExtension(path)) {
     return Epub(path, "/.crosspoint").getCachePath();
@@ -40,8 +42,6 @@ std::string bookStatsCachePath(const std::string& path) {
   }
   return "";
 }
-
-}  // namespace
 
 std::vector<FileBrowserActionActivity::MenuItem> buildBookActionItems(const std::string& fullPath,
                                                                       const bool includeRemoveFromRecents) {

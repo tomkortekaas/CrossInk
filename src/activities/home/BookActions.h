@@ -16,6 +16,8 @@ bool canSendNearby(const std::string& path);
 void clearFileMetadata(const std::string& fullPath);
 bool clearBookCache(const std::string& fullPath);
 bool deleteBookStats(const std::string& fullPath);
+// Per-book reading-stats cache directory (empty for file types without reading stats).
+std::string bookStatsCachePath(const std::string& fullPath);
 bool resetBookReaderSettings(const std::string& fullPath);
 std::vector<std::string> epubRenderModeOptions();
 uint8_t epubRenderModeDisplayIndex(uint8_t renderMode);

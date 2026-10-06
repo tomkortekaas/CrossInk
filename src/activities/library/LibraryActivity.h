@@ -43,6 +43,8 @@ class LibraryActivity final : public Activity {
   enum class Sort : uint8_t { DateAdded, Title, AuthorLast, AuthorFirst, RecentlyRead, Series, Genre };
   // Touch header controls precede the book rows; button-only navigation visits books directly.
   static constexpr int CONTROL_COUNT = 5;
+  static constexpr int GRID_COLUMNS = 2;
+  static constexpr int GRID_PAGE_SIZE = 4;
   using UiApp = freeink::ui::FreeInkApp<32, 4>;
   freeink::ui::GfxRendererTarget uiTarget;
   UiApp app;
@@ -60,8 +62,16 @@ class LibraryActivity final : public Activity {
   int nextGridCoverRow = -1;
   int16_t gridCoverWidth = 0;
   int16_t gridCoverHeight = 0;
-  int gridProgressRow = -1;
-  float gridProgress = -1.0f;
+  // Reading progress and completion state for the GRID_PAGE_SIZE visible slots.
+  // -1.0f means unknown; the arrays belong to gridProgressPageStart and are
+  // reloaded only when the visible page changes so selection moves stay cheap.
+  float gridProgress[GRID_PAGE_SIZE]{};
+  bool gridFinished[GRID_PAGE_SIZE]{};
+  int gridProgressPageStart = -1;
+  // Time-left estimate for the selected book, reloaded when the selection moves.
+  uint32_t selectedTimeLeftSeconds = 0;
+  bool selectedHasTimeLeft = false;
+  int selectedTimeLeftRow = -1;
   bool uiReady = false;
   bool initialScanPending = false;
   bool confirmLongPressCaptured = false;
@@ -119,7 +129,9 @@ class LibraryActivity final : public Activity {
   void buildGrid(UiApp::ScreenType& screen);
   void loadGridPageCovers();
   bool loadGridCover(int row);
-  void loadGridProgress();
+  void loadGridPageProgress();
+  void loadSelectedTimeLeft();
+  void drawGridProgress(int slot, int barX, int barY, int barWidth);
   bool gridEnabled() const;
   void buildSortHeader(UiApp::ScreenType& screen);
   const char* sortLabel() const;

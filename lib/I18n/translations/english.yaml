@@ -941,3 +941,5 @@ STR_MONTH_OCT: "October"
 STR_MONTH_NOV: "November"
 STR_MONTH_DEC: "December"
 STR_LIBRARY_COVER_VIEW: "Cover view"
+
+STR_LIBRARY_TIME_LEFT: "%s left"
