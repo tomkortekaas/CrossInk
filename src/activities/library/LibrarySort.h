@@ -13,8 +13,8 @@ constexpr uint8_t kLibrarySortModeCount = 4;
 
 struct LibraryEntry {
   std::string path;
-  std::string title;   // filename stem until metadataLoaded
-  std::string author;  // empty when unknown
+  std::string title;      // filename stem until metadataLoaded
+  std::string author;     // empty when unknown
   uint32_t addedSeq = 0;  // "first seen" generation; higher is newer
   LibraryBookStatus status = LibraryBookStatus::New;
   bool metadataLoaded = false;  // title/author were read from the book itself
