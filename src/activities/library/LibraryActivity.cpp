@@ -21,6 +21,7 @@
 #include "activities/home/FileBrowserActionActivity.h"
 #include "activities/home/RecentBookProgress.h"
 #include "activities/reader/BookReadingStats.h"
+#include "activities/reader/ReaderUtils.h"
 #include "activities/reader/ReadingTimeEstimate.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/OptionSelectionActivity.h"
@@ -66,6 +67,7 @@ void LibraryActivity::onEnter() {
   selectorIndex = 0;
   preparedPage = NO_PAGE;
   shownPage = NO_PAGE;
+  pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
   indexReady = false;
   longPressFired = false;
   requestUpdate();
@@ -234,7 +236,7 @@ void LibraryActivity::preparePage(const int page, const LibraryGrid::Layout& lay
   if (indexDirty && !LibraryIndexStore::save(index)) {
     LOG_ERR("LIB", "Failed to save library index");
   }
-  if (showingPopup) shownPage = NO_PAGE;  // the popup was drawn over the page: use the clean refresh
+  if (showingPopup) shownPage = NO_PAGE;  // the popup was drawn over the page: redraw counts in the refresh cycle
   preparedPage = page;
 }
 
@@ -369,8 +371,13 @@ void LibraryActivity::render(RenderLock&&) {
   const auto labels = mappedInput.mapLabels(tr(STR_HOME), tr(STR_OPEN), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
-  // A new page replaces every cover: HALF refresh clears ghosting. Moving the frame stays FAST.
-  renderer.displayBuffer(shownPage == page ? HalDisplay::FAST_REFRESH : HalDisplay::HALF_REFRESH);
+  if (shownPage == page) {
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);  // selection moved on the same page
+  } else {
+    // New page or redraw after an overlay: count it like a reader page turn, so the X3's
+    // full resync (HALF_REFRESH) only runs every N turns instead of on every page.
+    ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
+  }
   shownPage = page;
 }
 
@@ -424,7 +431,7 @@ void LibraryActivity::showSortMenu() {
       std::make_unique<OptionSelectionActivity>(renderer, mappedInput, "LibrarySortSelect", StrId::STR_LIBRARY_SORT,
                                                 std::move(options), static_cast<uint8_t>(currentSortMode())),
       [this](const ActivityResult& result) {
-        shownPage = NO_PAGE;  // an overlay was drawn: use the clean refresh
+        shownPage = NO_PAGE;  // an overlay was drawn: redraw counts in the refresh cycle
         if (result.isCancelled) return;
         const auto* selection = std::get_if<OptionSelectionResult>(&result.data);
         if (selection == nullptr || selection->index >= kLibrarySortModeCount) return;
@@ -465,7 +472,7 @@ void LibraryActivity::showBookActionMenu(const int bookIndex) {
   startActivityForResult(
       std::make_unique<FileBrowserActionActivity>(renderer, mappedInput, book.title, std::move(items), true),
       [this, book](const ActivityResult& result) {
-        shownPage = NO_PAGE;  // a menu/toast/confirmation was drawn: use the clean refresh
+        shownPage = NO_PAGE;  // a menu/toast/confirmation was drawn: redraw counts in the refresh cycle
         longPressFired = false;
         if (result.isCancelled) return;
         const auto* actionResult = std::get_if<FileBrowserActionResult>(&result.data);

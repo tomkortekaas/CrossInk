@@ -32,8 +32,9 @@ class LibraryActivity final : public Activity {
   LibraryIndexData index;
   PageBookState pageState[LibraryGrid::kBooksPerPage];
   int selectorIndex = 0;
-  int preparedPage = NO_PAGE;  // page whose thumbnails/progress are loaded
-  int shownPage = NO_PAGE;     // page currently on the panel, to pick FAST vs HALF refresh
+  int preparedPage = NO_PAGE;     // page whose thumbnails/progress are loaded
+  int shownPage = NO_PAGE;        // page currently on the panel, to pick FAST vs HALF refresh
+  int pagesUntilFullRefresh = 0;  // HALF refresh only every N page changes, like the reader
   // Written by the render task (in render()) and read by the main task (in loop()).
   std::atomic<bool> indexReady{false};
   bool longPressFired = false;
