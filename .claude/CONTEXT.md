@@ -118,11 +118,11 @@ system Python.
 ## Personal X3 deployment
 
 - Build `dashboard-x3` for Tom's device, not `default`: the installed firmware uses the in-process BLE receiver plus standby dashboard refresh. Confirmed from the full flash backup on 2026-08-31. `default` can compile successfully while omitting these features.
-- Inspect actual OTA metadata before a direct serial app write; that backup booted app1 at `0x650000`, not app0 at `0x10000`. Preserve bootloader/partition table/NVS/OTA metadata/filesystem and retain a full backup. Opening USB serial can reboot this X3, so do not use serial polling to inspect interactive settings.
+- Inspect actual OTA metadata before a direct serial app write; that backup booted app1 at `0x650000`, not app0 at `0x10000` (since 2026-10-05 the active slot is app0 — always read it fresh). Preserve bootloader/partition table/NVS/OTA metadata/filesystem and retain a full backup. Opening USB serial can reboot this X3, so do not use serial polling to inspect interactive settings.
 
-## X3 source identity (verified 2026-10-05)
+## X3 source identity (verified 2026-10-06)
 
-- `X3-actueel/firmware` was corrected on 2026-10-05 to CrossInk-library-x3-current. Check it against X3-actueel/deployment-state.json; do not infer installation identity from a map name.
-- The pre-Library device image exactly matched the full v1.6.0 candidate, source af65f5dd, SDK a9ab1ccd. Older version text was stale.
-- Current verified Library checkout: CrossInk-library-x3-current, branch feat/x3-current-library-v1.6.1; SDK commit 8480abf95121be45ca280d7330237237582fbb04 on tomkortekaas/freeink-sdk.
-- Check deployment source/artifact hashes before selecting a base. For hardware flashing, check fresh OTA metadata and candidate hash, preserve other partitions, and verify readback. See docs/library-v1.6.1/build-selection-investigation.md.
+- `X3-actueel/firmware` points to CrossInk-library-2x2 (branch feat/x3-library-2x2) since 2026-10-06; the previous target CrossInk-library-x3-current (feat/x3-current-library-v1.6.1) is the rollback source. Check it against X3-actueel/deployment-state.json; do not infer installation identity from a map name.
+- Installed: source a38d67a0, SDK 8480abf95121be45ca280d7330237237582fbb04 (tomkortekaas/freeink-sdk), profile dashboard-x3, artifact SHA-256 6df7a0be376340ac69191d897e740108b4669f097949f98d7001f9940f6d065c in app0 (0x10000). Active OTA slot is app0; app1 holds an old dashboard and is not active. See docs/deployments/2026-10-06-x3-library-2x2.md.
+- History: the pre-Library device image exactly matched the full v1.6.0 candidate, source af65f5dd, SDK a9ab1ccd; on 2026-10-05 and 2026-10-06 a stale v1.5 checkout was picked by mistake (see docs/library-v1.6.1/build-selection-investigation.md).
+- Never flash with `pio run -t upload` (it also writes bootloader/OTA data and may target the wrong env). Take a full read-flash backup, check fresh OTA metadata and the candidate hash, write only the active app partition with esptool, and verify readback.
