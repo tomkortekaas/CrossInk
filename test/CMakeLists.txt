@@ -63,6 +63,7 @@ add_subdirectory(agenda_wake_policy)
 add_subdirectory(navigator)
 
 add_subdirectory(previous_book_shortcut)
+add_subdirectory(reading_time_estimate)
 add_subdirectory(manual_page_turn_queue)
 add_subdirectory(page_count_estimator)
 add_subdirectory(section_page_index)
