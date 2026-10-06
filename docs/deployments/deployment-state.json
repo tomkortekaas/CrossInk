@@ -1,17 +1,17 @@
 {
   "schema": 1,
   "status": "installed_verified",
-  "repository": "/Volumes/2TB/Development/Projects/CrossInk-library-x3-current",
+  "repository": "/Volumes/2TB/Development/Projects/CrossInk-library-2x2",
   "active_reference": "/Volumes/2TB/Development/Projects/X3-actueel/firmware",
-  "installed_source": "c41464654d020a9d4692d1eec09bc64dc69669c0",
+  "installed_source": "a38d67a03736b4892059cdcb18fb460c47e3435d",
   "dependencies": {
     "freeink-sdk": "8480abf95121be45ca280d7330237237582fbb04"
   },
   "build_profile": "dashboard-x3",
-  "artifact": "/Volumes/2TB/X3/builds/library-v1.6.1-current-2026-10-05/x3-dashboard-library-v1.6.1.bin",
-  "artifact_sha256": "fcdc51bb229107d51b9d4afa32ccdb42646930d73631d413013621f9e9911444",
-  "installed_date": "2026-10-05",
+  "artifact": "/Volumes/2TB/X3/builds/library-2x2-2026-10-06/x3-dashboard-library-2x2.bin",
+  "artifact_sha256": "6df7a0be376340ac69191d897e740108b4669f097949f98d7001f9940f6d065c",
+  "installed_date": "2026-10-06",
   "device_mac": "d4:05:92:90:13:74",
-  "verification": "/Volumes/2TB/X3/builds/library-v1.6.1-current-2026-10-05/installation.json",
-  "previous_active_target": "/Users/tomkortekaas/Development/worktrees/CrossInk/dashboard-v3-firmware"
+  "verification": "/Volumes/2TB/X3/builds/library-2x2-2026-10-06/installation.json",
+  "previous_active_target": "/Volumes/2TB/Development/Projects/CrossInk-library-x3-current"
 }
