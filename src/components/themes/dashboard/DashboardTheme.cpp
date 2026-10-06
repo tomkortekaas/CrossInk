@@ -20,6 +20,7 @@
 #include "activities/reader/BookReadingStats.h"
 #include "activities/reader/GlobalReadingStats.h"
 #include "activities/reader/ReadingStatsUtils.h"
+#include "activities/reader/ReadingTimeEstimate.h"
 #include "components/TouchRegistry.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
@@ -151,44 +152,12 @@ void drawRightAlignedText(const GfxRenderer& renderer, const int fontId, const i
 }
 
 void formatCompactDuration(const uint32_t seconds, char* buf, const size_t len) {
-  if (seconds < 60) {
-    snprintf(buf, len, "%s", tr(STR_STATS_LESS_THAN_MIN));
-    return;
-  }
-  const uint32_t minutes = (seconds + 30u) / 60u;
-  if (minutes < 60) {
-    snprintf(buf, len, "%lu min", static_cast<unsigned long>(minutes));
-    return;
-  }
-  const uint32_t hours = minutes / 60u;
-  const uint32_t remainder = minutes % 60u;
-  if (remainder == 0) {
-    snprintf(buf, len, "%luh", static_cast<unsigned long>(hours));
-  } else {
-    snprintf(buf, len, "%luh %lum", static_cast<unsigned long>(hours), static_cast<unsigned long>(remainder));
-  }
-}
-
-bool fallbackEstimatedTimeLeft(const BookReadingStats& stats, const float progressPercent, uint32_t& seconds) {
-  seconds = 0;
-  if (progressPercent <= 0.0f || progressPercent >= 100.0f || stats.totalReadingSeconds < 120) {
-    return false;
-  }
-  const float progress = progressPercent / 100.0f;
-  const float estimate = (static_cast<float>(stats.totalReadingSeconds) * (1.0f - progress)) / progress;
-  if (estimate <= 0.0f) {
-    return false;
-  }
-  seconds = static_cast<uint32_t>(estimate + 0.5f);
-  return seconds > 0;
+  ReadingTimeEstimate::formatCompact(seconds, tr(STR_STATS_LESS_THAN_MIN), buf, len);
 }
 
 bool estimatedTimeLeft(const BookReadingStats& stats, const float progressPercent, uint32_t& seconds) {
-  if (stats.estimatedTimeLeftSeconds > 0) {
-    seconds = stats.estimatedTimeLeftSeconds;
-    return true;
-  }
-  return fallbackEstimatedTimeLeft(stats, progressPercent, seconds);
+  return ReadingTimeEstimate::secondsLeft(stats.estimatedTimeLeftSeconds, stats.totalReadingSeconds,
+                                          progressPercent, seconds);
 }
 
 bool estimateFinishDateFromDailyPace(const BookReadingStats& stats, const ReadingStatsDateTime& today,

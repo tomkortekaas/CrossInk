@@ -19,3 +19,7 @@ add_library_test(LibraryIndexCodecTest
   LibraryIndexCodecTest.cpp
   ${REPO_ROOT}/src/activities/library/LibraryIndexCodec.cpp
   ${REPO_ROOT}/src/activities/library/LibrarySort.cpp)
+
+add_library_test(ReadingTimeEstimateTest
+  ReadingTimeEstimateTest.cpp
+  ${REPO_ROOT}/src/activities/reader/ReadingTimeEstimate.cpp)
