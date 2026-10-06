@@ -85,6 +85,9 @@ void LibraryActivity::refreshIndex() {
   paths.reserve(index.entries.size() + 16);
   LibraryIndexStore::scanBookPaths(paths);
   bool changed = LibraryIndexCodec::mergeScannedPaths(index, std::move(paths));
+  // mergeScannedPaths only moves the new paths out; free the rest before the heap-heavy metadata pass.
+  paths.clear();
+  paths.shrink_to_fit();
 
   int missing = 0;
   for (const auto& entry : index.entries) {
