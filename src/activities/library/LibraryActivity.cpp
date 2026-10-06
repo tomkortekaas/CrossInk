@@ -27,6 +27,7 @@
 #include "activities/library/LibrarySettingsActivity.h"
 #include "activities/reader/BookReadingStats.h"
 #include "activities/reader/EpubReaderActivity.h"
+#include "activities/reader/ReaderUtils.h"
 #include "activities/reader/ReadingTimeEstimate.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
@@ -124,6 +125,8 @@ void LibraryActivity::onEnter() {
   inputOverflow = false;
   touchTracking = false;
   confirmLongPressCaptured = false;
+  gridShownPage = -1;
+  pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
   {
     RenderLock lock;
     Activity::onEnter();
@@ -1577,7 +1580,12 @@ void LibraryActivity::render(RenderLock&&) {
                               footer);
   }
   if (pendingCacheDeletedFeedback) GUI.drawPopup(renderer, tr(STR_BOOK_CACHE_DELETED));
-  renderer.displayBuffer();
+  if (gridEnabled() && gridPageStart != gridShownPage) {
+    ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
+    gridShownPage = gridPageStart;
+  } else {
+    renderer.displayBuffer();
+  }
 }
 
 void LibraryActivity::promptDeleteBook(const RecentBook& book) {

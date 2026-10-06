@@ -58,6 +58,9 @@ class LibraryActivity final : public Activity {
   bool showSelection = true;
   int topIndex = 0;
   int gridPageStart = 0;
+  // Page already shown since the last full-resync cycle; -1 forces one on entry.
+  int gridShownPage = -1;
+  int pagesUntilFullRefresh = 0;
   int loadedGridPageStart = -1;
   int nextGridCoverRow = -1;
   int16_t gridCoverWidth = 0;
