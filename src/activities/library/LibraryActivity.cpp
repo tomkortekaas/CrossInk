@@ -84,9 +84,7 @@ void LibraryActivity::refreshIndex() {
   std::vector<std::string> paths;
   paths.reserve(index.entries.size() + 16);
   LibraryIndexStore::scanBookPaths(paths);
-  bool changed = LibraryIndexCodec::mergeScannedPaths(index, paths);
-  paths.clear();
-  paths.shrink_to_fit();
+  bool changed = LibraryIndexCodec::mergeScannedPaths(index, std::move(paths));
 
   int missing = 0;
   for (const auto& entry : index.entries) {

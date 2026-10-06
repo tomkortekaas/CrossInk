@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "activities/library/LibraryIndexCodec.h"
@@ -42,8 +43,9 @@ const LibraryEntry* find(const LibraryIndexData& d, const std::string& path) {
 int main() {
   // Merge: first scan assigns one shared generation.
   LibraryIndexData index;
-  assert(LibraryIndexCodec::mergeScannedPaths(index, {"/b.epub", "/a.epub"}));
+  assert(LibraryIndexCodec::mergeScannedPaths(index, std::vector<std::string>{"/b.epub", "/a.epub"}));
   assert(index.entries.size() == 2 && index.nextSeq == 2);
+  assert(index.entries.capacity() >= index.entries.size());
   assert(find(index, "/a.epub")->addedSeq == 1 && find(index, "/a.epub")->title == "a");
 
   // Known metadata survives; vanished books drop; new ones get the next generation.
@@ -54,21 +56,41 @@ int main() {
       e.status = LibraryBookStatus::Finished;
     }
   }
-  assert(LibraryIndexCodec::mergeScannedPaths(index, {"/a.epub", "/dir/c.txt"}));
+  assert(LibraryIndexCodec::mergeScannedPaths(index, std::vector<std::string>{"/a.epub", "/dir/c.txt"}));
   assert(index.entries.size() == 2 && index.nextSeq == 3);
   assert(find(index, "/b.epub") == nullptr);
   assert(find(index, "/a.epub")->title == "Real A" && find(index, "/a.epub")->metadataLoaded);
   assert(find(index, "/dir/c.txt")->addedSeq == 2 && find(index, "/dir/c.txt")->title == "c");
 
   // Unchanged scan reports no change and keeps the generation.
-  assert(!LibraryIndexCodec::mergeScannedPaths(index, {"/dir/c.txt", "/a.epub"}));
+  assert(!LibraryIndexCodec::mergeScannedPaths(index, std::vector<std::string>{"/dir/c.txt", "/a.epub"}));
   assert(index.nextSeq == 3);
+
+  // Appending into a populated index keeps the existing books and gives the new
+  // one the previous nextSeq.
+  LibraryIndexData populated;
+  populated.nextSeq = 7;
+  std::vector<std::string> populatedScan;
+  populatedScan.reserve(201);
+  for (int i = 0; i < 200; ++i) {
+    const std::string path = "/existing" + std::to_string(i) + ".epub";
+    LibraryEntry e;
+    e.path = path;
+    e.addedSeq = 3;
+    populated.entries.push_back(e);
+    populatedScan.push_back(path);
+  }
+  populatedScan.push_back("/new.epub");
+  assert(LibraryIndexCodec::mergeScannedPaths(populated, std::move(populatedScan)));
+  assert(populated.entries.size() == 201 && populated.nextSeq == 8);
+  const LibraryEntry* newest = find(populated, "/new.epub");
+  assert(newest != nullptr && newest->addedSeq == 7);
 
   // Cap.
   LibraryIndexData big;
   std::vector<std::string> many;
   for (int i = 0; i < 301; ++i) many.push_back("/b" + std::to_string(i) + ".epub");
-  LibraryIndexCodec::mergeScannedPaths(big, many);
+  LibraryIndexCodec::mergeScannedPaths(big, std::move(many));
   assert(big.entries.size() == LibraryIndexCodec::kMaxBooks);
 
   // Round trip.

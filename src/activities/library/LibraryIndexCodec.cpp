@@ -1,6 +1,8 @@
 #include "LibraryIndexCodec.h"
 
 #include <algorithm>
+#include <string_view>
+#include <utility>
 
 namespace LibraryIndexCodec {
 namespace {
@@ -99,36 +101,42 @@ bool decode(LibraryByteReader& in, LibraryIndexData& out) {
   return true;
 }
 
-bool mergeScannedPaths(LibraryIndexData& index, const std::vector<std::string>& scannedPaths) {
-  std::vector<std::string> scanned = scannedPaths;
-  std::sort(scanned.begin(), scanned.end());
-  scanned.erase(std::unique(scanned.begin(), scanned.end()), scanned.end());
+bool mergeScannedPaths(LibraryIndexData& index, std::vector<std::string>&& scannedPaths) {
+  std::sort(scannedPaths.begin(), scannedPaths.end());
+  scannedPaths.erase(std::unique(scannedPaths.begin(), scannedPaths.end()), scannedPaths.end());
 
   const size_t before = index.entries.size();
   index.entries.erase(std::remove_if(index.entries.begin(), index.entries.end(),
-                                     [&scanned](const LibraryEntry& e) {
-                                       return !std::binary_search(scanned.begin(), scanned.end(), e.path);
+                                     [&scannedPaths](const LibraryEntry& e) {
+                                       return !std::binary_search(scannedPaths.begin(), scannedPaths.end(), e.path);
                                      }),
                       index.entries.end());
   bool changed = index.entries.size() != before;
 
-  std::vector<std::string> known;
+  std::vector<std::string_view> known;
   known.reserve(index.entries.size());
   for (const auto& e : index.entries) known.push_back(e.path);
   std::sort(known.begin(), known.end());
 
-  bool appended = false;
-  for (const auto& path : scanned) {
-    if (index.entries.size() >= kMaxBooks) break;
-    if (std::binary_search(known.begin(), known.end(), path)) continue;
-    LibraryEntry e;
-    e.path = path;
-    e.title = LibrarySort::titleFromPath(path);
-    e.addedSeq = index.nextSeq;
-    index.entries.push_back(std::move(e));
-    appended = true;
+  // Collect which scanned paths are new before appending: `known` views point into
+  // index.entries, so they must not be used once push_back may move those strings.
+  std::vector<size_t> newIndices;
+  newIndices.reserve(scannedPaths.size());
+  for (size_t i = 0; i < scannedPaths.size(); ++i) {
+    if (index.entries.size() + newIndices.size() >= kMaxBooks) break;
+    if (std::binary_search(known.begin(), known.end(), std::string_view(scannedPaths[i]))) continue;
+    newIndices.push_back(i);
   }
-  if (appended) {
+
+  if (!newIndices.empty()) {
+    index.entries.reserve(std::min(kMaxBooks, index.entries.size() + newIndices.size()));
+    for (const size_t i : newIndices) {
+      LibraryEntry e;
+      e.path = std::move(scannedPaths[i]);
+      e.title = LibrarySort::titleFromPath(e.path);
+      e.addedSeq = index.nextSeq;
+      index.entries.push_back(std::move(e));
+    }
     ++index.nextSeq;
     changed = true;
   }

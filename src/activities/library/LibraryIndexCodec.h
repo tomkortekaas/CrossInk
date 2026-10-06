@@ -37,5 +37,5 @@ bool encode(const LibraryIndexData& data, LibraryByteWriter& out);
 bool decode(LibraryByteReader& in, LibraryIndexData& out);
 // Keeps entries whose path is still on the card, drops vanished ones and appends unknown
 // paths (title from the filename) under one new generation. Returns true when anything changed.
-bool mergeScannedPaths(LibraryIndexData& index, const std::vector<std::string>& scannedPaths);
+bool mergeScannedPaths(LibraryIndexData& index, std::vector<std::string>&& scannedPaths);
 }  // namespace LibraryIndexCodec
