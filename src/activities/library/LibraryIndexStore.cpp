@@ -1,5 +1,6 @@
 #include "LibraryIndexStore.h"
 
+#include <Arduino.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
@@ -111,7 +112,13 @@ void loadMetadata(LibraryEntry& entry) {
   if (FsHelpers::hasEpubExtension(entry.path)) {
     Epub epub(entry.path, "/.crosspoint");
     if (!epub.load(true, true, Epub::XLocationLoadMode::Skip)) {
-      LOG_ERR("LIB", "EPUB metadata unavailable: %s", entry.path.c_str());
+      if (epub.getLastLoadFailure() == Epub::OpenFailure::OutOfMemory) {
+        entry.metadataLoaded = false;  // retry the metadata on the next open
+        LOG_ERR("LIB", "EPUB metadata out of memory: %s free=%u maxAlloc=%u", entry.path.c_str(),
+                static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+      } else {
+        LOG_ERR("LIB", "EPUB metadata unavailable: %s", entry.path.c_str());
+      }
       return;
     }
     if (!epub.getTitle().empty()) entry.title = epub.getTitle();
