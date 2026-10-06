@@ -97,15 +97,43 @@ void drawCheckMark(const GfxRenderer& renderer, const int x, const int y, const 
 
 // Persistent "this book has no decodable cover" marker, kept next to the sized
 // thumbnail so the existing delete-cache action removes it with the rest of the
-// book's cache directory.
+// book's cache directory. A single generation failure writes '1' (still retried
+// later); only a marker containing '2' makes the text cover permanent.
+bool readNoCoverMarker(const std::string& thumbPath, uint8_t& value) {
+  if (thumbPath.empty()) return false;
+  FsFile marker;
+  if (!Storage.openFileForRead("LIB", thumbPath + ".nocover", marker)) return false;
+  uint8_t byte = 0;
+  const bool ok = marker.read(&byte, 1) == 1;
+  marker.close();
+  if (!ok) return false;
+  value = byte;
+  return true;
+}
+
 bool hasNoCoverMarker(const std::string& thumbPath) {
-  return !thumbPath.empty() && Storage.exists((thumbPath + ".nocover").c_str());
+  uint8_t value = 0;
+  return readNoCoverMarker(thumbPath, value) && value == '2';
 }
 
 void writeNoCoverMarker(const std::string& thumbPath) {
   if (thumbPath.empty()) return;
+  uint8_t value = 0;
+  const bool readable = readNoCoverMarker(thumbPath, value);
+  // A readable marker is a previous failed generation: promote it to permanent.
+  // If the marker exists but cannot be read, keep it permanent rather than
+  // downgrading a '2' back to a retryable '1'.
+  const uint8_t next = readable || Storage.exists((thumbPath + ".nocover").c_str()) ? static_cast<uint8_t>('2')
+                                                                                    : static_cast<uint8_t>('1');
   FsFile marker;
-  if (Storage.openFileForWrite("LIB", thumbPath + ".nocover", marker)) marker.close();
+  if (!Storage.openFileForWrite("LIB", thumbPath + ".nocover", marker)) {
+    LOG_ERR("LIB", "Cannot write no-cover marker for %s", thumbPath.c_str());
+    return;
+  }
+  if (marker.write(&next, 1) != 1) {
+    LOG_ERR("LIB", "Cannot write no-cover marker for %s", thumbPath.c_str());
+  }
+  marker.close();
 }
 
 int headerControlRightInset() {
@@ -395,15 +423,17 @@ int LibraryActivity::rowCount() const {
 bool LibraryActivity::gridEnabled() const { return SETTINGS.recentBooksView == CrossPointSettings::RECENT_BOOKS_GRID; }
 
 void LibraryActivity::loadGridPageProgress() {
-  for (int slot = 0; slot < GRID_PAGE_SIZE; ++slot) {
-    gridProgress[slot] = -1.0f;
-    gridFinished[slot] = false;
-  }
+  // Selection moves within the visible page keep the cached slot values; only
+  // reset and reload when the page actually changed (or the state is invalid).
+  if (gridProgressPageStart == gridPageStart) return;
   if (!gridEnabled()) {
     gridProgressPageStart = -1;
     return;
   }
-  if (gridProgressPageStart == gridPageStart) return;
+  for (int slot = 0; slot < GRID_PAGE_SIZE; ++slot) {
+    gridProgress[slot] = -1.0f;
+    gridFinished[slot] = false;
+  }
   gridProgressPageStart = gridPageStart;
   const int pageEnd = std::min(gridPageStart + GRID_PAGE_SIZE, rowCount());
   RecentBook book;
@@ -417,14 +447,14 @@ void LibraryActivity::loadGridPageProgress() {
 }
 
 void LibraryActivity::loadSelectedTimeLeft() {
+  const int row = selection - CONTROL_COUNT;
+  if (selectedTimeLeftRow == row) return;
   selectedHasTimeLeft = false;
   selectedTimeLeftSeconds = 0;
-  const int row = selection - CONTROL_COUNT;
   if (!gridEnabled() || row < 0 || row >= rowCount()) {
     selectedTimeLeftRow = -1;
     return;
   }
-  if (selectedTimeLeftRow == row) return;
   RecentBook book;
   if (!readBook(row, book)) return;
   selectedTimeLeftRow = row;
@@ -1324,8 +1354,8 @@ void LibraryActivity::buildListScreen(UiApp::ScreenType& screen) {
 void LibraryActivity::buildGrid(UiApp::ScreenType& screen) {
   const int count = rowCount();
   const fui::Rect area = screen.body();
-  const int16_t cellWidth = std::max<int16_t>(1, (area.width - 2 * GRID_GAP) / GRID_COLUMNS);
-  const int16_t cellHeight = std::max<int16_t>(1, (area.height - 2 * GRID_GAP) / GRID_COLUMNS);
+  const int16_t cellWidth = std::max<int16_t>(1, (area.width - (GRID_COLUMNS - 1) * GRID_GAP) / GRID_COLUMNS);
+  const int16_t cellHeight = std::max<int16_t>(1, (area.height - (GRID_COLUMNS - 1) * GRID_GAP) / GRID_COLUMNS);
   const int16_t coverHeight =
       std::max<int16_t>(1, std::min<int16_t>(cellHeight - GRID_PROGRESS_ROW - 2 * GRID_SELECTION_OUTER_INSET,
                                              (cellWidth - 2 * GRID_SELECTION_OUTER_INSET) * 3 / 2));
@@ -1354,7 +1384,9 @@ void LibraryActivity::buildGrid(UiApp::ScreenType& screen) {
       const RecentBook* recent = recentBookForPath(rowScratch.path);
       if (!recent || recent->coverState != RecentBook::CoverState::Missing) {
         const std::string path = gridCoverPath(rowScratch, coverWidth, coverHeight);
-        if (!path.empty() && !hasNoCoverMarker(path) && Storage.exists(path.c_str())) {
+        // The no-cover marker only suppresses generation in loadGridCover(); a
+        // present thumbnail is enough to try drawing it here.
+        if (!path.empty() && Storage.exists(path.c_str())) {
           FsFile file;
           if (Storage.openFileForRead("LIB", path, file)) {
             Bitmap bitmap(file);
@@ -1383,7 +1415,7 @@ void LibraryActivity::buildGrid(UiApp::ScreenType& screen) {
     }
     // Progress row sits under the selection frame, which already reaches
     // GRID_SELECTION_OUTER_INSET below the cover.
-    drawGridProgress(slot, x, y + coverHeight + GRID_SELECTION_OUTER_INSET + 5, coverWidth);
+    drawGridProgress(slot, x, y + coverHeight + GRID_SELECTION_OUTER_INSET + 7, coverWidth);
     if (available)
       screen.frame().hit(cell, ACTION_ROW, static_cast<int16_t>(row), fui::InputTouch | fui::InputLongPress);
   }
@@ -1538,10 +1570,13 @@ void LibraryActivity::render(RenderLock&&) {
     const int16_t footerLeft = static_cast<int16_t>(bounds[3] + metrics.contentSidePadding);
     const int16_t footerRight =
         static_cast<int16_t>(renderer.getScreenWidth() - bounds[1] - metrics.contentSidePadding);
-    const int16_t footerTextY = static_cast<int16_t>(renderer.getScreenHeight() - bounds[2] - buttonHintsHeight -
-                                                     (FOOTER_HEIGHT + renderer.getLineHeight(SMALL_FONT_ID)) / 2);
+    const int16_t footerTop =
+        static_cast<int16_t>(renderer.getScreenHeight() - bounds[2] - buttonHintsHeight - FOOTER_HEIGHT);
+    const int16_t titleY =
+        static_cast<int16_t>(footerTop + (FOOTER_HEIGHT - renderer.getLineHeight(UI_10_FONT_ID)) / 2);
+    const int16_t pageY = static_cast<int16_t>(footerTop + (FOOTER_HEIGHT - renderer.getLineHeight(SMALL_FONT_ID)) / 2);
     const int pages = (rowCount() + GRID_PAGE_SIZE - 1) / GRID_PAGE_SIZE;
-    char pageLabel[32];
+    char pageLabel[64];
     snprintf(pageLabel, sizeof(pageLabel), "%s  \xC2\xB7  %d/%d", sortLabel(), gridPageStart / GRID_PAGE_SIZE + 1,
              pages);
     const int16_t rightWidth = static_cast<int16_t>(renderer.getTextWidth(SMALL_FONT_ID, pageLabel));
@@ -1559,19 +1594,19 @@ void LibraryActivity::render(RenderLock&&) {
         snprintf(timeLeft, sizeof(timeLeft), tr(STR_LIBRARY_TIME_LEFT), duration);
         snprintf(suffix, sizeof(suffix), "  \xC2\xB7  %s", timeLeft);
       }
-      const int16_t suffixWidth = suffix[0] ? static_cast<int16_t>(renderer.getTextWidth(SMALL_FONT_ID, suffix)) : 0;
+      const int16_t suffixWidth = suffix[0] ? static_cast<int16_t>(renderer.getTextWidth(UI_10_FONT_ID, suffix)) : 0;
       const int16_t titleMaxWidth =
           static_cast<int16_t>(std::max(0, footerRight - footerLeft - rightWidth - 12 - suffixWidth));
       const std::string visibleTitle =
-          renderer.truncatedText(SMALL_FONT_ID, rowScratch.title.c_str(), titleMaxWidth, EpdFontFamily::BOLD);
-      renderer.drawText(SMALL_FONT_ID, footerLeft, footerTextY, visibleTitle.c_str(), true, EpdFontFamily::BOLD);
+          renderer.truncatedText(UI_10_FONT_ID, rowScratch.title.c_str(), titleMaxWidth, EpdFontFamily::BOLD);
+      renderer.drawText(UI_10_FONT_ID, footerLeft, titleY, visibleTitle.c_str(), true, EpdFontFamily::BOLD);
       if (suffix[0]) {
         const int16_t titleWidth =
-            static_cast<int16_t>(renderer.getTextWidth(SMALL_FONT_ID, visibleTitle.c_str(), EpdFontFamily::BOLD));
-        renderer.drawText(SMALL_FONT_ID, footerLeft + titleWidth, footerTextY, suffix);
+            static_cast<int16_t>(renderer.getTextWidth(UI_10_FONT_ID, visibleTitle.c_str(), EpdFontFamily::BOLD));
+        renderer.drawText(UI_10_FONT_ID, footerLeft + titleWidth, titleY, suffix);
       }
     }
-    renderer.drawText(SMALL_FONT_ID, footerRight - rightWidth, footerTextY, pageLabel);
+    renderer.drawText(SMALL_FONT_ID, footerRight - rightWidth, pageY, pageLabel);
   } else {
     snprintf(footer, sizeof(footer), tr(STR_LIBRARY_FILES_COUNT), static_cast<unsigned>(rowCount()));
     renderer.drawCenteredText(SMALL_FONT_ID,
