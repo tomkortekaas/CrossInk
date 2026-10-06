@@ -94,16 +94,23 @@ void LibraryActivity::refreshIndex() {
     const Rect popup = GUI.drawPopup(renderer, tr(STR_LIBRARY_UPDATING));
     int done = 0;
     int lastShown = -1;
+    const unsigned long start = millis();
     for (auto& entry : index.entries) {
       if (entry.metadataLoaded) continue;
       LibraryIndexStore::loadMetadata(entry);
       ++done;
+      if (done % 10 == 0) {
+        LOG_INF("LIB", "metadata %d/%d elapsed=%lums free=%u maxAlloc=%u", done, missing, millis() - start,
+                static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+      }
       const int percent = (done * 100) / missing;
       if (percent / 5 != lastShown / 5) {  // every 5 %: each popup update is a panel refresh
         GUI.fillPopupProgress(renderer, popup, percent);
         lastShown = percent;
       }
     }
+    LOG_INF("LIB", "metadata done %d elapsed=%lums free=%u maxAlloc=%u", done, millis() - start,
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
     changed = true;
   }
 
@@ -224,6 +231,7 @@ void LibraryActivity::preparePage(const int page, const LibraryGrid::Layout& lay
   if (indexDirty && !LibraryIndexStore::save(index)) {
     LOG_ERR("LIB", "Failed to save library index");
   }
+  if (showingPopup) shownPage = NO_PAGE;  // the popup was drawn over the page: use the clean refresh
   preparedPage = page;
 }
 
@@ -413,13 +421,13 @@ void LibraryActivity::showSortMenu() {
       std::make_unique<OptionSelectionActivity>(renderer, mappedInput, "LibrarySortSelect", StrId::STR_LIBRARY_SORT,
                                                 std::move(options), static_cast<uint8_t>(currentSortMode())),
       [this](const ActivityResult& result) {
+        shownPage = NO_PAGE;  // an overlay was drawn: use the clean refresh
         if (result.isCancelled) return;
         const auto* selection = std::get_if<OptionSelectionResult>(&result.data);
         if (selection == nullptr || selection->index >= kLibrarySortModeCount) return;
         SETTINGS.librarySortMode = selection->index;
         SETTINGS.saveToFile();
         resort();
-        shownPage = NO_PAGE;  // full re-layout: use the clean refresh
         requestUpdate(true);
       });
 }
@@ -454,6 +462,7 @@ void LibraryActivity::showBookActionMenu(const int bookIndex) {
   startActivityForResult(
       std::make_unique<FileBrowserActionActivity>(renderer, mappedInput, book.title, std::move(items), true),
       [this, book](const ActivityResult& result) {
+        shownPage = NO_PAGE;  // a menu/toast/confirmation was drawn: use the clean refresh
         longPressFired = false;
         if (result.isCancelled) return;
         const auto* actionResult = std::get_if<FileBrowserActionResult>(&result.data);

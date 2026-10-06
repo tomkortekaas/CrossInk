@@ -60,7 +60,6 @@
 - The dashboard wake cycle now records one line per wake to `/crossink-ble-trace.txt` on the SD card, so a device left on battery overnight can be checked afterwards. Previously the only way to observe a wake was a USB cable, which itself changes how the device behaves when idle.
 - A dashboard now chooses how its tiles are framed (no frame, thin rules between neighbours, a light outline, or a solid one), how tightly they are packed, and whether agenda rows are separated by rules.
 - A dashboard tile can show the date, read from the device's own clock. In the phone app you pick what it shows — the day, the weekday, the month, the year or the week number — or let it choose a layout to suit its size, from a bare day number on the smallest tile up to a full calendar sheet with month, weekday and week number. Because the date itself is never sent, the tile turns over at midnight on its own and keeps telling the truth while the phone is away. A device whose clock has never been set shows a dash rather than an invented date.
-
 - Library: every book on the SD card as large 2×2 covers with reading progress, time left for the selected book and a choice of sort order (reading first, recently added, title, author). Opens from the Home menu.
 
 ### Fixed

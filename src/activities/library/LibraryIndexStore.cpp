@@ -42,9 +42,10 @@ void scanDirectory(const std::string& dirPath, const int depth, std::vector<std:
     LOG_ERR("LIB", "Cannot open directory %s", dirPath.c_str());
     return;
   }
-  // Static to keep 256 bytes off the stack per recursion level; the name is copied into
-  // childPath before recursing, so sharing the buffer between levels is safe.
-  static char name[256];
+  // Static to keep 512 bytes off the stack per recursion level; the name is copied into
+  // childPath before recursing, so sharing the buffer between levels is safe. FAT long
+  // names can exceed 256 bytes in UTF-8.
+  static char name[512];
   for (auto file = dir.openNextFile(); file; file = dir.openNextFile()) {
     file.getName(name, sizeof(name));
     const bool isDir = file.isDirectory();
