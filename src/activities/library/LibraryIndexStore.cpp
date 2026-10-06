@@ -12,6 +12,7 @@
 namespace LibraryIndexStore {
 namespace {
 constexpr int kMaxScanDepth = 8;
+constexpr const char* kIndexTmpPath = "/.crosspoint/library_index.tmp";
 
 class FileWriter final : public LibraryByteWriter {
  public:
@@ -93,16 +94,33 @@ bool load(LibraryIndexData& out) {
 }
 
 bool save(const LibraryIndexData& data) {
+  Storage.mkdir("/.crosspoint");
+  if (Storage.exists(kIndexTmpPath)) {
+    Storage.remove(kIndexTmpPath);
+  }
   FsFile file;
-  if (!Storage.openFileForWrite("LIB", kIndexPath, file)) {
-    LOG_ERR("LIB", "Cannot write %s", kIndexPath);
+  if (!Storage.openFileForWrite("LIB", kIndexTmpPath, file)) {
+    LOG_ERR("LIB", "Cannot write %s", kIndexTmpPath);
     return false;
   }
   FileWriter writer(file);
   const bool ok = LibraryIndexCodec::encode(data, writer);
+  const bool syncOk = file.sync();
   file.close();
-  if (!ok) LOG_ERR("LIB", "Library index write failed");
-  return ok;
+  if (!ok || !syncOk) {
+    Storage.remove(kIndexTmpPath);
+    LOG_ERR("LIB", "Library index write failed");
+    return false;
+  }
+  if (Storage.exists(kIndexPath)) {
+    Storage.remove(kIndexPath);
+  }
+  if (!Storage.rename(kIndexTmpPath, kIndexPath)) {
+    Storage.remove(kIndexTmpPath);
+    LOG_ERR("LIB", "Library index rename failed");
+    return false;
+  }
+  return true;
 }
 
 void scanBookPaths(std::vector<std::string>& outPaths) { scanDirectory("/", 0, outPaths); }
