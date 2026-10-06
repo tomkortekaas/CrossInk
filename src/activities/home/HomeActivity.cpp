@@ -1,8 +1,6 @@
 #ifdef CROSSINK_IN_PROCESS_RECEIVER
 #include "spikes/ble_handoff/HomeReceiveBoot.h"
 #endif
-#include "HomeActivity.h"
-
 #include <Bitmap.h>
 #include <Epub.h>
 #include <FsHelpers.h>
@@ -30,6 +28,7 @@
 #include "ClippingStore.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "HomeActivity.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBookProgress.h"
@@ -59,6 +58,7 @@ constexpr int HOME_BOOK_SWAP_RECENT_COUNT = 2;
 
 enum class HomeMenuAction {
   BrowseFiles,
+  Library,
   ContinueReading,
   RecentBooks,
   OpdsBrowser,
@@ -78,7 +78,7 @@ struct HomeMenuEntry {
 };
 
 struct HomeMenuEntries {
-  static constexpr int kCapacity = 9;
+  static constexpr int kCapacity = 10;
   std::array<HomeMenuEntry, kCapacity> entries{};
   int count = 0;
 
@@ -275,6 +275,7 @@ void appendHomeMenuItems(HomeMenuEntries& items, bool hasOpdsServers, bool hasRe
   items.push({tr(STR_HOME_RECEIVE), Wifi, HomeMenuAction::Receive});
 #endif
   items.push({tr(STR_BROWSE_FILES), Folder, HomeMenuAction::BrowseFiles});
+  items.push({tr(STR_LIBRARY), Library, HomeMenuAction::Library});
   items.push({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks});
 
   if (hasOpdsServers) {
@@ -302,6 +303,7 @@ HomeMenuEntries buildMinimalMenuItems(bool hasOpdsServers, bool hasReadingStats,
 #ifdef CROSSINK_IN_PROCESS_RECEIVER
   items.push({tr(STR_HOME_RECEIVE), Wifi, HomeMenuAction::Receive});
 #endif
+  items.push({tr(STR_LIBRARY), Library, HomeMenuAction::Library});
   items.push({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuAction::RecentBooks});
 
   if (hasOpdsServers) {
@@ -609,7 +611,7 @@ static_assert(HomeActivity::kMaxCachedBooks >= LyraCarouselMetrics::values.homeR
 
 int HomeActivity::getMenuItemCount() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  int count = 4;  // File Browser, Recents, File transfer, Settings
+  int count = 5;  // File Browser, Library, Recents, File transfer, Settings
 #ifdef CROSSINK_IN_PROCESS_RECEIVER
   ++count;
 #endif
@@ -1452,6 +1454,9 @@ void HomeActivity::loop() {
           case HomeMenuAction::BrowseFiles:
             onFileBrowserOpen();
             break;
+          case HomeMenuAction::Library:
+            onLibraryOpen();
+            break;
           case HomeMenuAction::RecentBooks:
             onRecentsOpen();
             break;
@@ -1663,6 +1668,9 @@ void HomeActivity::loop() {
     switch (action) {
       case HomeMenuAction::BrowseFiles:
         onFileBrowserOpen();
+        break;
+      case HomeMenuAction::Library:
+        onLibraryOpen();
         break;
       case HomeMenuAction::ContinueReading:
         onContinueReading();
@@ -2141,6 +2149,8 @@ void HomeActivity::onContinueReading() {
 }
 
 void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
+
+void HomeActivity::onLibraryOpen() { activityManager.goToLibrary(); }
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 

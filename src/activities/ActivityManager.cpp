@@ -25,6 +25,7 @@
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
 #include "home/RecentBooksGridActivity.h"
+#include "library/LibraryActivity.h"
 #include "network/CrossPointWebServerActivity.h"
 #include "network/NearbyBookTransferActivity.h"
 #include "network/NearbyStatsSyncActivity.h"
@@ -234,7 +235,8 @@ bool ActivityManager::handlePreviousBookShortcut() {
   if (currentPath.empty()) return true;
   auto target = previousBookPath(RECENT_BOOKS.getBooks(), currentPath, [](const std::string& path) {
     return (FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) || FsHelpers::hasTxtExtension(path) ||
-            FsHelpers::hasMarkdownExtension(path)) && Storage.exists(path.c_str());
+            FsHelpers::hasMarkdownExtension(path)) &&
+           Storage.exists(path.c_str());
   });
   if (target.empty()) return true;  // Consume the hold even if there is no other book.
   OPDS_STORE.release();
@@ -376,6 +378,8 @@ void ActivityManager::goToRecentBooks() {
     replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
   }
 }
+
+void ActivityManager::goToLibrary() { replaceActivity(std::make_unique<LibraryActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goToBrowser() {
   const auto& servers = OPDS_STORE.getServers();
