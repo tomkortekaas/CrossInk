@@ -55,3 +55,4 @@ add_subdirectory(agenda_wake_policy)
 add_subdirectory(navigator)
 
 add_subdirectory(previous_book_shortcut)
+add_subdirectory(library)
