@@ -168,8 +168,8 @@ bool LibraryActivity::generateThumb(LibraryEntry& entry, const int width, const 
       return false;
     }
     if (epub.generateThumbBmp(width, height, &renderer, SETTINGS.getReaderFontId())) return true;
-    LOG_ERR("LIB", "Thumbnail generation failed: %s", entry.path.c_str());
-    if (!epub.hasCoverImage()) entry.coverMissing = true;
+    LOG_ERR("LIB", "Thumbnail generation failed; the book will show a text cover: %s", entry.path.c_str());
+    entry.coverMissing = true;
     return false;
   }
   if (FsHelpers::hasXtcExtension(entry.path)) {
@@ -179,7 +179,8 @@ bool LibraryActivity::generateThumb(LibraryEntry& entry, const int width, const 
       return false;
     }
     if (xtc.generateThumbBmp(static_cast<uint16_t>(width), static_cast<uint16_t>(height))) return true;
-    LOG_ERR("LIB", "Thumbnail generation failed: %s", entry.path.c_str());
+    LOG_ERR("LIB", "Thumbnail generation failed; the book will show a text cover: %s", entry.path.c_str());
+    entry.coverMissing = true;
     return false;
   }
   return false;
@@ -505,7 +506,12 @@ void LibraryActivity::showBookActionMenu(const int bookIndex) {
                 std::make_unique<ConfirmationActivity>(
                     renderer, mappedInput, BookActions::confirmationHeading(StrId::STR_DELETE_CACHE), book.title),
                 [this, book](const ActivityResult& confirmation) {
-                  if (!confirmation.isCancelled && !BookActions::clearBookCache(book.path)) {
+                  if (!confirmation.isCancelled && BookActions::clearBookCache(book.path)) {
+                    for (auto& entry : index.entries) {
+                      if (entry.path == book.path) entry.coverMissing = false;
+                    }
+                    if (!LibraryIndexStore::save(index)) LOG_ERR("LIB", "Failed to save library index");
+                  } else if (!confirmation.isCancelled) {
                     LOG_ERR("LIB", "Failed to clear book cache for: %s", book.path.c_str());
                   }
                   preparedPage = NO_PAGE;  // thumbnails lived in the cache; regenerate
