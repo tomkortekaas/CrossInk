@@ -3,8 +3,8 @@
 #include <cstdio>
 
 namespace ReadingTimeEstimate {
-bool secondsLeft(const uint32_t storedEstimateSeconds, const uint32_t totalReadingSeconds,
-                 const float progressPercent, uint32_t& seconds) {
+bool secondsLeft(const uint32_t storedEstimateSeconds, const uint32_t totalReadingSeconds, const float progressPercent,
+                 uint32_t& seconds) {
   if (storedEstimateSeconds > 0) {
     seconds = storedEstimateSeconds;
     return true;

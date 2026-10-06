@@ -156,8 +156,8 @@ void formatCompactDuration(const uint32_t seconds, char* buf, const size_t len) 
 }
 
 bool estimatedTimeLeft(const BookReadingStats& stats, const float progressPercent, uint32_t& seconds) {
-  return ReadingTimeEstimate::secondsLeft(stats.estimatedTimeLeftSeconds, stats.totalReadingSeconds,
-                                          progressPercent, seconds);
+  return ReadingTimeEstimate::secondsLeft(stats.estimatedTimeLeftSeconds, stats.totalReadingSeconds, progressPercent,
+                                          seconds);
 }
 
 bool estimateFinishDateFromDailyPace(const BookReadingStats& stats, const ReadingStatsDateTime& today,
