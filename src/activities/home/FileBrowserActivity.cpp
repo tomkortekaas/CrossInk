@@ -26,6 +26,7 @@
 #include "components/UiAppHelpers.h"
 #include "components/themes/minimal/MinimalTheme.h"
 #include "fontIds.h"
+#include "util/SdMetadataEntries.h"
 
 namespace fui = freeink::ui;
 
@@ -47,27 +48,6 @@ bool isDefaultSleepFolderPath(const std::string& path) { return path == "/sleep"
 
 bool isSleepImageFile(const std::string& path) {
   return FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path);
-}
-
-bool isMacOSMetadataEntry(std::string_view filename) {
-  return filename.rfind("._", 0) == 0 || filename == ".DS_Store" || filename == ".Spotlight-V100" ||
-         filename == ".Trashes" || filename == ".fseventsd";
-}
-
-bool equalsIgnoreCase(std::string_view a, std::string_view b) {
-  if (a.length() != b.length()) return false;
-  for (size_t i = 0; i < a.length(); ++i) {
-    if (tolower(static_cast<unsigned char>(a[i])) != tolower(static_cast<unsigned char>(b[i]))) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool isWindowsMetadataEntry(std::string_view filename) {
-  return equalsIgnoreCase(filename, "System Volume Information") || equalsIgnoreCase(filename, "$RECYCLE.BIN") ||
-         equalsIgnoreCase(filename, "desktop.ini") || equalsIgnoreCase(filename, "Thumbs.db") ||
-         equalsIgnoreCase(filename, "IndexerVolumeGuid") || equalsIgnoreCase(filename, "WPSettings.dat");
 }
 
 size_t estimateNextVectorCapacity(size_t size, size_t capacity) {
@@ -103,21 +83,23 @@ bool isSupportedBrowserFile(std::string_view filename) {
 }
 
 bool acceptCommon(const char* name, bool isDir) {
-  if (isMacOSMetadataEntry(name) || isWindowsMetadataEntry(name) || (!SETTINGS.showHiddenFiles && name[0] == '.')) {
+  if (SdMetadataEntries::isMacOS(name) || SdMetadataEntries::isWindows(name) ||
+      (!SETTINGS.showHiddenFiles && name[0] == '.')) {
     return false;
   }
   return isDir || isSupportedBrowserFile(name);
 }
 
 bool acceptFirmware(const char* name, bool isDir) {
-  if (isMacOSMetadataEntry(name) || isWindowsMetadataEntry(name) || (!SETTINGS.showHiddenFiles && name[0] == '.')) {
+  if (SdMetadataEntries::isMacOS(name) || SdMetadataEntries::isWindows(name) ||
+      (!SETTINGS.showHiddenFiles && name[0] == '.')) {
     return false;
   }
   return isDir || FsHelpers::checkFileExtension(std::string_view{name}, ".bin");
 }
 
 bool acceptDirectory(const char* name, const bool isDir) {
-  return isDir && !isMacOSMetadataEntry(name) && !isWindowsMetadataEntry(name) &&
+  return isDir && !SdMetadataEntries::isMacOS(name) && !SdMetadataEntries::isWindows(name) &&
          (SETTINGS.showHiddenFiles || name[0] != '.');
 }
 

@@ -22,6 +22,8 @@ uint8_t epubRenderModeDisplayIndex(uint8_t renderMode);
 uint8_t epubRenderModeForDisplayIndex(uint8_t displayIndex);
 std::string confirmationHeading(StrId actionLabelId);
 bool isBookCompleted(const std::string& fullPath);
+// Cache directory holding reading stats for EPUB/XTC books; empty for formats without one.
+std::string bookStatsCachePath(const std::string& fullPath);
 bool toggleBookCompleted(const std::string& fullPath, const std::string& displayName, bool& completed);
 void drawToast(const GfxRenderer& renderer, const char* msg);
 
