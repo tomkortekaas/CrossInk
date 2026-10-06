@@ -486,6 +486,7 @@ void FileBrowserActivity::showDirectoryActionMenu(const std::string& entry, bool
                              case FileBrowserAction::EpubRenderMode:
                              case FileBrowserAction::ResetReaderSettings:
                              case FileBrowserAction::SendNearby:
+                             case FileBrowserAction::SortLibrary:
                                return;
                            }
                          });
@@ -696,6 +697,7 @@ void FileBrowserActivity::showFileActionMenu(const std::string& entry, bool igno
           case FileBrowserAction::ViewClippings:
           case FileBrowserAction::DeleteBookmarks:
           case FileBrowserAction::DeleteClippings:
+          case FileBrowserAction::SortLibrary:
             return;
         }
       });

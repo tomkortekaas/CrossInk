@@ -259,6 +259,15 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   };
   enum RECENT_BOOKS_VIEW { RECENT_BOOKS_LIST = 0, RECENT_BOOKS_GRID = 1, RECENT_BOOKS_VIEW_COUNT };
 
+  // Values mirror LibrarySortMode (src/activities/library/LibrarySort.h); never renumber.
+  enum LIBRARY_SORT {
+    LIBRARY_SORT_IN_PROGRESS = 0,
+    LIBRARY_SORT_RECENTLY_ADDED = 1,
+    LIBRARY_SORT_TITLE = 2,
+    LIBRARY_SORT_AUTHOR = 3,
+    LIBRARY_SORT_COUNT
+  };
+
   // Image rendering in EPUB reader
   enum IMAGE_RENDERING { IMAGES_DISPLAY = 0, IMAGES_PLACEHOLDER = 1, IMAGES_SUPPRESS = 2, IMAGE_RENDERING_COUNT };
   enum TOUCH_READER_CONTROLS { TOUCH_READER_OFF = 0, TOUCH_READER_ON = 1, TOUCH_READER_CONTROLS_COUNT };
@@ -430,6 +439,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t uiTheme = LYRA;
   // Recent Books screen layout
   uint8_t recentBooksView = RECENT_BOOKS_LIST;
+  // Library screen sort order
+  uint8_t librarySortMode = LIBRARY_SORT_IN_PROGRESS;
   // UI scale (list fonts + row heights); touch boards default one step larger
   uint8_t uiScale = defaultUiScale();
   // Sunlight fading compensation

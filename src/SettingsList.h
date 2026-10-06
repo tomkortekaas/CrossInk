@@ -337,13 +337,13 @@ inline SettingInfo buildDictionarySetting(const DictionaryRegistry* dictRegistry
 }
 
 inline SettingInfo buildSleepScreenSetting() {
-  SettingInfo s = SettingInfo::Enum(
-      StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
-      {StrId::STR_NONE_OPT, StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_CUSTOM, StrId::STR_COVER,
-        StrId::STR_COVER_CUSTOM, StrId::STR_PAGE_OVERLAY, StrId::STR_READING_STATS, StrId::STR_THEME_MINIMAL,
-        StrId::STR_THEME_MINIMAL_STATS, StrId::STR_THEME_DASHBOARD, StrId::STR_AGENDA, StrId::STR_QUICK_RESUME,
-        StrId::STR_FONT_TEST},
-      "sleepScreen", StrId::STR_CAT_DISPLAY);
+  SettingInfo s =
+      SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
+                        {StrId::STR_NONE_OPT, StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_CUSTOM, StrId::STR_COVER,
+                         StrId::STR_COVER_CUSTOM, StrId::STR_PAGE_OVERLAY, StrId::STR_READING_STATS,
+                         StrId::STR_THEME_MINIMAL, StrId::STR_THEME_MINIMAL_STATS, StrId::STR_THEME_DASHBOARD,
+                         StrId::STR_AGENDA, StrId::STR_QUICK_RESUME, StrId::STR_FONT_TEST},
+                        "sleepScreen", StrId::STR_CAT_DISPLAY);
   s.withEnumRawValues({
       static_cast<uint8_t>(CrossPointSettings::BLANK),
       static_cast<uint8_t>(CrossPointSettings::DARK),
@@ -420,6 +420,10 @@ inline std::vector<SettingInfo> getBaseSettingsList() {
             .withEnumRawValues({CrossPointSettings::UI_SCALE_SMALL, CrossPointSettings::UI_SCALE_LARGE}));
     add(SettingInfo::Enum(StrId::STR_RECENT_BOOKS_VIEW, &CrossPointSettings::recentBooksView,
                           {StrId::STR_LIST_VIEW, StrId::STR_GRID_VIEW}, "recentBooksView", StrId::STR_CAT_DISPLAY));
+    add(SettingInfo::Enum(StrId::STR_LIBRARY_SORT, &CrossPointSettings::librarySortMode,
+                          {StrId::STR_LIBRARY_SORT_IN_PROGRESS, StrId::STR_LIBRARY_SORT_RECENTLY_ADDED,
+                           StrId::STR_LIBRARY_SORT_TITLE, StrId::STR_LIBRARY_SORT_AUTHOR},
+                          "librarySortMode", StrId::STR_CAT_DISPLAY));
     add(SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
                             StrId::STR_CAT_DISPLAY));
 #if FREEINK_CAP_FRONTLIGHT
